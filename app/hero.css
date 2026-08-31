@@ -1,66 +1,54 @@
 /*
- * Hero.
+ * Hero — ONE design space, uniformly scaled.
  *
- * The previous version's core bug: `.vh-slide img` gave the splash, the bottle and
- * the objects plate ONE shared box. Three different compositions cannot share a
- * box — the objects landed on the bottle's label and the splash shrank to a halo.
- * Every layer now has its own width, offset and depth, driven by per-slot vars so
- * they can be tuned without touching the rest.
+ * The previous model stored a position set per screen. That cannot work: every new
+ * viewport is another set of numbers, and it only ever looks right where it was
+ * tuned. Worse, the bottle was sized by height while the splash was sized by width,
+ * so any change of aspect ratio pulled them apart.
  *
- * The bottle is HEIGHT-anchored (it is the tallest thing and sets the scale);
- * splash and objects are WIDTH-anchored relative to the stage, because their job
- * is to spread past the bottle.
+ * This is what SVG does with a viewBox and preserveAspectRatio="xMidYMid meet".
+ * The hero is a container, and `--u` is ONE design pixel of a 1440x900 space:
  *
- * --px/--py = pointer offset (-0.5..0.5), --sy = scroll progress (0..1), all
- * written by one rAF in the component.
+ *     --u: min(cqw/14.4, cqh/9)
  *
- * Timings measured from the reference: two transitions at 1.08-2.04s and
- * 2.64-3.52s -> 900ms, and the frame-difference sawtooth showed staggered layers,
- * so each layer has its own delay.
+ * cqw is 1% of container width, so cqw/14.4 == width/1440. Likewise cqh/9 ==
+ * height/900. Taking min() of the two is a contain fit: whichever axis runs out
+ * first sets the scale. Everything in the composition is then expressed in `u`, so
+ * it all scales by the SAME factor and the arrangement is rigid.
+ *
+ * Positions are design pixels from centre, sizes are design pixels. One set of
+ * numbers, every screen.
+ *
+ * Deliberate exception: body copy, the eyebrow and the nav keep a legibility floor.
+ * Scaling 13px type uniformly down to a 1024-wide window gives 9px, which is how
+ * design-tool exports end up unreadable. The ARTWORK is uniform; running text is
+ * fluid with a minimum. That is a real trade-off, not a fudge.
  */
 
 .vh {
+  --design-w: 1440;
+  --design-h: 900;
+  /* one design pixel, contain-fit */
+  --u: min(calc(1cqw / 14.4), calc(1cqh / 9));
+
   --px: 0;
   --py: 0;
   --sy: 0;
   --ease: cubic-bezier(0.65, 0.02, 0.31, 1);
 
-  /* per-layer geometry — the visual editor at /hero-lab writes these.
-     Offsets are % of the STAGE (so they scale with width) and the bottle is sized
-     in svh (so it scales with height). Nothing here is a pixel, which is what
-     makes a dragged position hold at every viewport. */
-  --bottle-h: 60svh;
-  --bottle-x: 0%;
-  --bottle-y: 0%;
-  --splash-w: 108%;
-  --splash-x: 0%;
-  --splash-y: -3%;
-  --objects-w: 116%;
-  --objects-x: 0%;
-  --objects-y: 12%;
-  --word-w: 132%;
-  --word-x: 0%;
-  --word-y: 44%;
-  --word-alpha: 0.12;
-
-  /* baseline the layers sit on; everything else is per-variant data */
-  --base-b: 6%;
+  /* the baseline the layers sit on, in design px */
+  --base-b: 60;
 
   position: relative;
   min-height: 100svh;
   overflow: hidden;
   isolation: isolate;
-  /* The hero responds to its OWN width, not the viewport's. That is what makes the
-     390px frame in /hero-lab a faithful phone preview instead of a desktop layout
-     squeezed into a narrow box. */
-  container-type: inline-size;
+  /* `size`, not `inline-size`: --u needs BOTH axes to compute a contain fit */
+  container-type: size;
   container-name: hero;
-  /* NOT a grid. This is a layered composition: the stage and the copy are absolute
-     siblings, so the copy's size can never shift where the bottle centres. The nav
-     is the only thing in normal flow. */
 }
 
-/* ---- field: stacked, so the colour cross-fades instead of tweening a hue ---- */
+/* ---- field: stacked, so the colour cross-fades rather than tweening a hue ---- */
 .vh-field {
   position: absolute;
   inset: 0;
@@ -70,24 +58,7 @@
 }
 .vh-field[data-on] { opacity: 1; }
 
-/* ---- wordmark: furthest back, moves least, spans wider than the stage so the
-        bottle covers its middle exactly as in the reference ---- */
-.vh-word {
-  position: absolute;
-  z-index: -2;
-  left: calc(50% + var(--word-x));
-  bottom: calc(var(--base-b) + var(--word-y));
-  width: var(--word-w);
-  max-width: none;
-  height: auto;
-  color: var(--milk);
-  opacity: var(--word-alpha);
-  pointer-events: none;
-  translate: calc(-50% + var(--px) * 12px) calc(var(--py) * 6px - var(--sy) * 44px);
-  transition: translate 800ms var(--ease);
-}
-
-/* ---- stage ---- */
+/* ---- stage: the full design space ---- */
 .vh-stage {
   position: absolute;
   inset: 0;
@@ -96,8 +67,6 @@
 .vh-slide {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
   opacity: 0;
   visibility: hidden;
   transition: opacity var(--switch) var(--ease), visibility 0s linear var(--switch);
@@ -109,27 +78,11 @@
 }
 
 /*
- * The composition box.
- *
- * Fixed aspect, scaled to fit the hero — so all four layers share ONE scale basis.
- * Previously the bottle was height-driven and the splash width-driven, which meant
- * any change of aspect ratio pulled them apart and no set of numbers could hold
- * across screens. Inside this box, a % of width and a % of height scale together,
- * so the arrangement is rigid the way a poster is.
+ * Every layer: positioned from the centre in design px, sized in design px.
+ * Parallax stays in px on translate, where the unit is unambiguous, and is scaled
+ * by --u too so it does not overpower the composition on a small screen.
  */
-.vh-comp {
-  position: relative;
-  aspect-ratio: var(--comp-ar, 16 / 10);
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-}
-
-/* Offsets live on left/bottom, NOT in translate.
-   A percentage inside `translate` resolves against the ELEMENT's own size, while a
-   percentage on left/bottom resolves against the PARENT. The editor measures drag
-   as a share of the stage, so only left/bottom agree with it. translate is left to
-   carry parallax in px, where the unit is unambiguous. */
+.vh-word,
 .vh-splash,
 .vh-bottle,
 .vh-objects {
@@ -139,70 +92,77 @@
   transform-origin: 50% 100%;
 }
 
-/* the bottle sets the scale: height-driven, nothing else */
 .vh-bottle {
   z-index: 2;
-  height: var(--bottle-h);   /* % of the composition box */
-  left: calc(50% + var(--bottle-x));
-  bottom: calc(var(--base-b) + var(--bottle-y));
-  translate: calc(-50% + var(--px) * 34px) calc(var(--py) * 16px - var(--sy) * 70px);
+  height: calc(var(--bottle-h) * var(--u));
+  left: calc(50% + var(--bottle-x) * var(--u));
+  bottom: calc((var(--base-b) + var(--bottle-y)) * var(--u));
+  translate: calc(-50% + var(--px) * 34 * var(--u)) calc((var(--py) * 16 - var(--sy) * 70) * var(--u));
   transition: translate 700ms var(--ease),
               opacity var(--switch) var(--ease) 110ms,
               scale var(--switch) var(--ease) 110ms,
-              left var(--switch) var(--ease),
-              bottom var(--switch) var(--ease);
+              left var(--switch) var(--ease), bottom var(--switch) var(--ease);
 }
 
-/* splash erupts PAST the bottle, so it is width-driven and sits behind */
 .vh-splash {
   z-index: 1;
-  width: var(--splash-w);
-  left: calc(50% + var(--splash-x));
-  bottom: calc(var(--base-b) + var(--splash-y));
-  translate: calc(-50% + var(--px) * 18px) calc(var(--py) * 10px - var(--sy) * 34px);
+  width: calc(var(--splash-w) * var(--u));
+  left: calc(50% + var(--splash-x) * var(--u));
+  bottom: calc((var(--base-b) + var(--splash-y)) * var(--u));
+  translate: calc(-50% + var(--px) * 18 * var(--u)) calc((var(--py) * 10 - var(--sy) * 34) * var(--u));
   transition: translate 900ms var(--ease),
               opacity var(--switch) var(--ease) 40ms,
               scale var(--switch) var(--ease) 40ms,
-              left var(--switch) var(--ease),
-              bottom var(--switch) var(--ease);
+              left var(--switch) var(--ease), bottom var(--switch) var(--ease);
 }
 
-/* objects sit IN FRONT and lower, so the vessel never covers the label */
 .vh-objects {
   z-index: 3;
-  width: var(--objects-w);
-  left: calc(50% + var(--objects-x));
-  bottom: calc(var(--base-b) + var(--objects-y));
-  translate: calc(-50% + var(--px) * 54px) calc(var(--py) * 26px - var(--sy) * 104px);
+  width: calc(var(--objects-w) * var(--u));
+  left: calc(50% + var(--objects-x) * var(--u));
+  bottom: calc((var(--base-b) + var(--objects-y)) * var(--u));
+  translate: calc(-50% + var(--px) * 54 * var(--u)) calc((var(--py) * 26 - var(--sy) * 104) * var(--u));
   transition: translate 560ms var(--ease),
               opacity var(--switch) var(--ease) 180ms,
               scale var(--switch) var(--ease) 180ms,
-              left var(--switch) var(--ease),
-              bottom var(--switch) var(--ease);
+              left var(--switch) var(--ease), bottom var(--switch) var(--ease);
 }
 
-/* Directional switch. Opacity alone reads as a slideshow; the incoming art has to
-   arrive. Outgoing sits slightly small, incoming settles to 1 — staggered by the
-   same per-layer delays above, which is what the reference's sawtooth showed. */
-.vh-slide .vh-splash  { scale: 0.94; }
-.vh-slide .vh-bottle  { scale: 0.96; }
+.vh-word {
+  z-index: -2;
+  width: calc(var(--word-w) * var(--u));
+  left: calc(50% + var(--word-x) * var(--u));
+  bottom: calc((var(--base-b) + var(--word-y)) * var(--u));
+  color: var(--milk);
+  opacity: var(--word-alpha, 0.12);
+  pointer-events: none;
+  translate: calc(-50% + var(--px) * 12 * var(--u)) calc((var(--py) * 6 - var(--sy) * 44) * var(--u));
+  transition: translate 800ms var(--ease),
+              left var(--switch) var(--ease), bottom var(--switch) var(--ease);
+}
+
+/* mirrored variant. `transform`, not `scale`: scale already carries the switch
+   animation and would overwrite the flip mid-transition. */
+.vh-slide img[data-mirror] { transform: scaleX(-1); }
+
+/* directional switch — opacity alone reads as a slideshow */
+.vh-slide .vh-splash { scale: 0.94; }
+.vh-slide .vh-bottle { scale: 0.96; }
 .vh-slide .vh-objects { scale: 0.92; }
 .vh-slide[data-on] .vh-splash,
 .vh-slide[data-on] .vh-bottle,
 .vh-slide[data-on] .vh-objects { scale: 1; }
 
-/* ---- copy: bottom-left, big enough that the product name does not wrap ---- */
+/* ---- copy: placed in design px, display type scales with the artwork ---- */
 .vh-copy {
   position: absolute;
   z-index: 4;
-  left: 0;
-  bottom: 0;
-  transition: left var(--switch) var(--ease), right var(--switch) var(--ease);
+  left: calc(50% + var(--copy-x, -560) * var(--u));
+  bottom: calc(var(--copy-y, 120) * var(--u));
+  width: calc(var(--copy-w, 460) * var(--u));
   display: grid;
-  padding: 0 var(--gutter) clamp(4.5rem, 12vh, 7rem);
-  width: min(38ch, 92vw);
-  /* the block is a click target; the empty space around it must not be */
   pointer-events: none;
+  transition: left var(--switch) var(--ease), bottom var(--switch) var(--ease);
 }
 .vh-copy-slide > * { pointer-events: auto; }
 .vh-copy-slide {
@@ -210,10 +170,10 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.7rem;
+  gap: calc(14 * var(--u));
   opacity: 0;
   visibility: hidden;
-  translate: 0 18px;
+  translate: 0 calc(18 * var(--u));
   transition: opacity var(--switch) var(--ease), translate var(--switch) var(--ease),
               visibility 0s linear var(--switch);
 }
@@ -221,57 +181,59 @@
   opacity: 1;
   visibility: visible;
   translate: 0 0;
-  /* copy leads the art in — it is what the eye lands on first */
   transition: opacity var(--switch) var(--ease) 40ms, translate var(--switch) var(--ease) 40ms,
               visibility 0s;
 }
+
+/* display type scales with the artwork — it IS part of the composition.
+   The floor stops it becoming unreadable on a very small window. */
 .vh-copy h1 {
-  font-size: var(--step-4);
+  font-size: max(30px, calc(96 * var(--u)));
   line-height: 0.92;
-  /* "Cow Milk" must not break across two lines at desktop */
   text-wrap: balance;
 }
-.vh-line { color: var(--milk-dim); max-width: 30ch; }
-.vh-price { font-family: var(--serif); font-size: var(--step-1); }
+.vh-price { font-family: var(--serif); font-size: max(15px, calc(24 * var(--u))); }
 .vh-price strong { font-weight: 400; }
+/* running text keeps a legibility floor rather than scaling to nothing */
+.vh-line { color: var(--milk-dim); font-size: max(14px, calc(17 * var(--u))); }
+.vh-copy .eyebrow { font-size: max(11px, calc(13 * var(--u))); }
 
-/* ---- arrows ---- */
+/* ---- arrows + switcher: UI, so they keep usable hit targets ---- */
 .vh-arrow {
   position: absolute;
   top: 50%;
   translate: 0 -50%;
   z-index: 6;
-  width: 3rem;
-  height: 3rem;
+  width: max(38px, calc(48 * var(--u)));
+  height: max(38px, calc(48 * var(--u)));
   display: grid;
   place-items: center;
   border: 1px solid var(--milk-faint);
   border-radius: 50%;
   background: transparent;
   color: var(--milk);
-  font-size: 1.6rem;
+  font-size: max(18px, calc(26 * var(--u)));
   line-height: 1;
   cursor: pointer;
   transition: background 0.35s var(--ease), color 0.35s var(--ease), border-color 0.35s var(--ease);
 }
 .vh-arrow:hover { background: var(--milk); color: var(--red); border-color: var(--milk); }
-.vh-prev { left: clamp(0.75rem, 2vw, 1.75rem); }
-.vh-next { right: clamp(0.75rem, 2vw, 1.75rem); }
+.vh-prev { left: calc(24 * var(--u)); }
+.vh-next { right: calc(24 * var(--u)); }
 
-/* ---- switcher ---- */
 .vh-switch {
   position: absolute;
-  right: var(--gutter);
-  bottom: clamp(1.75rem, 5vh, 3rem);
+  right: calc(48 * var(--u));
+  bottom: calc(48 * var(--u));
   z-index: 6;
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  gap: calc(14 * var(--u));
 }
-.vh-switch .eyebrow { white-space: nowrap; }
+.vh-switch .eyebrow { white-space: nowrap; font-size: max(10px, calc(12 * var(--u))); }
 .vh-switch button {
-  width: 2.1rem;
-  height: 2.1rem;
+  width: max(26px, calc(34 * var(--u)));
+  height: max(26px, calc(34 * var(--u)));
   display: grid;
   place-items: center;
   padding: 0;
@@ -282,8 +244,8 @@
   transition: border-color 0.35s var(--ease), background 0.35s var(--ease);
 }
 .vh-switch button span {
-  width: 0.95rem;
-  height: 0.95rem;
+  width: 58%;
+  height: 58%;
   border-radius: 50%;
   background: var(--dot);
   outline: 1px solid rgba(255, 255, 255, 0.5);
@@ -293,49 +255,30 @@
 .vh-switch button.on { border-color: var(--milk); background: rgba(255, 255, 255, 0.14); }
 .vh-switch button.on span { scale: 1.14; }
 
+/*
+ * PORTRAIT design space. A landscape composition scaled uniformly into a phone is
+ * unreadable — this is the one place a second set of numbers is justified, because
+ * the SHAPE differs, not merely the size. Same mechanism, different design box.
+ */
 @container hero (max-width: 900px) {
-  /*
-   * Phones STACK. On desktop the copy sits bottom-left beside the product; at this
-   * width they were both filling the whole hero and overlapping, which is why
-   * nothing on mobile looked aligned. Product takes the upper area, copy the lower,
-   * and the copy centres — a left-aligned block under a centred product reads as a
-   * mistake on a narrow screen.
-   */
-  .vh-stage { inset: 0 0 44% 0; }
-  .vh-comp { --comp-ar: 4 / 5; }
-  .vh-copy {
-    left: 0;
-    right: 0;
-    width: auto;
-    text-align: center;
-    padding-bottom: clamp(4.5rem, 13vh, 7rem);
+  .vh {
+    --design-w: 390;
+    --design-h: 844;
+    --u: min(calc(1cqw / 3.9), calc(1cqh / 8.44));
+    --base-b: 300;
+    --copy-x: -170;
+    --copy-y: 96;
+    --copy-w: 340;
   }
+  .vh-copy { text-align: center; }
   .vh-copy-slide { align-items: center; }
-  .vh-line { max-width: 34ch; margin-inline: auto; }
-  .vh-switch { left: 0; right: 0; justify-content: center; bottom: 1.5rem; }
-  .vh-copy h1 { font-size: var(--step-3); }
+  .vh-line { margin-inline: auto; }
   .vh-arrow { display: none; }
-  .vh-switch { left: var(--gutter); right: auto; bottom: 1.25rem; }
+  .vh-switch { left: 0; right: 0; justify-content: center; bottom: calc(28 * var(--u)); }
 }
 
-/* Motion is decoration: the layout and the switch both work without it. */
+/* Motion is decoration: layout and switching both work without it. */
 @media (prefers-reduced-motion: reduce) {
   .vh-word, .vh-splash, .vh-bottle, .vh-objects { translate: -50% 0 !important; }
-  .vh-word { translate: -50% -50% !important; }
   .vh-slide .vh-splash, .vh-slide .vh-bottle, .vh-slide .vh-objects { scale: 1; }
 }
-
-
-
-/*
- * Horizontal flip for the mirrored variant.
- *
- * `transform` is used rather than `scale` on purpose: `scale` already carries the
- * switch animation (0.94 -> 1), and CSS applies the individual transform
- * properties after `transform`, so the two compose instead of fighting. Writing
- * the flip into `scale` would have the switch overwrite it mid-transition.
- *
- * transform-origin is already 50% 100%, so the box does not move — only its
- * content turns around.
- */
-.vh-slide img[data-mirror] { transform: scaleX(-1); }
