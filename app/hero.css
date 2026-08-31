@@ -313,7 +313,6 @@
   .vh-copy-slide { align-items: center; }
   .vh-line { max-width: 34ch; margin-inline: auto; }
   .vh-switch { left: 0; right: 0; justify-content: center; bottom: 1.5rem; }
-  .vh-copy { width: auto; padding-bottom: clamp(5.5rem, 16vh, 8rem); }
   .vh-copy h1 { font-size: var(--step-3); }
   .vh-arrow { display: none; }
   .vh-switch { left: var(--gutter); right: auto; bottom: 1.25rem; }
