@@ -15,14 +15,6 @@ export const ASSETS_READY = true;
 export type Slot = 'bottle' | 'splash' | 'objects' | 'word';
 export type BreakPoint = 'desktop' | 'mobile';
 
-/**
- * DESIGN PIXELS, not percentages.
- *
- * The hero is a 1440x900 design space (390x844 on phones) scaled uniformly to fit,
- * so one set of numbers is correct at every viewport. `x` is from the horizontal
- * centre, `y` is up from the baseline, `size` is the bottle's height or the other
- * layers' width — all in design px.
- */
 export interface Placement {
   x: number;
   y: number;
@@ -51,10 +43,10 @@ function mirrorLayout(l: Layout): Layout {
 
 /** Arranged on the free canvas. */
 const DESKTOP_COW: Layout = {
-  bottle: { x: 273, y: -40, size: 522 },
-  splash: { x: 259, y: -18, size: 727 },
-  objects: { x: -180, y: 54, size: 489 },
-  word: { x: -453, y: 576, size: 504 },
+  bottle: { x: 19, y: -4.5, size: 58 },
+  splash: { x: 18, y: -2, size: 50.5 },
+  objects: { x: -12.5, y: 6, size: 34 },
+  word: { x: -31.5, y: 64, size: 35 },
 };
 
 /* Centred starting point. The previous mobile numbers were recorded while the y
@@ -63,10 +55,10 @@ const DESKTOP_COW: Layout = {
    of the hero and the copy the lower 44%, so these are percentages of a portrait
    4:5 composition box, not of the whole screen. */
 const MOBILE_COW: Layout = {
-  bottle: { x: 0, y: 40, size: 330 },
-  splash: { x: 0, y: 70, size: 400 },
-  objects: { x: 0, y: 24, size: 350 },
-  word: { x: 0, y: 250, size: 330 },
+  bottle: { x: 0, y: 10, size: 66 },
+  splash: { x: 0, y: 16, size: 100 },
+  objects: { x: 0, y: 6, size: 86 },
+  word: { x: 0, y: 46, size: 88 },
 };
 
 export const LAYOUT: Record<BreakPoint, Record<MilkKind, Layout>> = {
@@ -79,18 +71,18 @@ export const LAYOUT: Record<BreakPoint, Record<MilkKind, Layout>> = {
 /** CSS custom properties for one variant's layout. Applied inline by the hero. */
 export function layoutVars(l: Layout): Record<string, string> {
   return {
-    '--bottle-h': `${l.bottle.size}`,
-    '--bottle-x': `${l.bottle.x}`,
-    '--bottle-y': `${l.bottle.y}`,
-    '--splash-w': `${l.splash.size}`,
-    '--splash-x': `${l.splash.x}`,
-    '--splash-y': `${l.splash.y}`,
-    '--objects-w': `${l.objects.size}`,
-    '--objects-x': `${l.objects.x}`,
-    '--objects-y': `${l.objects.y}`,
-    '--word-w': `${l.word.size}`,
-    '--word-x': `${l.word.x}`,
-    '--word-y': `${l.word.y}`,
+    '--bottle-h': `${l.bottle.size}%`,
+    '--bottle-x': `${l.bottle.x}%`,
+    '--bottle-y': `${l.bottle.y}%`,
+    '--splash-w': `${l.splash.size}%`,
+    '--splash-x': `${l.splash.x}%`,
+    '--splash-y': `${l.splash.y}%`,
+    '--objects-w': `${l.objects.size}%`,
+    '--objects-x': `${l.objects.x}%`,
+    '--objects-y': `${l.objects.y}%`,
+    '--word-w': `${l.word.size}%`,
+    '--word-x': `${l.word.x}%`,
+    '--word-y': `${l.word.y}%`,
   };
 }
 

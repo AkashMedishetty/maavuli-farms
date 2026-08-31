@@ -40,7 +40,7 @@ const PRESETS = [
   { id: '390', label: '390×844', bp: 'mobile' as BreakPoint, w: 390, h: 844 },
   { id: '360', label: '360×640', bp: 'mobile' as BreakPoint, w: 360, h: 640 },
 ] as const;
-const r1 = (n: number) => Math.round(n); // design px are whole numbers
+const r1 = (n: number) => Math.round(n * 10) / 10;
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
 export default function HeroLab() {
@@ -100,8 +100,7 @@ export default function HeroLab() {
     const stageBox = () => {
       // the COMPOSITION box, not the hero: the layers live inside it, so a drag
       // measured against the hero would be wrong wherever the box is letterboxed
-      // the hero IS the design space now, so measure against it
-      const el = frame.querySelector('.vh');
+      const el = frame.querySelector('.vh-slide[data-on] .vh-comp') ?? frame.querySelector('.vh');
       const r = el?.getBoundingClientRect();
       return { w: r?.width || 1, h: r?.height || 1 };
     };
@@ -117,14 +116,9 @@ export default function HeroLab() {
     };
     const onMove = (e: PointerEvent) => {
       if (!active || !from) return;
-      // screen px -> DESIGN px: divide by the same contain-fit scale the CSS uses,
-      // so what is stored is design-space and holds at every viewport
-      const dw = bp === 'mobile' ? 390 : 1440;
-      const dh = bp === 'mobile' ? 844 : 900;
-      const scale = Math.min(box.w / dw, box.h / dh) || 1;
-      const dx = (e.clientX - sx) / scale;
+      const dx = ((e.clientX - sx) / box.w) * 100;
       // y is positive UP (layers sit on a baseline), so drag down decreases it
-      const dy = (e.clientY - sy) / scale;
+      const dy = ((e.clientY - sy) / box.h) * 100;
       setLayout(L => {
         const n = clone(L);
         n[bp][kind][active!].x = r1(from!.x + dx);
@@ -140,8 +134,8 @@ export default function HeroLab() {
       setSlot(s);
       setLayout(L => {
         const n = clone(L);
-        const step = e.deltaY > 0 ? -12 : 12;
-        n[bp][kind][s].size = Math.round(Math.max(20, n[bp][kind][s].size + step));
+        const step = e.deltaY > 0 ? -1.5 : 1.5;
+        n[bp][kind][s].size = r1(Math.max(4, n[bp][kind][s].size + step));
         return n;
       });
     };
@@ -166,7 +160,7 @@ export default function HeroLab() {
     });
 
   const p = cur[slot];
-  const unit = 'dp';
+  const unit = slot === 'bottle' ? 'svh' : '%';
   const out = exportLayout(layout);
 
   return (
@@ -202,9 +196,8 @@ export default function HeroLab() {
           ))}
         </div>
         <p className="lab-hint">
-          Values are DESIGN PIXELS of a 1440×900 space (390×844 on phones), scaled
-          uniformly to fit — so one set of numbers is correct at every screen. Switch
-          presets to confirm; if it holds at 1920×620 and 1024×768 it holds anywhere.
+          The desktop presets all share ONE set of numbers — switch between them to
+          check the arrangement holds. If it does at 1920×620 and 1024×768, it holds.
         </p>
 
         <label>Variant — each gets its own positions</label>
@@ -227,13 +220,14 @@ export default function HeroLab() {
         </div>
 
         <label>x <span>{p.x}%</span></label>
-        <input type="range" min={-760} max={760} step={1} value={p.x}
+        <input type="range" min={-90} max={90} step={0.5} value={p.x}
                onChange={e => set({ x: +e.target.value })} />
         <label>y <span>{p.y}%</span></label>
-        <input type="range" min={-200} max={800} step={1} value={p.y}
+        <input type="range" min={-40} max={90} step={0.5} value={p.y}
                onChange={e => set({ y: +e.target.value })} />
         <label>{slot === 'bottle' ? 'height' : 'width'} <span>{p.size}{unit}</span></label>
-        <input type="range" min={40} max={1600} step={1} value={p.size}
+        <input type="range" min={slot === 'bottle' ? 12 : 8}
+               max={slot === 'bottle' ? 95 : 220} step={0.5} value={p.size}
                onChange={e => set({ size: +e.target.value })} />
 
         <label className="lab-check">
