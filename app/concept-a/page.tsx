@@ -2,6 +2,7 @@ import Hero from '@/components/concept-a/Hero';
 import StoryPath from '@/components/concept-a/StoryPath';
 import { BRAND, CONTACT, PENDING, SERVICEABLE_PINCODES } from '@/lib/content';
 import { PRODUCTS, quote, formatINR } from '@/lib/pricing';
+import NavPanel from '@/components/NavPanel';
 
 /**
  * The plan chooser deliberately does NOT open with a price table. The client was
@@ -52,6 +53,7 @@ export default function Page() {
             <>We deliver to {SERVICEABLE_PINCODES.length} pincodes across Hyderabad.</>
           ) : (
             <>
+      <NavPanel />
               Delivery area:{' '}
               <span className="pending">pincode list to be confirmed</span> — we check
               serviceability before you pay, never after.

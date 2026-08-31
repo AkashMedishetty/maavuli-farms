@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Footer } from './Sections';
 import { CONTACT, BRAND } from '@/lib/content';
+import NavPanel from './NavPanel';
 
 export interface LegalBlock {
   heading: string;
@@ -34,6 +35,7 @@ export default function LegalPage({
 }) {
   return (
     <>
+      <NavPanel />
       <main className="page legal invert">
         <header className="page-head">
           <p className="eyebrow">{BRAND.fullName}</p>

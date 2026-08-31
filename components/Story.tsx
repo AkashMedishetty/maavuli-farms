@@ -73,7 +73,7 @@ export default function Story() {
   }, []);
 
   return (
-    <section className="story invert" id="story" ref={wrapRef}>
+    <section className="story" id="story" ref={wrapRef}>
       <div className="story-head">
         <p className="eyebrow">How Maavuli works</p>
         <h2>Five things we will not cut corners on.</h2>

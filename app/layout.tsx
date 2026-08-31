@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import Nav from '@/components/Nav';
 import KolamDefs from '@/components/KolamDefs';
 import PourLoader from '@/components/PourLoader';
 import { BRAND } from '@/lib/content';
@@ -46,7 +45,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <KolamDefs />
         <PourLoader />
-        <Nav />
         {children}
       </body>
     </html>

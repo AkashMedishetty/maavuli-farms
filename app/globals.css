@@ -1,3 +1,5 @@
+@import "./hero.css";
+
 /*
  * Design tokens.
  *
@@ -785,3 +787,153 @@ a { color: inherit; }
 .sub-foot { margin-top: auto; padding-top: 3rem; font-size: var(--step--1); }
 .sub-foot a { color: var(--milk-dim); }
 .sub-foot a:hover { color: var(--milk); }
+
+/* ================================================================
+ * PANEL SYSTEM — white page, inset rounded red panels
+ *
+ * Measured from the reference: the design card sits inside a white border and the
+ * brand tab overlaps that border. A mockup bezel cannot be overlapped by content,
+ * so the white is the PAGE and the red is an inset panel. Everything below follows
+ * from that one reading.
+ * ================================================================ */
+
+body {
+  background: var(--milk);
+  color: var(--red);
+}
+
+.panel {
+  position: relative;
+  background: var(--red);
+  color: var(--milk);
+  border-radius: clamp(16px, 2vw, 30px);
+  margin: clamp(8px, 1.1vw, 18px);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* sections that are NOT panels are white by default now, so .invert is redundant
+   there — kept as a no-op guard so existing markup does not suddenly go red */
+.invert { background: transparent; color: var(--red); }
+
+/* the hero panel needs the top padding the nav occupies */
+.vh.panel { min-height: calc(100svh - clamp(16px, 2.2vw, 36px)); }
+
+/* ------------------------------------------------------------------ nav ---- */
+
+.vnav {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: clamp(0.9rem, 2.2vh, 1.6rem) clamp(1rem, 3vw, 2.5rem);
+}
+.vnav-group { display: flex; align-items: center; gap: 0.4rem; }
+.vnav-left { margin-right: auto; }
+.vnav-right { margin-left: auto; }
+
+.vnav .pill {
+  padding: 0.5em 1.1em;
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: var(--step--1);
+  letter-spacing: 0.06em;
+  color: var(--milk-dim);
+  white-space: nowrap;
+  transition: background 0.35s var(--ease, ease), color 0.35s var(--ease, ease);
+}
+.vnav .pill:hover { color: var(--milk); }
+.vnav .pill.on { background: var(--milk); color: var(--red); }
+
+/* the tab. Sits ON the panel's top edge and reads as cut out of it: white fill,
+   bottom corners rounded, so the wordmark appears to notch the panel. */
+.vnav-brand {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  translate: -50% 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 1.5rem 0.6rem;
+  background: var(--milk);
+  color: var(--red);
+  border-radius: 0 0 14px 14px;
+  text-decoration: none;
+  font-family: var(--serif);
+  font-size: var(--step-1);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vnav-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.55em 0.75em 0.55em 1.2em;
+  border-radius: 999px;
+  background: var(--milk);
+  color: var(--red);
+  text-decoration: none;
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.vnav-cta span {
+  width: 1.55em;
+  height: 1.55em;
+  border-radius: 50%;
+  background: var(--red);
+  position: relative;
+}
+.vnav-cta span::after {
+  content: '›';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--milk);
+  font-size: 0.95em;
+  line-height: 1;
+}
+
+.vnav-burger, .vnav-sheet { display: none; }
+
+@media (max-width: 960px) {
+  .vnav-group { display: none; }
+  .vnav-burger {
+    display: block;
+    margin-left: auto;
+    padding: 0.5em 1.1em;
+    border: 1px solid var(--milk-faint);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--milk);
+    font: inherit;
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .vnav.open .vnav-sheet {
+    display: flex;
+    position: absolute;
+    inset: 100% clamp(1rem, 3vw, 2.5rem) auto;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 1.4rem 1.5rem 1.7rem;
+    background: color-mix(in srgb, var(--red) 92%, black);
+    border: 1px solid var(--milk-faint);
+    border-radius: 14px;
+  }
+  .vnav-sheet a { color: var(--milk); text-decoration: none; font-size: var(--step-1); }
+  .vnav-sheet .vnav-cta { font-size: var(--step--1); }
+  .vnav-brand { font-size: var(--step-0); padding: 0.4rem 1rem 0.5rem; }
+}
+
+/* a hero-less page still needs the nav on red, or the white pills vanish */
+.navpanel { min-height: 0; }
+.navpanel + .page { padding-top: clamp(2.5rem, 7vh, 5rem); }
+.navpanel + .sub { padding-top: clamp(2.5rem, 7vh, 5rem); }

@@ -1,5 +1,6 @@
 import { Footer } from '@/components/Sections';
 import { CONTACT } from '@/lib/content';
+import NavPanel from '@/components/NavPanel';
 
 export const metadata = { title: 'Contact' };
 
@@ -14,6 +15,7 @@ export const metadata = { title: 'Contact' };
 export default function ContactPage() {
   return (
     <>
+      <NavPanel />
       <main className="page invert">
         <header className="page-head">
           <p className="eyebrow">Contact</p>

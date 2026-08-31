@@ -4,6 +4,7 @@ import Kolam from '@/components/Kolam';
 import { PILLARS, BRAND, CONTACT } from '@/lib/content';
 import { WARLI } from '@/lib/generated/art';
 import { cow, tree, ground, figure, render } from '@/lib/warli';
+import NavPanel from '@/components/NavPanel';
 
 export const metadata = { title: 'Our Farm' };
 
@@ -18,6 +19,7 @@ const HEADER_SCENE = [
 export default function OurFarmPage() {
   return (
     <>
+      <NavPanel />
       <main className="page">
         <header className="page-head">
           <p className="eyebrow">Our farm</p>

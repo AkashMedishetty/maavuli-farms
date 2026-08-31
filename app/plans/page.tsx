@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Footer } from '@/components/Sections';
 import { PRODUCTS, QUANTITIES, TENURES, quote, formatINR } from '@/lib/pricing';
 import { SERVICEABLE_PINCODES } from '@/lib/content';
+import NavPanel from '@/components/NavPanel';
 
 export const metadata = { title: 'Plans & Pricing' };
 
@@ -17,6 +18,7 @@ export const metadata = { title: 'Plans & Pricing' };
 export default function PlansPage() {
   return (
     <>
+      <NavPanel />
       <main className="page invert">
         <header className="page-head">
           <p className="eyebrow">Plans &amp; pricing</p>

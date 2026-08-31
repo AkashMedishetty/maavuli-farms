@@ -21,7 +21,7 @@ const FARM_SCENE = [
 
 export function Farm() {
   return (
-    <section className="section farm" id="our-farm">
+    <section className="section farm panel" id="our-farm">
       <div className="farm-copy">
         <p className="eyebrow">Our farm</p>
         <h2>Milk that has not been anywhere else first.</h2>
@@ -54,7 +54,7 @@ export function Farm() {
  */
 export function PricingOverview() {
   return (
-    <section className="section pricing invert" id="plans">
+    <section className="section pricing" id="plans">
       <p className="eyebrow">Plans</p>
       <h2>The longer you stay, the less each litre costs.</h2>
 
@@ -107,7 +107,7 @@ export function PricingOverview() {
 
 export function CallToAction() {
   return (
-    <section className="section cta-band">
+    <section className="section cta-band panel">
       <Kolam size={128} strokeWidth={2.4} className="cta-mark" />
       <h2>{BRAND.tagline}</h2>
       <p>{BRAND.premise}</p>
@@ -122,7 +122,7 @@ export function CallToAction() {
 
 export function Footer() {
   return (
-    <footer className="foot">
+    <footer className="foot panel">
       <div>
         <Kolam size={54} strokeWidth={5} dots={false} />
         <h3>{BRAND.fullName}</h3>

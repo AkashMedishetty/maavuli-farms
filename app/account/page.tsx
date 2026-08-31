@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Footer } from '@/components/Sections';
 import { CONTACT } from '@/lib/content';
+import NavPanel from '@/components/NavPanel';
 
 export const metadata = { title: 'My Deliveries' };
 
@@ -20,6 +21,7 @@ export const metadata = { title: 'My Deliveries' };
 export default function AccountPage() {
   return (
     <>
+      <NavPanel />
       <main className="page">
         <header className="page-head">
           <p className="eyebrow">My deliveries</p>

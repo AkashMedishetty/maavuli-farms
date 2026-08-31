@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { PRODUCTS, QUANTITIES, TENURES, quote, formatINR, type MilkKind } from '@/lib/pricing';
 import { SERVICEABLE_PINCODES, CONTACT } from '@/lib/content';
+import NavPanel from '@/components/NavPanel';
 
 /**
  * The funnel, in the client's own words: "people who want cow click on cow and
@@ -53,7 +54,10 @@ export default function SubscribePage() {
   const idx = steps.indexOf(step);
 
   return (
-    <main className="sub">
+    <>
+
+      <NavPanel />
+      <main className="sub">
       <div className="sub-rail" aria-hidden="true">
         {steps.slice(0, 4).map((s, n) => (
           <span key={s} className={n <= idx ? 'on' : undefined} />
@@ -205,5 +209,6 @@ export default function SubscribePage() {
         <Link href="/plans">See every plan and price</Link>
       </p>
     </main>
+    </>
   );
 }
