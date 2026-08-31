@@ -29,15 +29,24 @@ const SEL: Record<Slot, string> = {
 /* A phone preview needs a phone HEIGHT as well as a width: the bottle is sized in
    cqh, so a 390-wide frame that is still 100svh tall would size it against the
    desktop window and the preview would lie. */
-const FRAME: Record<BreakPoint, { w: number; h: number } | null> = {
-  desktop: null,
-  mobile: { w: 390, h: 844 },
-};
+/* Presets, so "does this hold on another screen" is answerable here rather than by
+   resizing a browser. Each maps to one of the two layout sets. */
+const PRESETS = [
+  { id: 'fit', label: 'fit', bp: 'desktop' as BreakPoint, w: 0, h: 0 },
+  { id: '1440', label: '1440×900', bp: 'desktop' as BreakPoint, w: 1440, h: 900 },
+  { id: '1280', label: '1280×720', bp: 'desktop' as BreakPoint, w: 1280, h: 720 },
+  { id: 'wide', label: '1920×620', bp: 'desktop' as BreakPoint, w: 1920, h: 620 },
+  { id: '1024', label: '1024×768', bp: 'desktop' as BreakPoint, w: 1024, h: 768 },
+  { id: '390', label: '390×844', bp: 'mobile' as BreakPoint, w: 390, h: 844 },
+  { id: '360', label: '360×640', bp: 'mobile' as BreakPoint, w: 360, h: 640 },
+] as const;
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
 export default function HeroLab() {
-  const [bp, setBp] = useState<BreakPoint>('desktop');
+  const [preset, setPreset] = useState<string>('1440');
+  const chosen = PRESETS.find(x => x.id === preset) ?? PRESETS[1]!;
+  const bp = chosen.bp;
   const [kind, setKind] = useState<MilkKind>('cow');
   const [slot, setSlot] = useState<Slot>('bottle');
   const [layout, setLayout] = useState(() => clone(LAYOUT));
@@ -89,7 +98,9 @@ export default function HeroLab() {
       return null;
     };
     const stageBox = () => {
-      const el = frame.querySelector('.vh');
+      // the COMPOSITION box, not the hero: the layers live inside it, so a drag
+      // measured against the hero would be wrong wherever the box is letterboxed
+      const el = frame.querySelector('.vh-slide[data-on] .vh-comp') ?? frame.querySelector('.vh');
       const r = el?.getBoundingClientRect();
       return { w: r?.width || 1, h: r?.height || 1 };
     };
@@ -159,8 +170,8 @@ export default function HeroLab() {
           className="lab-frame"
           ref={frameRef}
           style={
-            FRAME[bp]
-              ? { width: FRAME[bp]!.w, height: FRAME[bp]!.h, minHeight: 0, margin: '2rem auto' }
+            chosen.w
+              ? { width: chosen.w, height: chosen.h, minHeight: 0, margin: '1.5rem auto' }
               : undefined
           }
         >
@@ -175,14 +186,19 @@ export default function HeroLab() {
           (bottle in svh), never pixels, so a placement holds at every size.
         </p>
 
-        <label>Breakpoint</label>
-        <div className="lab-seg">
-          {(['desktop', 'mobile'] as BreakPoint[]).map(b => (
-            <button key={b} className={b === bp ? 'on' : undefined} onClick={() => setBp(b)}>
-              {b}{FRAME[b] ? ` ${FRAME[b]!.w}×${FRAME[b]!.h}` : ''}
+        <label>Screen <span>editing “{bp}” set</span></label>
+        <div className="lab-seg lab-seg-col">
+          {PRESETS.map(x => (
+            <button key={x.id} className={x.id === preset ? 'on' : undefined}
+                    onClick={() => setPreset(x.id)}>
+              {x.label}
             </button>
           ))}
         </div>
+        <p className="lab-hint">
+          The desktop presets all share ONE set of numbers — switch between them to
+          check the arrangement holds. If it does at 1920×620 and 1024×768, it holds.
+        </p>
 
         <label>Variant — each gets its own positions</label>
         <div className="lab-seg">

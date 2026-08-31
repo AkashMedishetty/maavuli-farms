@@ -128,6 +128,11 @@ export default function MilkHero() {
             data-on={i === active || undefined}
             style={layoutVars(LAYOUT[bp][v.kind])}
           >
+            {/* Fixed-aspect box that scales to fit. Every layer sizes and positions
+                against THIS, so the composition scales as one rigid unit instead of
+                the bottle following height while the splash follows width. That
+                divergence is why an arrangement fell apart on another screen. */}
+            <div className="vh-comp">
             <Wordmark className="vh-word" />
             {ASSETS_READY ? (
               <>
@@ -156,6 +161,7 @@ export default function MilkHero() {
             ) : (
               <Stand />
             )}
+            </div>
           </div>
         ))}
       </div>

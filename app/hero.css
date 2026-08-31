@@ -53,7 +53,7 @@
   /* The hero responds to its OWN width, not the viewport's. That is what makes the
      390px frame in /hero-lab a faithful phone preview instead of a desktop layout
      squeezed into a narrow box. */
-  container-type: size;
+  container-type: inline-size;
   container-name: hero;
   /* NOT a grid. This is a layered composition: the stage and the copy are absolute
      siblings, so the copy's size can never shift where the bottle centres. The nav
@@ -96,6 +96,8 @@
 .vh-slide {
   position: absolute;
   inset: 0;
+  display: grid;
+  place-items: center;
   opacity: 0;
   visibility: hidden;
   transition: opacity var(--switch) var(--ease), visibility 0s linear var(--switch);
@@ -104,6 +106,23 @@
   opacity: 1;
   visibility: visible;
   transition: opacity var(--switch) var(--ease), visibility 0s;
+}
+
+/*
+ * The composition box.
+ *
+ * Fixed aspect, scaled to fit the hero — so all four layers share ONE scale basis.
+ * Previously the bottle was height-driven and the splash width-driven, which meant
+ * any change of aspect ratio pulled them apart and no set of numbers could hold
+ * across screens. Inside this box, a % of width and a % of height scale together,
+ * so the arrangement is rigid the way a poster is.
+ */
+.vh-comp {
+  position: relative;
+  aspect-ratio: var(--comp-ar, 16 / 10);
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 /* Offsets live on left/bottom, NOT in translate.
@@ -123,7 +142,7 @@
 /* the bottle sets the scale: height-driven, nothing else */
 .vh-bottle {
   z-index: 2;
-  height: var(--bottle-h);   /* cqh — container height, so the lab frame is honest */
+  height: var(--bottle-h);   /* % of the composition box */
   left: calc(50% + var(--bottle-x));
   bottom: calc(var(--base-b) + var(--bottle-y));
   translate: calc(-50% + var(--px) * 34px) calc(var(--py) * 16px - var(--sy) * 70px);
@@ -275,6 +294,7 @@
 .vh-switch button.on span { scale: 1.14; }
 
 @container hero (max-width: 900px) {
+  .vh-comp { --comp-ar: 10 / 16; }
   .vh-copy { width: auto; padding-bottom: clamp(5.5rem, 16vh, 8rem); }
   .vh-copy h1 { font-size: var(--step-3); }
   .vh-arrow { display: none; }
