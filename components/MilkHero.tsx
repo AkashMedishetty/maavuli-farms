@@ -42,12 +42,19 @@ export default function MilkHero() {
   const [bp, setBp] = useState<BreakPoint>('desktop');
   const rootRef = useRef<HTMLElement>(null);
 
+  /* Which layout set to use, from the hero's OWN width — not the viewport's.
+     The CSS uses a container query, so keying this off matchMedia would let the
+     data and the styles disagree, and the 390px frame in /hero-lab would show a
+     desktop layout while claiming to be mobile. */
   useEffect(() => {
-    const mq = window.matchMedia('(max-width: 900px)');
-    const sync = () => setBp(mq.matches ? 'mobile' : 'desktop');
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry?.contentRect.width ?? 0;
+      setBp(w > 0 && w <= 900 ? 'mobile' : 'desktop');
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   /* pointer + scroll parallax, written to CSS custom props in one rAF */

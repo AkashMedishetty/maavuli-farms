@@ -58,8 +58,9 @@ const MOBILE_COW: Layout = {
 
 export const LAYOUT: Record<BreakPoint, Record<MilkKind, Layout>> = {
   desktop: { cow: DESKTOP_COW, buffalo: mirrorLayout(DESKTOP_COW) },
-  // on a phone the composition is centred, so a mirror would be a no-op
-  mobile: { cow: MOBILE_COW, buffalo: MOBILE_COW },
+  // mirrored on mobile too: a no-op while the composition is centred, and correct
+  // the moment it is not
+  mobile: { cow: MOBILE_COW, buffalo: mirrorLayout(MOBILE_COW) },
 };
 
 /** CSS custom properties for one variant's layout. Applied inline by the hero. */

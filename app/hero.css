@@ -50,6 +50,11 @@
   min-height: 100svh;
   overflow: hidden;
   isolation: isolate;
+  /* The hero responds to its OWN width, not the viewport's. That is what makes the
+     390px frame in /hero-lab a faithful phone preview instead of a desktop layout
+     squeezed into a narrow box. */
+  container-type: inline-size;
+  container-name: hero;
   /* NOT a grid. This is a layered composition: the stage and the copy are absolute
      siblings, so the copy's size can never shift where the bottle centres. The nav
      is the only thing in normal flow. */
@@ -269,14 +274,7 @@
 .vh-switch button.on { border-color: var(--milk); background: rgba(255, 255, 255, 0.14); }
 .vh-switch button.on span { scale: 1.14; }
 
-@media (max-width: 900px) {
-  .vh {
-    --bottle-h: 40svh;
-    --splash-w: 122%;
-    --objects-w: 132%;
-    --word-w: 190%;
-    --word-y: 36%;
-  }
+@container hero (max-width: 900px) {
   .vh-copy { width: auto; padding-bottom: clamp(5.5rem, 16vh, 8rem); }
   .vh-copy h1 { font-size: var(--step-3); }
   .vh-arrow { display: none; }
