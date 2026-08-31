@@ -51,11 +51,14 @@ const DESKTOP_COW: Layout = {
 
 /* Centred starting point. The previous mobile numbers were recorded while the y
    sign was inconsistent between layers, so they are not salvageable — re-drag. */
+/* Centred start for the STACKED mobile layout: the product now owns the upper 56%
+   of the hero and the copy the lower 44%, so these are percentages of a portrait
+   4:5 composition box, not of the whole screen. */
 const MOBILE_COW: Layout = {
-  bottle: { x: 0, y: 4, size: 44 },
-  splash: { x: 0, y: 10, size: 104 },
-  objects: { x: 0, y: 2, size: 88 },
-  word: { x: 0, y: 58, size: 120 },
+  bottle: { x: 0, y: 10, size: 66 },
+  splash: { x: 0, y: 16, size: 100 },
+  objects: { x: 0, y: 6, size: 86 },
+  word: { x: 0, y: 46, size: 88 },
 };
 
 export const LAYOUT: Record<BreakPoint, Record<MilkKind, Layout>> = {

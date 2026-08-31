@@ -175,7 +175,7 @@ export default function HeroLab() {
               : undefined
           }
         >
-          <MilkHero />
+          <MilkHero motion={false} />
         </div>
       </div>
 

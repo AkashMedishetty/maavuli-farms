@@ -294,7 +294,25 @@
 .vh-switch button.on span { scale: 1.14; }
 
 @container hero (max-width: 900px) {
-  .vh-comp { --comp-ar: 10 / 16; }
+  /*
+   * Phones STACK. On desktop the copy sits bottom-left beside the product; at this
+   * width they were both filling the whole hero and overlapping, which is why
+   * nothing on mobile looked aligned. Product takes the upper area, copy the lower,
+   * and the copy centres — a left-aligned block under a centred product reads as a
+   * mistake on a narrow screen.
+   */
+  .vh-stage { inset: 0 0 44% 0; }
+  .vh-comp { --comp-ar: 4 / 5; }
+  .vh-copy {
+    left: 0;
+    right: 0;
+    width: auto;
+    text-align: center;
+    padding-bottom: clamp(4.5rem, 13vh, 7rem);
+  }
+  .vh-copy-slide { align-items: center; }
+  .vh-line { max-width: 34ch; margin-inline: auto; }
+  .vh-switch { left: 0; right: 0; justify-content: center; bottom: 1.5rem; }
   .vh-copy { width: auto; padding-bottom: clamp(5.5rem, 16vh, 8rem); }
   .vh-copy h1 { font-size: var(--step-3); }
   .vh-arrow { display: none; }

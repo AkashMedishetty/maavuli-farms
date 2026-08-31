@@ -36,7 +36,7 @@ import { BRAND } from '@/lib/content';
 
 const SWITCH_MS = 900;
 
-export default function MilkHero() {
+export default function MilkHero({ motion = true }: { motion?: boolean } = {}) {
   const [active, setActive] = useState(0);
   // which layout set to use. Observed rather than assumed, so a resize re-reads it.
   const [bp, setBp] = useState<BreakPoint>('desktop');
@@ -61,6 +61,9 @@ export default function MilkHero() {
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
+    // Parallax is off in the editor: dragging against a target that follows the
+    // pointer means every measurement is taken from a moving reference.
+    if (!motion) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
     let raf = 0;
@@ -97,7 +100,7 @@ export default function MilkHero() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('scroll', onScroll);
     };
-  }, []);
+  }, [motion]);
 
   const go = (n: number) => setActive((n + VARIANTS.length) % VARIANTS.length);
 
