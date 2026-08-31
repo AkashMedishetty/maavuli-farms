@@ -1,0 +1,479 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Maavuli kolam — centreline tracer</title>
+<style>
+  body{margin:0;background:#151515;color:#eee;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;display:flex;height:100vh}
+  #stage{flex:1;position:relative;display:grid;place-items:center;background:#C0272D;overflow:hidden}
+  #drop{position:absolute;inset:0;display:grid;place-items:center;text-align:center;
+        background:#151515;z-index:5;font-size:15px;padding:40px}
+  #drop.hide{display:none}
+  #drop b{display:block;font-size:20px;margin-bottom:8px}
+  #drop.over{background:#1f2f1f;outline:2px dashed #6c6}
+  #wrap{position:relative;width:min(82vmin,660px);aspect-ratio:1}
+  #ref,#out,#skel{position:absolute;inset:0;width:100%;height:100%}
+  #ref,#skel{object-fit:contain;image-rendering:pixelated;pointer-events:none}
+  aside{width:280px;padding:16px;background:#0e0e0e;overflow:auto;flex:none}
+  label{display:block;margin:9px 0 1px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;opacity:.55}
+  input[type=range]{width:100%}
+  button{width:100%;padding:8px;margin-top:6px;background:#2c2c2c;color:#eee;border:1px solid #4a4a4a;border-radius:4px;cursor:pointer;font:inherit}
+  button:hover{background:#383838}
+  hr{border:0;border-top:1px solid #2a2a2a;margin:14px 0}
+  #stat{font-size:11px;opacity:.6;white-space:pre-line;margin-top:10px}
+  .k{fill:none;stroke:#fff;stroke-linecap:round;stroke-linejoin:round}
+</style>
+
+<div id="stage">
+  <div id="drop"><div>
+    <b>Drop the logo PNG here</b>
+    or paste it with ⌘V / Ctrl+V<br>
+    <span style="opacity:.5">a dropped file can be read pixel-by-pixel;<br>a file:// path cannot</span>
+  </div></div>
+  <div id="wrap">
+    <img id="ref" alt="">
+    <img id="skel" alt="">
+    <svg id="out" viewBox="0 0 400 400"><g id="dg" fill="#fff" opacity="0"></g><path class="k" d=""/></svg>
+  </div>
+</div>
+
+<aside>
+  <strong>Crop to the kolam</strong>
+  <label>left / right <span id="vX"></span></label>
+  <input id="x0" type="range" min="0" max="100" value="28">
+  <input id="x1" type="range" min="0" max="100" value="70">
+  <label>top / bottom <span id="vY"></span></label>
+  <input id="y0" type="range" min="0" max="100" value="2">
+  <input id="y1" type="range" min="0" max="100" value="46">
+  <button id="fitc">⤢ fit crop to the mark</button>
+
+  <hr><strong>Extract centreline</strong>
+  <label>ink threshold <span id="vT"></span></label>
+  <input id="th" type="range" min="20" max="240" value="150">
+  <label>blur (px) <span id="vB"></span></label>
+  <input id="bl" type="range" min="0" max="4" value="1" step="1">
+  <label>working width <span id="vRes"></span></label>
+  <input id="res" type="range" min="200" max="1400" value="900" step="20">
+  <label><input id="inv" type="checkbox" checked> ink is the LIGHT colour</label>
+  <label><input id="showSkel" type="checkbox"> show raw skeleton</label>
+
+  <hr><strong>Filled dots (pulli)</strong>
+  <label>max dot size (px) <span id="vDm"></span></label>
+  <input id="dm" type="range" min="0" max="60" value="22">
+  <label>min solidity <span id="vDs"></span></label>
+  <input id="ds" type="range" min="30" max="100" value="60">
+
+  <hr><strong>Fit</strong>
+  <label>prune spurs shorter than <span id="vP"></span></label>
+  <input id="pr" type="range" min="0" max="30" value="6">
+  <label>de-jag passes <span id="vDj"></span></label>
+  <input id="dj" type="range" min="0" max="12" value="4" step="1">
+  <label>simplify tolerance <span id="vE"></span></label>
+  <input id="ep" type="range" min="0" max="4" value="1.2" step=".1">
+  <label>smoothing <span id="vS"></span></label>
+  <input id="sm" type="range" min="0" max="100" value="60">
+  <label>coordinate precision <span id="vPc"></span></label>
+  <input id="pc" type="range" min="0" max="2" value="1" step="1">
+
+  <hr><strong>Render</strong>
+  <label>stroke width <span id="vW"></span></label>
+  <input id="w" type="range" min="0.5" max="10" value="3" step=".25">
+  <label>reference opacity <span id="vO"></span></label>
+  <input id="op" type="range" min="0" max="100" value="35">
+  <label>draw duration (s) <span id="vD"></span></label>
+  <input id="du" type="range" min=".4" max="6" value="2.4" step=".1">
+
+  <button id="go">⟳ retrace</button>
+  <button id="replay">▶ replay draw</button>
+  <button id="dl">⬇ export SVG</button>
+  <div id="stat"></div>
+</aside>
+
+<script>
+const $ = id => document.getElementById(id);
+let img = null, PREC = 1;
+
+/* ---------- input ---------- */
+const drop = $('drop');
+addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+addEventListener('dragleave', () => drop.classList.remove('over'));
+addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+  if (f) load(f);
+});
+addEventListener('paste', e => {
+  const f = [...e.clipboardData.files].find(f => f.type.startsWith('image/'));
+  if (f) load(f);
+});
+function load(file){
+  const url = URL.createObjectURL(file);      // blob: origin -> canvas readback allowed
+  const im = new Image();
+  im.onload = () => { img = im; $('ref').src = url; drop.classList.add('hide'); trace(); };
+  im.src = url;
+}
+
+/* ---------- pixels ---------- */
+function sample(){
+  const W = +$('res').value;
+  const cx0 = img.width  * +$('x0').value/100, cx1 = img.width  * +$('x1').value/100;
+  const cy0 = img.height * +$('y0').value/100, cy1 = img.height * +$('y1').value/100;
+  const cw = Math.max(1, cx1-cx0), ch = Math.max(1, cy1-cy0);
+  const H = Math.max(1, Math.round(W * ch/cw));
+  const c = Object.assign(document.createElement('canvas'), {width:W, height:H});
+  const g = c.getContext('2d', {willReadFrequently:true});
+  if (+$('bl').value) g.filter = `blur(${$('bl').value}px)`;
+  g.drawImage(img, cx0, cy0, cw, ch, 0, 0, W, H);
+  const px = g.getImageData(0,0,W,H).data;
+  const th = +$('th').value, light = $('inv').checked;
+  const bin = new Uint8Array(W*H);
+  for (let i=0, p=0; i<bin.length; i++, p+=4){
+    const lum = 0.299*px[p] + 0.587*px[p+1] + 0.114*px[p+2];
+    bin[i] = (light ? lum > th : lum < th) ? 1 : 0;
+  }
+  return {bin, W, H};
+}
+
+/* ---------- pull filled discs out before thinning can destroy them ---------- */
+function extractDots(bin, W, H, maxDim, minSolid){
+  if (maxDim <= 0) return [];
+  const seen = new Uint8Array(W*H), dots = [], stack = [];
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++){
+    const s = y*W+x;
+    if (!bin[s] || seen[s]) continue;
+    stack.length = 0; stack.push(s); seen[s] = 1;
+    const cells = [];
+    let x0=x, x1=x, y0=y, y1=y;
+    while (stack.length){
+      const i = stack.pop(); cells.push(i);
+      const cx = i % W, cy = (i - cx) / W;
+      if (cx<x0) x0=cx; else if (cx>x1) x1=cx;
+      if (cy<y0) y0=cy; else if (cy>y1) y1=cy;
+      for (const [dx,dy] of N8){
+        const nx=cx+dx, ny=cy+dy;
+        if (nx<0 || ny<0 || nx>=W || ny>=H) continue;
+        const j = ny*W+nx;
+        if (bin[j] && !seen[j]){ seen[j]=1; stack.push(j); }
+      }
+    }
+    const bw = x1-x0+1, bh = y1-y0+1;
+    const solid = cells.length / (bw*bh);
+    const round = Math.min(bw,bh) / Math.max(bw,bh);
+    // a dot is small, compact and near-square; a stroke fails at least one
+    if (Math.max(bw,bh) <= maxDim && solid >= minSolid && round >= 0.6){
+      let sx=0, sy=0;
+      for (const i of cells){ const cx = i % W; sx += cx; sy += (i-cx)/W; }
+      dots.push({x: sx/cells.length, y: sy/cells.length, r: Math.sqrt(cells.length/Math.PI)});
+      for (const i of cells) bin[i] = 0;
+    }
+  }
+  return dots;
+}
+
+/* ---------- de-staircase a polyline BEFORE simplifying it ---------- */
+function smoothPoly(pts, closed, passes){
+  let p = pts;
+  if (p.length < 3 || passes <= 0) return p;
+  for (let k=0;k<passes;k++){
+    const n = p.length, q = new Array(n);
+    for (let i=0;i<n;i++){
+      if (!closed && (i===0 || i===n-1)){ q[i] = p[i]; continue; }
+      const a = p[(i-1+n)%n], b = p[(i+1)%n];
+      q[i] = [(a[0] + 2*p[i][0] + b[0])/4, (a[1] + 2*p[i][1] + b[1])/4];
+    }
+    p = q;
+  }
+  return p;
+}
+
+/* ---------- Zhang-Suen thinning ---------- */
+function thin(bin, W, H){
+  const b = bin, at = (x,y) => b[y*W+x];
+  let changed = true, guard = 0;
+  while (changed && guard++ < 200){
+    changed = false;
+    for (const step of [0,1]){
+      const kill = [];
+      for (let y=1; y<H-1; y++) for (let x=1; x<W-1; x++){
+        if (!at(x,y)) continue;
+        const p = [at(x,y-1),at(x+1,y-1),at(x+1,y),at(x+1,y+1),
+                   at(x,y+1),at(x-1,y+1),at(x-1,y),at(x-1,y-1)];
+        const B = p.reduce((a,v) => a+v, 0);
+        if (B < 2 || B > 6) continue;
+        let A = 0;
+        for (let i=0;i<8;i++) if (p[i]===0 && p[(i+1)%8]===1) A++;
+        if (A !== 1) continue;
+        const [p2,p3,p4,p5,p6,p7,p8,p9] = p;
+        if (step===0){ if (p2*p4*p6 || p4*p6*p8) continue; }
+        else         { if (p2*p4*p8 || p2*p6*p8) continue; }
+        kill.push(y*W+x);
+      }
+      if (kill.length){ changed = true; for (const i of kill) b[i] = 0; }
+    }
+  }
+  return b;
+}
+
+/* ---------- skeleton -> polylines ---------- */
+const N8 = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+function polylines(bin, W, H){
+  const deg = new Uint8Array(W*H);
+  const raw = (x,y) => N8.map(([dx,dy]) => [x+dx,y+dy])
+    .filter(([a,b]) => a>=0 && b>=0 && a<W && b<H && bin[b*W+a]);
+  // Zhang-Suen leaves redundant diagonal pixels. A diagonal neighbour that is
+  // itself touching an orthogonal neighbour closes a triangle and inflates the
+  // degree past 2, which makes the walker treat every step of a plain diagonal
+  // run as a junction and shatters it into 2-point fragments. Suppress those.
+  const nbrs = (x,y) => {
+    const all = raw(x,y);
+    return all.filter(([ax,ay]) => {
+      if (ax===x || ay===y) return true;                    // keep orthogonals
+      return !all.some(([bx,by]) =>
+        (bx===x || by===y) && Math.abs(bx-ax)<=1 && Math.abs(by-ay)<=1);
+    });
+  };
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++)
+    if (bin[y*W+x]) deg[y*W+x] = nbrs(x,y).length;
+
+  const used = new Set();
+  const ek = (a,b) => a<b ? a+'_'+b : b+'_'+a;
+  const out = [];
+
+  const walk = (sx,sy,nx,ny) => {
+    const pts = [[sx,sy]];
+    let px = sx, py = sy, cx = nx, cy = ny, guard = 0;
+    for(;;){
+      used.add(ek(py*W+px, cy*W+cx));
+      pts.push([cx,cy]);
+      if (cx===sx && cy===sy) break;          // closed the loop — must come first,
+      if (deg[cy*W+cx] !== 2) break;          // a pure cycle is all degree 2 and
+      if (++guard > W*H) break;               // would otherwise never terminate
+      const nb = nbrs(cx,cy).filter(([a,b]) => !(a===px && b===py));
+      if (!nb.length) break;
+      px = cx; py = cy; [cx,cy] = nb[0];
+    }
+    return pts;
+  };
+
+  // open chains: start at endpoints and junctions
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++){
+    const i = y*W+x;
+    if (!bin[i] || deg[i]===2) continue;
+    for (const [nx,ny] of nbrs(x,y))
+      if (!used.has(ek(i, ny*W+nx))) out.push({pts: walk(x,y,nx,ny), closed:false});
+  }
+  // whatever remains is a pure loop
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++){
+    const i = y*W+x;
+    if (!bin[i] || deg[i]!==2) continue;
+    const nb = nbrs(x,y).filter(([a,b]) => !used.has(ek(i, b*W+a)));
+    if (!nb.length) continue;
+    const pts = walk(x,y,nb[0][0],nb[0][1]);
+    out.push({pts, closed:true});
+  }
+  return out;
+}
+
+/* ---------- simplify + smooth ---------- */
+function rdp(pts, eps){
+  if (eps <= 0 || pts.length < 3) return pts;
+  const d2 = (p,a,b) => {
+    const [x,y]=p, [x1,y1]=a, [x2,y2]=b;
+    const dx=x2-x1, dy=y2-y1, L=dx*dx+dy*dy;
+    const t = L ? Math.max(0, Math.min(1, ((x-x1)*dx+(y-y1)*dy)/L)) : 0;
+    const ex=x1+t*dx-x, ey=y1+t*dy-y;
+    return ex*ex+ey*ey;
+  };
+  const keep = new Uint8Array(pts.length); keep[0]=keep[pts.length-1]=1;
+  (function rec(a,b){
+    let best=-1, bi=-1;
+    for (let i=a+1;i<b;i++){ const d=d2(pts[i],pts[a],pts[b]); if (d>best){best=d;bi=i;} }
+    if (bi>0 && best > eps*eps){ keep[bi]=1; rec(a,bi); rec(bi,b); }
+  })(0, pts.length-1);
+  return pts.filter((_,i) => keep[i]);
+}
+
+function toPath(pts, closed, tension){
+  if (pts.length < 2) return '';
+  const n = pts.length, t = tension/100 * 0.5;
+  const P = i => pts[closed ? (i+n)%n : Math.max(0, Math.min(n-1, i))];
+  const f = v => +v.toFixed(PREC);
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  const last = closed ? n : n-1;
+  for (let i=0;i<last;i++){
+    const p0=P(i-1), p1=P(i), p2=P(i+1), p3=P(i+2);
+    const c1 = [p1[0] + (p2[0]-p0[0])*t, p1[1] + (p2[1]-p0[1])*t];
+    const c2 = [p2[0] - (p3[0]-p1[0])*t, p2[1] - (p3[1]-p1[1])*t];
+    d += `C${f(c1[0])},${f(c1[1])} ${f(c2[0])},${f(c2[1])} ${f(p2[0])},${f(p2[1])}`;
+  }
+  return d + (closed ? 'Z' : '');
+}
+
+/* Row-band crop fit. This logo is kolam / gap / "Maavuli" / gap / "Farm Milk",
+   so the contiguous band of inked rows containing the current crop centre IS the
+   mark. A percentage default tuned for one image silently clips a different one
+   — 946x690 and 1568x1157 do not put the kolam in the same place. Measure it. */
+function fitCrop(){
+  if (!img) return;
+  const W = 420, H = Math.max(1, Math.round(W*img.height/img.width));
+  const c = Object.assign(document.createElement('canvas'), {width:W, height:H});
+  const g = c.getContext('2d', {willReadFrequently:true});
+  g.drawImage(img, 0, 0, W, H);
+  const px = g.getImageData(0,0,W,H).data;
+  const th = +$('th').value, light = $('inv').checked;
+  const ink = (x,y) => {
+    const p = (y*W+x)*4;
+    const l = 0.299*px[p] + 0.587*px[p+1] + 0.114*px[p+2];
+    return light ? l > th : l < th;
+  };
+  const rows = new Array(H).fill(0);
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) if (ink(x,y)) rows[y]++;
+  const noise = Math.max(1, Math.round(W*0.004));
+
+  let cy = Math.round(H*(+$('y0').value + +$('y1').value)/200);
+  if (rows[cy] <= noise){                       // the centre landed in a gap
+    let k = 1, hit = -1;
+    while (k < H && hit < 0){
+      if (cy-k >= 0 && rows[cy-k] > noise) hit = cy-k;
+      else if (cy+k < H && rows[cy+k] > noise) hit = cy+k;
+      k++;
+    }
+    if (hit < 0) return;
+    cy = hit;
+  }
+  let a = cy, b = cy;
+  while (a > 0   && rows[a-1] > noise) a--;
+  while (b < H-1 && rows[b+1] > noise) b++;
+
+  let x0 = W, x1 = 0;
+  for (let y=a;y<=b;y++) for (let x=0;x<W;x++) if (ink(x,y)){ if (x<x0) x0=x; if (x>x1) x1=x; }
+  if (x1 < x0) return;
+
+  const m = 2.5;                                // small breathing margin, in %
+  $('x0').value = Math.max(0,   x0/W*100 - m);
+  $('x1').value = Math.min(100, x1/W*100 + m);
+  $('y0').value = Math.max(0,   a /H*100 - m);
+  $('y1').value = Math.min(100, b /H*100 + m);
+  trace();
+}
+
+/* ---------- pipeline ---------- */
+let lastD = '', lastDots = [];
+function trace(){
+  for (const [k,v] of Object.entries({
+    vX:$('x0').value+'% → '+$('x1').value+'%', vY:$('y0').value+'% → '+$('y1').value+'%',
+    vT:$('th').value, vB:$('bl').value, vRes:$('res').value+'px', vP:$('pr').value+'px',
+    vDm:$('dm').value+'px', vDs:$('ds').value+'%', vDj:$('dj').value, vPc:$('pc').value+'dp',
+    vE:$('ep').value, vS:$('sm').value, vW:$('w').value, vO:$('op').value+'%', vD:$('du').value+'s'
+  })) $(k).textContent = v;
+  $('ref').style.opacity = +$('op').value/100;
+  if (!img) return;
+
+  const t0 = performance.now();
+  const {bin, W, H} = sample();
+  // ink on a boundary row/column means the crop is CUTTING the art
+  const edges = [];
+  for (let x=0;x<W;x++) if (bin[x])            { edges.push('top');    break; }
+  for (let x=0;x<W;x++) if (bin[(H-1)*W+x])    { edges.push('bottom'); break; }
+  for (let y=0;y<H;y++) if (bin[y*W])          { edges.push('left');   break; }
+  for (let y=0;y<H;y++) if (bin[y*W+W-1])      { edges.push('right');  break; }
+  const ink = bin.reduce((a,v) => a+v, 0);
+  const dots = extractDots(bin, W, H, +$('dm').value, +$('ds').value/100);
+  thin(bin, W, H);
+
+  if ($('showSkel').checked){
+    const c = Object.assign(document.createElement('canvas'), {width:W, height:H});
+    const g = c.getContext('2d'), im = g.createImageData(W,H);
+    for (let i=0;i<bin.length;i++){
+      const p=i*4; im.data[p]=0; im.data[p+1]=255; im.data[p+2]=120; im.data[p+3]=bin[i]?255:0;
+    }
+    g.putImageData(im,0,0); $('skel').src = c.toDataURL(); $('skel').style.display='';
+  } else $('skel').style.display='none';
+
+  let lines = polylines(bin, W, H);
+  const prune = +$('pr').value;
+  lines = lines.filter(l => l.closed || l.pts.length > prune);
+
+  // normalise the crop into the 400x400 viewBox, aspect preserved
+  const s = 380 / Math.max(W,H), ox = (400 - W*s)/2, oy = (400 - H*s)/2;
+  const eps = +$('ep').value, tens = +$('sm').value;
+  const centre = [W/2, H/2];
+  lines.sort((a,b) => {
+    const r = l => { const p=l.pts[0]; return Math.hypot(p[0]-centre[0], p[1]-centre[1]); };
+    return r(a) - r(b);
+  });
+
+  const passes = +$('dj').value;
+  PREC = +$('pc').value;
+  let d = '', pts = 0;
+  for (const l of lines){
+    const soft   = smoothPoly(l.pts, l.closed, passes);
+    const simple = rdp(soft, eps).map(([x,y]) => [ox+x*s, oy+y*s]);
+    pts += simple.length;
+    d += toPath(simple, l.closed, tens);
+  }
+  lastD = d;
+  lastDots = dots.map(p => ({x: ox+p.x*s, y: oy+p.y*s, r: Math.max(0.5, p.r*s)}));
+
+  const path = $('out').querySelector('path');
+  path.setAttribute('d', d);
+  path.setAttribute('stroke-width', $('w').value);
+  $('dg').innerHTML = lastDots
+    .map(p => `<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="${p.r.toFixed(2)}"/>`).join('');
+  play();
+
+  const len = Math.round(path.getTotalLength());
+  const kb = ((lastD.length + lastDots.length*60 + 700)/1024).toFixed(1);
+  $('stat').textContent =
+    `${lines.length} subpaths · ${pts} points · ${lastDots.length} dots\nink ${ink}px · length ${len} · ~${kb} KB\ntraced in ${Math.round(performance.now()-t0)}ms`
+    + (edges.length ? `\n\n⚠ CROP IS CUTTING THE ART\nink touches: ${edges.join(', ')}\npress “fit crop to the mark”` : '');
+}
+
+function play(){
+  const path = $('out').querySelector('path');
+  const len = path.getTotalLength(), T = +$('du').value*1000;
+  const dT = Math.min(700, T*0.35);        // pulli go down first, then the line
+  $('dg').animate([{opacity:0},{opacity:1}],
+    {duration:dT, easing:'ease-out', fill:'forwards'});
+  path.style.strokeDasharray = len;
+  path.animate([{strokeDashoffset:len},{strokeDashoffset:0}],
+    {duration:T, delay:dT, easing:'cubic-bezier(.65,.02,.31,1)', fill:'forwards'});
+}
+
+function exportSvg(){
+  const len = Math.ceil($('out').querySelector('path').getTotalLength());
+  const T = +$('du').value, dT = +Math.min(0.7, T*0.35).toFixed(2);
+  const dots = lastDots
+    .map(p => `<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="${p.r.toFixed(2)}"/>`).join('');
+  // A fixed 400x400 box leaves asymmetric dead space around the art, which
+  // reads as a crop and makes the asset fight you when you scale it. Fit the
+  // viewBox to the real bounds and give it intrinsic width/height.
+  const bb = $('out').getBBox();
+  const pad = +$('w').value/2 + 1;
+  const vb = [bb.x-pad, bb.y-pad, bb.width+pad*2, bb.height+pad*2].map(v => +v.toFixed(1));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}" width="${vb[2]}" height="${vb[3]}" role="img" aria-label="Maavuli Farm Milk kolam">
+<style>
+  .p{fill:currentColor;opacity:0;animation:pop ${dT}s ease-out forwards}
+  .k{fill:none;stroke:currentColor;stroke-width:${$('w').value};stroke-linecap:round;stroke-linejoin:round;
+     stroke-dasharray:${len};stroke-dashoffset:${len};animation:draw ${T}s cubic-bezier(.65,.02,.31,1) ${dT}s forwards}
+  @keyframes pop{to{opacity:1}}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @media (prefers-reduced-motion:reduce){
+    .k{animation:none;stroke-dashoffset:0}
+    .p{animation:none;opacity:1}
+  }
+</style>
+<g class="p">${dots}</g>
+<path class="k" d="${lastD}"/>
+</svg>`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([svg], {type:'image/svg+xml'}));
+  a.download = 'maavuli-kolam.svg';
+  a.click();
+}
+
+document.querySelectorAll('input').forEach(el => el.addEventListener('input', trace));
+$('go').onclick = trace;
+$('fitc').onclick = fitCrop;
+$('replay').onclick = play;
+$('dl').onclick = exportSvg;
+trace();
+</script>

@@ -1,0 +1,27 @@
+# deps & build
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# env — never commit Razorpay or Mongo credentials
+.env
+.env.*
+!.env.example
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# NOTE: lib/generated/ IS committed on purpose — it is derived from
+# assets/brand/*.svg by scripts/extract-art.mjs, and committing it means a clone
+# builds without needing the source artwork present.

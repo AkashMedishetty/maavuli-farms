@@ -1,0 +1,337 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Maavuli — the pour forms the mark</title>
+<style>
+  :root{ --red:#8E1B1B; --cream:#F5E9C8; }
+  *{box-sizing:border-box}
+  body{margin:0;background:#0d0d0d;color:var(--cream);
+       font:13px/1.5 ui-sans-serif,system-ui,sans-serif;display:flex;height:100vh}
+  #stage{flex:1;display:grid;place-items:center;position:relative;overflow:hidden}
+  svg{width:min(90vh,540px);height:auto;display:block}
+  #hint{position:absolute;bottom:12px;left:0;right:0;text-align:center;font-size:11px;opacity:.35}
+  aside{width:258px;flex:none;padding:20px 16px;background:#141414;overflow:auto}
+  label{display:block;margin:10px 0 1px;font-size:10px;letter-spacing:.06em;
+        text-transform:uppercase;opacity:.5}
+  input[type=range]{width:100%}
+  button{width:100%;padding:8px;margin-top:8px;background:#2b2b2b;color:var(--cream);
+         border:1px solid #4a4a4a;border-radius:4px;cursor:pointer;font:inherit}
+  button:hover{background:#373737}
+  button.on{background:#3f3f2a;border-color:#8a8a4a}
+  .seg{display:flex;gap:6px;margin-top:8px}
+  .seg button{margin:0}
+  hr{border:0;border-top:1px solid #262626;margin:14px 0}
+  #beat{font-size:11px;opacity:.55;margin-top:10px;min-height:34px}
+  strong{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.6}
+</style>
+
+<div id="stage">
+  <svg id="sv" viewBox="0 0 540 720">
+    <defs>
+      <filter id="goo" x="-40%" y="-15%" width="180%" height="140%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
+        <feColorMatrix in="b" result="g" type="matrix"
+          values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 24 -10"/>
+        <feBlend in="SourceGraphic" in2="g"/>
+      </filter>
+      <mask id="flood"><rect id="floodr" x="0" y="0" width="540" height="0" fill="#fff"/></mask>
+    </defs>
+
+    <rect width="540" height="720" fill="var(--red)"/>
+    <g id="mark">
+      <g id="mtx">
+        <g id="kolam" fill="none" stroke="var(--cream)" stroke-linecap="round" stroke-linejoin="round"></g>
+        <g id="pulli" fill="var(--cream)"></g>
+      </g>
+    </g>
+    <g id="feed" filter="url(#goo)" fill="var(--cream)"></g>
+    <g id="word" fill="var(--cream)" text-anchor="middle"></g>
+    <g id="guides"></g>
+  </svg>
+  <div id="hint">drop <b>kolam.svg</b> here — a second SVG without circles is used as the wordmark</div>
+</div>
+
+<aside>
+  <strong>Timeline</strong>
+  <label>scrub <span id="vT"></span></label>
+  <input id="t" type="range" min="0" max="1000" value="0">
+  <button id="play">▶ play</button>
+  <label>speed <span id="vS"></span></label>
+  <input id="sp" type="range" min="30" max="200" value="100">
+
+  <hr><strong>How the mark forms</strong>
+  <div class="seg">
+    <button id="mDraw" class="on">draw</button>
+    <button id="mFlood">flood</button>
+  </div>
+  <label><input id="head" type="checkbox" checked> wet head at the front</label>
+
+  <hr><strong>The drop</strong>
+  <label>drop size <span id="vDs"></span></label>
+  <input id="ds" type="range" min="3" max="40" value="13" step=".5">
+  <label>gravity <span id="vG"></span></label>
+  <input id="g" type="range" min="200" max="2600" value="1050" step="20">
+  <label>stretch <span id="vSt"></span></label>
+  <input id="st" type="range" min="0" max="120" value="60">
+  <label>viscosity (goo) <span id="vV"></span></label>
+  <input id="v" type="range" min="0" max="16" value="7">
+
+  <hr><strong>Mark</strong>
+  <label>kolam stroke <span id="vK"></span></label>
+  <input id="k" type="range" min="1" max="9" value="3" step=".25">
+  <label><input id="guide" type="checkbox"> show landing guide + mark bounds</label>
+  <div id="beat"></div>
+</aside>
+
+<script>
+const $ = id => document.getElementById(id);
+const CX = 270, TOP = -6, K_CY = 292, K_SIZE = 272;
+/* Derived per-frame from the mark's REAL rendered height, never the nominal box:
+   fit() scales by max(vw,vh), so a non-square mark renders shorter than K_SIZE
+   and a nominal top leaves the milk stopping short of the art. */
+let LAND = K_CY - K_SIZE/2;
+
+/* One drop. It forms, detaches, falls alone, lands — the mark forms from where it
+   landed, then the wordmark rises. There is no stream at all. */
+const T = {
+  swell:[0.00,0.24], neck:[0.20,0.30], drop:[0.26,0.78], hit:[0.74,0.88],
+  form :[0.82,2.20], word:[2.32,2.94]
+};
+const END = 2.94;
+
+const cl = v => v<0?0:v>1?1:v;
+const seg = (t,[a,b]) => cl((t-a)/(b-a));
+const outQ = p => 1-(1-p)*(1-p);
+const outC = p => 1-Math.pow(1-p,3);
+const backOut = (p,s=2.2) => 1+(s+1)*Math.pow(p-1,3)+s*Math.pow(p-1,2);
+const n1 = v => Math.round(v*10)/10;
+
+let kPath = null, kDots = [], kVb = null, wordSvg = null, wordVb = null, mode = 'draw';
+
+/* measured fallback: 5x5 grid at 40px, corners empty, centre is a ring not a dot */
+const FALL = (() => {
+  const col=[127.6,167.5,208.0,247.8,287.5], row=[120.1,159.5,198.4,237.4,276.7], o=[];
+  for (let j=0;j<5;j++) for (let i=0;i<5;i++){
+    if (((i===0||i===4)&&(j===0||j===4)) || (i===2&&j===2)) continue;
+    o.push({x:col[i], y:row[j], r:4.1});
+  }
+  return {dots:o, vb:[100,92,215,213]};
+})();
+
+const fit = () => {
+  const [vx,vy,vw,vh] = kVb || FALL.vb;
+  const s = K_SIZE / Math.max(vw,vh);
+  const halfH = vh*s/2, halfW = vw*s/2;
+  return {s, tx: CX-(vx+vw/2)*s, ty: K_CY-(vy+vh/2)*s,
+          top: K_CY-halfH, bot: K_CY+halfH, halfW, vb:[vx,vy,vw,vh]};
+};
+
+/* Strip anything that would paint a background or leak CSS into this page.
+   A full-bleed rect is what other editors add on export; a <style> block would
+   bring its own .k animation rules in and fight the loader's timeline. */
+function clean(doc){
+  const root = doc.querySelector('svg');
+  const vb = (root.getAttribute('viewBox')||'0 0 400 400').trim().split(/\s+/).map(Number);
+  doc.querySelectorAll('style,defs,title,desc').forEach(n => n.remove());
+  doc.querySelectorAll('rect').forEach(r => {
+    const w = +r.getAttribute('width')||0, h = +r.getAttribute('height')||0;
+    if (w >= vb[2]*0.92 && h >= vb[3]*0.92) r.remove();
+  });
+  return vb;
+}
+
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => {
+  e.preventDefault();
+  for (const f of e.dataTransfer.files){
+    if (!/svg/.test(f.type) && !/\.svg$/i.test(f.name)) continue;
+    f.text().then(txt => {
+      const doc = new DOMParser().parseFromString(txt,'image/svg+xml');
+      const root = doc.querySelector('svg');
+      if (!root) return;
+      const vb = clean(doc);
+      const paths = [...doc.querySelectorAll('path')];
+      if (!paths.length) return;
+      // longest d wins — a frame or background path is always far shorter
+      const p = paths.reduce((a,b) =>
+        (b.getAttribute('d')||'').length > (a.getAttribute('d')||'').length ? b : a);
+      const circles = [...doc.querySelectorAll('circle')];
+      if (/kolam/i.test(f.name) || circles.length > 4){
+        kVb = vb;
+        kPath = p.getAttribute('d');
+        kDots = circles.map(c => ({x:+c.getAttribute('cx'), y:+c.getAttribute('cy'), r:+c.getAttribute('r')||4}));
+        $('hint').textContent = `kolam · ${kDots.length} dots · ${paths.length} path(s), longest kept`;
+      } else {
+        wordSvg = root.innerHTML; wordVb = vb;
+        $('hint').textContent = `wordmark loaded`;
+      }
+      frame(cur);
+    });
+  }
+});
+
+/* Land on the topmost point of the ACTUAL INK, measured by sampling the path.
+   A bounding-box top is only the art's top if the highest ink sits on the centre
+   line — asymmetry, a stray speck or a clipped export all put the bbox above the
+   ink, and that difference is the gap. Landing on a sampled point cannot gap. */
+let landCache = null;
+function landing(kp, F){
+  const key = `${(kPath||'').length}:${F.s.toFixed(4)}:${F.tx.toFixed(2)}:${F.ty.toFixed(2)}`;
+  if (landCache && landCache.key === key) return landCache.pt;
+  let best = null;
+  if (kp && kp.getTotalLength){
+    const L = kp.getTotalLength();
+    for (let i=0;i<=420;i++){
+      const p = kp.getPointAtLength(L*i/420);
+      if (!best || p.y < best.y) best = {x:p.x, y:p.y};
+    }
+  }
+  const pt = best ? {x: best.x*F.s+F.tx, y: best.y*F.s+F.ty} : {x: CX, y: F.top};
+  landCache = {key, pt};
+  return pt;
+}
+
+let cur = 0, playing = false, raf = 0, t0 = 0, lastFront = null;
+
+function frame(t){
+  cur = t;
+  const dsz=+$('ds').value, str=+$('st').value, G=+$('g').value, kw=+$('k').value;
+  const F = fit();
+  const feed = [], pulli = [];
+  const [vx,vy,vw,vh] = F.vb;
+
+  /* 0 — the mark goes into the DOM FIRST so its geometry can be measured.
+     Visibility is controlled by dashoffset (draw) or the mask (flood), never by
+     withholding the element — otherwise there is nothing to measure during the fall. */
+  $('mtx').setAttribute('transform',
+    `translate(${F.tx.toFixed(4)},${F.ty.toFixed(4)}) scale(${F.s.toFixed(6)})`);
+  $('kolam').innerHTML = kPath
+    ? `<path id="kp" d="${kPath}" stroke-width="${(kw/F.s).toFixed(3)}"/>`
+    : `<circle cx="${n1(vx+vw/2)}" cy="${n1(vy+vh/2)}" r="${n1(Math.max(vw,vh)*0.44)}"
+         stroke-width="${(kw/F.s).toFixed(3)}"
+         stroke-dasharray="${n1(4/F.s)} ${n1(10/F.s)}" opacity=".45"/>`;
+
+  const P = landing($('kp'), F);
+  const SX = P.x;                    // the pour tracks the ink, not the canvas centre
+  LAND = P.y + kw*0.6;               // a shade INTO the stroke so they always meet
+
+  /* 1 — a drop forms at the source and necks off */
+  if (t < T.neck[1]){
+    const sw = outQ(seg(t,T.swell)), nk = seg(t,T.neck);
+    feed.push(`<circle cx="${n1(SX)}" cy="${n1(TOP+9+sw*11+nk*13)}" r="${n1((3+sw*dsz*0.9)*(1-nk*0.22))}"/>`);
+    if (nk>0) feed.push(`<rect x="${n1(SX-1.4)}" y="${TOP}" width="2.8" height="${n1(15*(1-nk))}" rx="1.4"/>`);
+  }
+
+  /* 2 — the drop falls alone, stretching as it accelerates, squashing on contact */
+  const dp = seg(t,T.drop), hp = seg(t,T.hit);
+  if (dp>0 && hp<1){
+    const dt = t - T.drop[0];
+    const y  = Math.min(LAND, TOP + 20 + 0.5*G*dt*dt);
+    const v  = Math.min(1, G*dt/1000) * (str/100);
+    let rx = dsz*(1 - v*0.34), ry = dsz*(1 + v*0.95);
+    if (hp>0){ rx = dsz*(1 + hp*0.95); ry = dsz*(1 - hp*0.80); }
+    if (ry > 0.15)
+      feed.push(`<ellipse cx="${n1(SX)}" cy="${n1(hp>0?LAND:y)}" rx="${n1(rx)}" ry="${n1(ry)}"/>`);
+  }
+
+  /* 4 — reveal state only. The element already exists; this decides how much shows. */
+  const mp = seg(t,T.form);
+  const dots = kDots.length ? kDots : FALL.dots;
+
+  $('kolam').setAttribute('opacity', kPath ? 1 : (mp>0 ? 1 : 0));
+  if (mode === 'flood'){
+    $('mark').setAttribute('mask','url(#flood)');
+    $('floodr').setAttribute('y', n1(P.y-6));
+    $('floodr').setAttribute('height', n1(outC(mp)*((F.bot-(P.y-6))+14)));
+    const kp = $('kp'); if (kp) kp.style.strokeDashoffset = 0;
+  } else {
+    $('mark').removeAttribute('mask');
+    const kp = $('kp');
+    if (kp){
+      const L = kp.getTotalLength();
+      kp.style.strokeDasharray = L;
+      kp.style.strokeDashoffset = L*(1-outQ(mp));
+      /* wet head — suppressed on frames where it jumps between subpaths */
+      if ($('head').checked && mp>0 && mp<1){
+        const pt = kp.getPointAtLength(L*outQ(mp));
+        const x = pt.x*F.s+F.tx, y = pt.y*F.s+F.ty;
+        const jump = lastFront ? Math.hypot(x-lastFront[0], y-lastFront[1]) : 0;
+        if (!lastFront || jump < 34)
+          feed.push(`<circle cx="${n1(x)}" cy="${n1(y)}" r="${n1(w0*0.34*(1-mp*0.4))}"/>`);
+        lastFront = [x,y];
+      }
+    }
+  }
+
+  /* dots bead in as the milk reaches them — nearest to the landing point first.
+     Ordering is judged in stage space; the circles are emitted in PATH space. */
+  if (mp>0){
+    const ord = dots.map(d => ({d, k: mode==='flood' ? d.y
+      : Math.hypot(d.x*F.s+F.tx-SX, d.y*F.s+F.ty-LAND)})).sort((a,b)=>a.k-b.k);
+    ord.forEach((o,rank) => {
+      const p = cl((outQ(mp) - (rank/ord.length)*0.72)/0.28);
+      if (p<=0) return;
+      const r = o.d.r*backOut(p);
+      pulli.push(`<circle cx="${n1(o.d.x)}" cy="${n1(o.d.y)}" r="${n1(Math.max(0,r))}"/>`);
+    });
+  }
+
+  /* 5 — wordmark rises from below */
+  const wp = seg(t,T.word);
+  if (wp>0){
+    const dy = (1-outC(wp))*26;
+    $('word').setAttribute('opacity', n1(outC(wp)));
+    $('word').setAttribute('transform', `translate(0,${n1(dy)})`);
+    const wy = F.bot + 54;                 // sits below the REAL bottom of the mark
+    if (wordSvg){
+      const [wx,wvy,ww] = wordVb, ws = 300/ww;
+      $('word').innerHTML =
+        `<g transform="translate(${n1(CX-150-wx*ws)},${n1(wy-wvy*ws)}) scale(${n1(ws)})">${wordSvg}</g>`;
+    } else {
+      $('word').innerHTML =
+        `<text x="${CX}" y="${n1(wy+52)}" font-family="Georgia,'Iowan Old Style',serif" font-size="76">Maavuli</text>
+         <text x="${CX}" y="${n1(wy+104)}" font-family="Georgia,'Iowan Old Style',serif" font-size="31" letter-spacing="1">Farm Milk</text>`;
+    }
+  } else { $('word').setAttribute('opacity',0); $('word').innerHTML=''; }
+
+  $('feed').innerHTML = feed.join('');
+  $('feed').setAttribute('filter', +$('v').value ? 'url(#goo)' : 'none');
+  $('sv').querySelector('#goo feGaussianBlur').setAttribute('stdDeviation', $('v').value);
+  $('pulli').innerHTML = pulli.join('');
+  /* make the invisible geometry visible — this is the class of bug that hides in it */
+  $('guides').innerHTML = $('guide').checked
+    ? `<rect x="${n1(CX-F.halfW)}" y="${n1(F.top)}" width="${n1(F.halfW*2)}" height="${n1(F.bot-F.top)}"
+         fill="none" stroke="#5cc8ff" stroke-width="1" stroke-dasharray="4 4" opacity=".45"/>
+       <line x1="${n1(SX-170)}" y1="${n1(LAND)}" x2="${n1(SX+170)}" y2="${n1(LAND)}" stroke="#ff5ca8" stroke-width="1" opacity=".9"/>
+       <line x1="${n1(SX)}" y1="0" x2="${n1(SX)}" y2="${n1(F.bot)}" stroke="#ff5ca8" stroke-width=".6" opacity=".5"/>
+       <circle cx="${n1(SX)}" cy="${n1(LAND)}" r="3.5" fill="#ff5ca8"/>`
+    : '';
+
+  $('t').value = Math.round(t/END*1000);
+  $('vT').textContent = t.toFixed(2)+'s';
+  const b = Object.entries(T).find(([,[a,c]]) => t>=a && t<=c);
+  $('beat').textContent = b ? `▸ ${b[0]}  ${b[1][0]}–${b[1][1]}s` : (t>=END?'▸ settled':'');
+}
+
+function loop(now){
+  if (!playing) return;
+  const t = (now-t0)/1000*(+$('sp').value/100);
+  if (t>=END){ frame(END); playing=false; $('play').textContent='▶ replay'; return; }
+  frame(t); raf = requestAnimationFrame(loop);
+}
+$('play').onclick = () => {
+  playing = !playing;
+  $('play').textContent = playing ? '❚❚ pause' : '▶ play';
+  if (playing){ lastFront=null; t0 = performance.now()-(cur>=END?0:cur*1000/(+$('sp').value/100)); raf=requestAnimationFrame(loop); }
+  else cancelAnimationFrame(raf);
+};
+$('t').oninput = e => { playing=false; lastFront=null; $('play').textContent='▶ play'; frame(+e.target.value/1000*END); };
+$('mDraw').onclick  = () => { mode='draw';  $('mDraw').classList.add('on');  $('mFlood').classList.remove('on'); frame(cur); };
+$('mFlood').onclick = () => { mode='flood'; $('mFlood').classList.add('on'); $('mDraw').classList.remove('on');  frame(cur); };
+
+const RO = {vS:'sp',vDs:'ds',vG:'g',vSt:'st',vV:'v',vK:'k'};
+const sync = () => { for (const [k,el] of Object.entries(RO)) $(k).textContent = $(el).value; };
+Object.values(RO).forEach(id => $(id).addEventListener('input', () => { sync(); frame(cur); }));
+$('head').addEventListener('input', () => frame(cur));
+$('guide').addEventListener('input', () => frame(cur));
+sync(); frame(0);
+</script>

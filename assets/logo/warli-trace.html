@@ -1,0 +1,310 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Maavuli Warli — fill tracer</title>
+<style>
+  body{margin:0;background:#151515;color:#eee;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;display:flex;height:100vh}
+  #stage{flex:1;position:relative;display:grid;place-items:center;background:#8E1B1B;overflow:hidden}
+  #drop{position:absolute;inset:0;display:grid;place-items:center;text-align:center;background:#151515;z-index:5;padding:40px}
+  #drop.hide{display:none}
+  #drop b{display:block;font-size:20px;margin-bottom:8px}
+  #drop.over{background:#1f2f1f;outline:2px dashed #6c6}
+  #wrap{position:relative;width:min(82vmin,660px);aspect-ratio:1}
+  #ref,#out{position:absolute;inset:0;width:100%;height:100%}
+  #ref{object-fit:contain;pointer-events:none}
+  aside{width:280px;padding:16px;background:#0e0e0e;overflow:auto;flex:none}
+  label{display:block;margin:9px 0 1px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;opacity:.55}
+  input[type=range]{width:100%}
+  button{width:100%;padding:8px;margin-top:6px;background:#2c2c2c;color:#eee;border:1px solid #4a4a4a;border-radius:4px;cursor:pointer;font:inherit}
+  button:hover{background:#383838}
+  hr{border:0;border-top:1px solid #2a2a2a;margin:14px 0}
+  #stat{font-size:11px;opacity:.6;white-space:pre-line;margin-top:10px}
+</style>
+
+<div id="stage">
+  <div id="drop"><div>
+    <b>Drop the Warli PNG here</b>
+    or paste with ⌘V / Ctrl+V<br>
+    <span style="opacity:.5">filled art: traced as contours, not centrelines</span>
+  </div></div>
+  <div id="wrap">
+    <img id="ref" alt="">
+    <svg id="out" viewBox="0 0 400 400">
+      <path id="edge" fill="none" stroke="#F5E9C8"/>
+      <path id="ink" fill="#F5E9C8" fill-rule="evenodd" opacity="0"/>
+    </svg>
+  </div>
+</div>
+
+<aside>
+  <strong>Crop</strong>
+  <label>left / right <span id="vX"></span></label>
+  <input id="x0" type="range" min="0" max="100" value="0">
+  <input id="x1" type="range" min="0" max="100" value="100">
+  <label>top / bottom <span id="vY"></span></label>
+  <input id="y0" type="range" min="0" max="100" value="0">
+  <input id="y1" type="range" min="0" max="100" value="100">
+
+  <hr><strong>Ink</strong>
+  <label>threshold <span id="vT"></span></label>
+  <input id="th" type="range" min="20" max="240" value="150">
+  <label>blur (px) <span id="vB"></span></label>
+  <input id="bl" type="range" min="0" max="4" value="1" step="1">
+  <label>working width <span id="vRes"></span></label>
+  <input id="res" type="range" min="200" max="1200" value="800" step="20">
+  <label><input id="inv" type="checkbox" checked> ink is the LIGHT colour</label>
+
+  <hr><strong>Fit</strong>
+  <label>drop shapes smaller than <span id="vA"></span></label>
+  <input id="ar" type="range" min="0" max="400" value="40">
+  <label>simplify tolerance <span id="vE"></span></label>
+  <input id="ep" type="range" min="0" max="6" value="1.5" step=".1">
+  <label><input id="straight" type="checkbox" checked> straight edges (polygons)</label>
+  <label>smoothing (curve mode) <span id="vS"></span></label>
+  <input id="sm" type="range" min="0" max="100" value="40">
+  <label>coordinate precision <span id="vPc"></span></label>
+  <input id="pc" type="range" min="0" max="2" value="1" step="1">
+
+  <hr><strong>Render</strong>
+  <label>outline width <span id="vW"></span></label>
+  <input id="w" type="range" min="0.5" max="6" value="1.5" step=".25">
+  <label>reference opacity <span id="vO"></span></label>
+  <input id="op" type="range" min="0" max="100" value="30">
+  <label>draw duration (s) <span id="vD"></span></label>
+  <input id="du" type="range" min=".4" max="5" value="2" step=".1">
+
+  <button id="go">⟳ retrace</button>
+  <button id="replay">▶ replay draw + paint</button>
+  <button id="dl">⬇ export SVG</button>
+  <div id="stat"></div>
+</aside>
+
+<script>
+const $ = id => document.getElementById(id);
+let img = null, PREC = 1, lastD = '';
+
+/* ---------- input ---------- */
+const drop = $('drop');
+addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+addEventListener('dragleave', () => drop.classList.remove('over'));
+addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+  if (f) load(f);
+});
+addEventListener('paste', e => {
+  const f = [...e.clipboardData.files].find(f => f.type.startsWith('image/'));
+  if (f) load(f);
+});
+function load(file){
+  const url = URL.createObjectURL(file);
+  const im = new Image();
+  im.onload = () => { img = im; $('ref').src = url; drop.classList.add('hide'); trace(); };
+  im.src = url;
+}
+
+/* ---------- pixels ---------- */
+function sample(){
+  const W = +$('res').value;
+  const cx0 = img.width  * +$('x0').value/100, cx1 = img.width  * +$('x1').value/100;
+  const cy0 = img.height * +$('y0').value/100, cy1 = img.height * +$('y1').value/100;
+  const cw = Math.max(1, cx1-cx0), ch = Math.max(1, cy1-cy0);
+  const H = Math.max(1, Math.round(W * ch/cw));
+  const c = Object.assign(document.createElement('canvas'), {width:W, height:H});
+  const g = c.getContext('2d', {willReadFrequently:true});
+  if (+$('bl').value) g.filter = `blur(${$('bl').value}px)`;
+  g.drawImage(img, cx0, cy0, cw, ch, 0, 0, W, H);
+  const px = g.getImageData(0,0,W,H).data;
+  const th = +$('th').value, light = $('inv').checked;
+  const bin = new Uint8Array(W*H);
+  for (let i=0, p=0; i<bin.length; i++, p+=4){
+    const lum = 0.299*px[p] + 0.587*px[p+1] + 0.114*px[p+2];
+    bin[i] = (light ? lum > th : lum < th) ? 1 : 0;
+  }
+  return {bin, W, H};
+}
+
+/* ---------- marching squares: every ink/background boundary as a closed loop.
+   Holes come out as their own loops with opposite winding, so fill-rule
+   evenodd knocks them out for free -- which is what makes the frame a ring
+   instead of a solid block. ---------- */
+function contours(bin, W, H){
+  const P = (x,y) => (x>=0 && y>=0 && x<W && y<H) ? bin[y*W+x] : 0;
+  const segs = [];
+  const push = (a,b) => segs.push([a[0],a[1],b[0],b[1]]);
+  for (let y=-1; y<H; y++) for (let x=-1; x<W; x++){
+    const tl=P(x,y), tr=P(x+1,y), br=P(x+1,y+1), bl=P(x,y+1);
+    const code = tl*8 + tr*4 + br*2 + bl;
+    if (code===0 || code===15) continue;
+    const T=[x+0.5,y], R=[x+1,y+0.5], B=[x+0.5,y+1], L=[x,y+0.5];
+    switch(code){
+      case 1:  push(L,B); break;
+      case 2:  push(B,R); break;
+      case 3:  push(L,R); break;
+      case 4:  push(T,R); break;
+      case 5:  push(T,L); push(B,R); break;   // saddle, resolved consistently
+      case 6:  push(T,B); break;
+      case 7:  push(T,L); break;
+      case 8:  push(L,T); break;
+      case 9:  push(T,B); break;
+      case 10: push(T,R); push(L,B); break;   // saddle
+      case 11: push(T,R); break;
+      case 12: push(L,R); break;
+      case 13: push(B,R); break;
+      case 14: push(L,B); break;
+    }
+  }
+  const key = (x,y) => x.toFixed(1)+':'+y.toFixed(1);
+  const map = new Map();
+  segs.forEach((s,i) => {
+    for (const k of [key(s[0],s[1]), key(s[2],s[3])]){
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(i);
+    }
+  });
+  const done = new Uint8Array(segs.length), loops = [];
+  for (let i=0;i<segs.length;i++){
+    if (done[i]) continue;
+    const pts = [];
+    let idx = i, at = [segs[i][0], segs[i][1]];
+    for(;;){
+      done[idx] = 1;
+      const s = segs[idx];
+      const nxt = key(s[0],s[1]) === key(at[0],at[1]) ? [s[2],s[3]] : [s[0],s[1]];
+      pts.push(nxt);
+      const cand = (map.get(key(nxt[0],nxt[1])) || []).filter(j => !done[j]);
+      if (!cand.length) break;
+      idx = cand[0]; at = nxt;
+    }
+    if (pts.length > 2) loops.push(pts);
+  }
+  return loops;
+}
+
+const area = pts => {
+  let a = 0;
+  for (let i=0, n=pts.length; i<n; i++){
+    const p = pts[i], q = pts[(i+1)%n];
+    a += p[0]*q[1] - q[0]*p[1];
+  }
+  return Math.abs(a)/2;
+};
+
+/* ---------- simplify ---------- */
+function rdp(pts, eps){
+  if (eps <= 0 || pts.length < 3) return pts;
+  const d2 = (p,a,b) => {
+    const dx=b[0]-a[0], dy=b[1]-a[1], L=dx*dx+dy*dy;
+    const t = L ? Math.max(0, Math.min(1, ((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L)) : 0;
+    const ex=a[0]+t*dx-p[0], ey=a[1]+t*dy-p[1];
+    return ex*ex+ey*ey;
+  };
+  const keep = new Uint8Array(pts.length); keep[0]=keep[pts.length-1]=1;
+  (function rec(a,b){
+    let best=-1, bi=-1;
+    for (let i=a+1;i<b;i++){ const d=d2(pts[i],pts[a],pts[b]); if (d>best){best=d;bi=i;} }
+    if (bi>0 && best > eps*eps){ keep[bi]=1; rec(a,bi); rec(bi,b); }
+  })(0, pts.length-1);
+  return pts.filter((_,i) => keep[i]);
+}
+
+const f = v => +v.toFixed(PREC);
+
+function poly(pts){
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  for (let i=1;i<pts.length;i++) d += `L${f(pts[i][0])},${f(pts[i][1])}`;
+  return d + 'Z';
+}
+function curve(pts, tension){
+  const n = pts.length, t = tension/100 * 0.5;
+  const P = i => pts[(i+n)%n];
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  for (let i=0;i<n;i++){
+    const p0=P(i-1), p1=P(i), p2=P(i+1), p3=P(i+2);
+    const c1 = [p1[0]+(p2[0]-p0[0])*t, p1[1]+(p2[1]-p0[1])*t];
+    const c2 = [p2[0]-(p3[0]-p1[0])*t, p2[1]-(p3[1]-p1[1])*t];
+    d += `C${f(c1[0])},${f(c1[1])} ${f(c2[0])},${f(c2[1])} ${f(p2[0])},${f(p2[1])}`;
+  }
+  return d + 'Z';
+}
+
+/* ---------- pipeline ---------- */
+function trace(){
+  for (const [k,v] of Object.entries({
+    vX:$('x0').value+'% → '+$('x1').value+'%', vY:$('y0').value+'% → '+$('y1').value+'%',
+    vT:$('th').value, vB:$('bl').value, vRes:$('res').value+'px', vA:$('ar').value+'px²',
+    vE:$('ep').value, vS:$('sm').value, vPc:$('pc').value+'dp',
+    vW:$('w').value, vO:$('op').value+'%', vD:$('du').value+'s'
+  })) $(k).textContent = v;
+  $('ref').style.opacity = +$('op').value/100;
+  if (!img) return;
+
+  const t0 = performance.now();
+  PREC = +$('pc').value;
+  const {bin, W, H} = sample();
+  let loops = contours(bin, W, H).filter(l => area(l) >= +$('ar').value);
+  loops.sort((a,b) => area(b) - area(a));            // biggest shape draws first
+
+  const s = 380 / Math.max(W,H), ox = (400 - W*s)/2, oy = (400 - H*s)/2;
+  const eps = +$('ep').value, tens = +$('sm').value, straight = $('straight').checked;
+
+  let d = '', pts = 0;
+  for (const l of loops){
+    const simple = rdp(l, eps).map(([x,y]) => [ox+x*s, oy+y*s]);
+    if (simple.length < 3) continue;
+    pts += simple.length;
+    d += straight ? poly(simple) : curve(simple, tens);
+  }
+  lastD = d;
+
+  $('edge').setAttribute('d', d);
+  $('edge').setAttribute('stroke-width', $('w').value);
+  $('ink').setAttribute('d', d);
+  play();
+
+  const kb = ((d.length + 700)/1024).toFixed(1);
+  $('stat').textContent =
+    `${loops.length} shapes · ${pts} points\n~${kb} KB\ntraced in ${Math.round(performance.now()-t0)}ms`;
+}
+
+function play(){
+  const e = $('edge'), len = e.getTotalLength(), T = +$('du').value*1000;
+  e.style.strokeDasharray = len;
+  e.animate([{strokeDashoffset:len},{strokeDashoffset:0}],
+    {duration:T, easing:'cubic-bezier(.65,.02,.31,1)', fill:'forwards'});
+  $('ink').animate([{opacity:0},{opacity:1}],
+    {duration:600, delay:T*0.85, easing:'ease-out', fill:'forwards'});
+}
+
+function exportSvg(){
+  const len = Math.ceil($('edge').getTotalLength());
+  const T = +$('du').value, paint = (T*0.85).toFixed(2);
+  const bb = $('out').getBBox();
+  const pad = +$('w').value/2 + 1;
+  const vb = [bb.x-pad, bb.y-pad, bb.width+pad*2, bb.height+pad*2].map(v => +v.toFixed(1));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}" width="${vb[2]}" height="${vb[3]}" role="img" aria-label="Maavuli Warli figure">
+<style>
+  .edge{fill:none;stroke:currentColor;stroke-width:${$('w').value};stroke-linecap:round;stroke-linejoin:round;
+        stroke-dasharray:${len};stroke-dashoffset:${len};animation:draw ${T}s cubic-bezier(.65,.02,.31,1) forwards}
+  .ink{fill:currentColor;fill-rule:evenodd;opacity:0;animation:paint .6s ease-out ${paint}s forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes paint{to{opacity:1}}
+  @media (prefers-reduced-motion:reduce){
+    .edge{animation:none;stroke-dashoffset:0}
+    .ink{animation:none;opacity:1}
+  }
+</style>
+<path class="edge" d="${lastD}"/>
+<path class="ink" d="${lastD}"/>
+</svg>`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([svg], {type:'image/svg+xml'}));
+  a.download = 'maavuli-warli.svg';
+  a.click();
+}
+
+document.querySelectorAll('input').forEach(el => el.addEventListener('input', trace));
+$('go').onclick = trace;
+$('replay').onclick = play;
+$('dl').onclick = exportSvg;
+trace();
+</script>

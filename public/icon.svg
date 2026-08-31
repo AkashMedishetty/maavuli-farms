@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Maavuli Farm Milk">
+  <rect width="512" height="512" rx="104" fill="#8C170E"/>
+  <!-- the drop: the thing the whole loader is built around -->
+  <path d="M256 118c46 62 74 100 74 136a74 74 0 0 1-148 0c0-36 28-74 74-136Z" fill="#F5E9C8"/>
+  <!-- four pulli, the kolam lattice implied rather than drawn at icon size -->
+  <g fill="#F5E9C8">
+    <circle cx="146" cy="368" r="13"/>
+    <circle cx="256" cy="404" r="13"/>
+    <circle cx="366" cy="368" r="13"/>
+  </g>
+  <path d="M120 320q68 -44 136 0q68 44 136 0" fill="none" stroke="#F5E9C8" stroke-width="14" stroke-linecap="round"/>
+</svg>

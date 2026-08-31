@@ -1,0 +1,259 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Maavuli — parametric Warli foundry</title>
+<style>
+  :root{ --red:#8E1B1B; --cream:#F5E9C8; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--red);color:var(--cream);
+       font:13px/1.5 ui-sans-serif,system-ui,sans-serif;display:flex;min-height:100vh}
+  main{flex:1;padding:28px 32px;overflow:auto}
+  h1{font-size:15px;letter-spacing:.18em;text-transform:uppercase;opacity:.75;margin:0 0 4px}
+  p.sub{opacity:.55;margin:0 0 26px;max-width:60ch}
+  section{margin-bottom:34px}
+  h2{font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.5;
+     border-bottom:1px solid rgba(245,233,200,.18);padding-bottom:6px;margin:0 0 14px}
+  .row{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-end}
+  figure{margin:0;text-align:center}
+  figcaption{font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.4;margin-top:6px}
+  svg{display:block;overflow:visible}
+  .f{fill:var(--cream)}
+  .s{fill:none;stroke:var(--cream);stroke-linecap:round;stroke-linejoin:round}
+  aside{width:250px;flex:none;padding:22px 18px;background:rgba(0,0,0,.22);overflow:auto}
+  label{display:block;margin:11px 0 1px;font-size:10px;letter-spacing:.06em;
+        text-transform:uppercase;opacity:.5}
+  input[type=range]{width:100%}
+  button{width:100%;padding:8px;margin-top:10px;background:rgba(245,233,200,.1);
+         color:var(--cream);border:1px solid rgba(245,233,200,.3);border-radius:4px;
+         cursor:pointer;font:inherit}
+  button:hover{background:rgba(245,233,200,.2)}
+  .hov figure{cursor:pointer}
+</style>
+
+<main>
+  <h1>Parametric Warli foundry</h1>
+  <p class="sub">Warli's whole grammar is circle + two triangles + straight lines. So figures can be
+  <em>composed</em> from parameters instead of traced from stock art &mdash; one consistent line weight,
+  ~1&nbsp;KB each, animatable per limb, unlimited poses.</p>
+
+  <section>
+    <h2>Figure &mdash; the same generator, different parameters</h2>
+    <div class="row" id="poses"></div>
+  </section>
+
+  <section>
+    <h2>Animals, land, sky</h2>
+    <div class="row" id="props"></div>
+  </section>
+
+  <section>
+    <h2>Tarpa dance &mdash; composed, not drawn</h2>
+    <div class="row" id="tarpa"></div>
+  </section>
+
+  <section class="hov">
+    <h2>Quirky: hover a figure</h2>
+    <div class="row" id="quirk"></div>
+  </section>
+</main>
+
+<aside>
+  <strong style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.6">Controls</strong>
+  <label>limb weight <span id="vW"></span></label>
+  <input id="w" type="range" min="1" max="10" value="4" step=".5">
+  <label>head radius <span id="vH"></span></label>
+  <input id="hr" type="range" min="5" max="16" value="10" step=".5">
+  <label>shoulder width <span id="vS"></span></label>
+  <input id="sw" type="range" min="8" max="24" value="15">
+  <label>dancers <span id="vN"></span></label>
+  <input id="n" type="range" min="5" max="14" value="9" step="1">
+  <label><input id="fill" type="checkbox" checked> filled bodies (rice-paste look)</label>
+  <button id="anim">▶ replay draw-on</button>
+</aside>
+
+<script>
+const $ = id => document.getElementById(id);
+const R = d => d*Math.PI/180;
+const n1 = v => Math.round(v*10)/10;
+const line = pts => `M${pts.map(p => n1(p[0])+','+n1(p[1])).join('L')}`;
+const tri  = pts => line(pts)+'Z';
+
+/* polar step: 0deg = straight down, +deg swings outward; side flips for the left limb */
+const step = (x,y,len,deg,side) => [x + side*len*Math.sin(R(deg)), y + len*Math.cos(R(deg))];
+
+/* ---------- figure ----------
+   Canonical Warli body: head circle, then TWO triangles meeting apex-to-apex at
+   the waist. Limbs are single lines with one bend. Everything else is a pose. */
+function figure(o={}){
+  const hr = o.hr ?? +$('hr').value;
+  const sw = o.sw ?? +$('sw').value;
+  const armL = o.armL ?? 30, armR = o.armR ?? 30;
+  const bendL = o.bendL ?? 25, bendR = o.bendR ?? 25;
+  const legL = o.legL ?? 12, legR = o.legR ?? 14;
+  const shoulderY = 2*hr + 9, waistY = shoulderY + 24, hipY = waistY + 24;
+
+  const f = [
+    `M${-hr},${hr}a${hr},${hr} 0 1,0 ${hr*2},0a${hr},${hr} 0 1,0 ${-hr*2},0Z`,  // head
+    tri([[-sw,shoulderY],[sw,shoulderY],[0,waistY]]),                            // upper
+    tri([[0,waistY],[-sw,hipY],[sw,hipY]])                                       // lower
+  ];
+
+  const arm = (side,a,b) => {
+    const sx = side*(sw-1), sy = shoulderY+2;
+    const el = step(sx,sy,15,a,side), hd = step(el[0],el[1],14,a+b,side);
+    return line([[sx,sy],el,hd]);
+  };
+  const leg = (side,a) => {
+    const hx = side*(sw-5), hy = hipY;
+    const kn = step(hx,hy,15,a,side), an = step(kn[0],kn[1],15,a*0.6,side);
+    const ft = [an[0]+side*7, an[1]+1];
+    return line([[hx,hy],kn,an,ft]);
+  };
+
+  const s = [
+    line([[0,hr*2],[0,shoulderY]]),          // neck
+    arm(-1,armL,bendL), arm(1,armR,bendR),
+    leg(-1,-legL),      leg(1,legR)
+  ];
+  return {f, s, h: hipY+34, w: sw*2+34};
+}
+
+/* ---------- cow: hourglass body, horned head, four straight legs ---------- */
+function cow(){
+  const f = [
+    tri([[8,10],[8,42],[46,26]]),
+    tri([[46,26],[80,10],[80,42]]),
+    tri([[80,20],[80,34],[100,27]])                  // head
+  ];
+  const s = [
+    line([[86,18],[92,4]]), line([[92,4],[89,2]]),   // horns
+    line([[92,18],[98,5]]), line([[98,5],[101,4]]),
+    line([[16,40],[14,66]]), line([[34,42],[33,66]]),
+    line([[62,42],[63,66]]), line([[76,40],[79,66]]),
+    line([[8,18],[-8,10]]), line([[-8,10],[-12,18]]) // tail + tuft
+  ];
+  return {f, s, h:70, w:116, ox:14};
+}
+
+/* ---------- tree ---------- */
+function tree(){
+  const s = [line([[0,110],[0,26]])];
+  for (const [y,len] of [[74,26],[58,24],[42,20],[30,14]])
+    for (const side of [-1,1]){
+      const t = step(0,y,len,58,side);
+      s.push(line([[0,y],t]));
+      s.push(line([t, step(t[0],t[1],9,30,side)]));
+      s.push(line([t, step(t[0],t[1],9,86,side)]));
+    }
+  return {f:[], s, h:112, w:60, ox:30};
+}
+
+function sun(){
+  const f = [`M-11,0a11,11 0 1,0 22,0a11,11 0 1,0 -22,0Z`];
+  const s = [];
+  for (let i=0;i<12;i++){
+    const a = R(i*30), c = Math.cos(a), si = Math.sin(a);
+    s.push(line([[c*15,si*15],[c*23,si*23]]));
+  }
+  return {f, s, h:48, w:48, ox:24, oy:24};
+}
+
+function ground(w=260){
+  let d = `M0,10`;
+  for (let x=0; x<w; x+=26) d += `q13,-9 26,0`;
+  return {f:[], s:[d, `M0,22`+`q13,-9 26,0`.repeat(Math.floor(w/26))], h:34, w};
+}
+
+/* ---------- tarpa dance: figures placed on a circle, hands linked ---------- */
+function tarpa(){
+  const n = +$('n').value, Rad = 96, parts = {f:[], s:[]};
+  const hands = [];
+  for (let i=0;i<n;i++){
+    const a = R(i*(360/n) - 90);
+    const cx = Math.cos(a)*Rad, cy = Math.sin(a)*Rad*0.52;
+    const g = figure({hr:7, sw:10, armL:78, armR:78, bendL:8, bendR:8, legL:16, legR:18});
+    const rot = (i/n)*360;
+    const wrap = arr => arr.map(d =>
+      `<path class="%C%" d="${d}" transform="translate(${n1(cx)},${n1(cy-40)}) rotate(${n1(Math.sin(a)*8)})"/>`);
+    parts.f.push(...wrap(g.f).map(s => s.replace('%C%','f')));
+    parts.s.push(...wrap(g.s).map(s => s.replace('%C%','s')));
+    hands.push([cx, cy-40+18]);
+  }
+  for (let i=0;i<n;i++){
+    const a = hands[i], b = hands[(i+1)%n];
+    parts.s.push(`<path class="s" d="${line([[a[0]+14,a[1]],[b[0]-14,b[1]]])}"/>`);
+  }
+  return parts;
+}
+
+/* ---------- render helpers ---------- */
+function draw(g, label, extra=''){
+  const w = +$('w').value, filled = $('fill').checked;
+  const ox = g.ox ?? g.w/2, oy = g.oy ?? 0;
+  const fills = filled
+    ? g.f.map(d => `<path class="f" d="${d}"/>`).join('')
+    : g.f.map(d => `<path class="s" d="${d}" stroke-width="${w}"/>`).join('');
+  return `<figure><svg width="${g.w}" height="${g.h}" viewBox="${-ox} ${-oy} ${g.w} ${g.h}">
+    <g stroke-width="${w}">${fills}${g.s.map(d => `<path class="s" d="${d}" stroke-width="${w}"/>`).join('')}${extra}</g>
+  </svg><figcaption>${label}</figcaption></figure>`;
+}
+
+function render(){
+  $('vW').textContent = $('w').value;
+  $('vH').textContent = $('hr').value;
+  $('vS').textContent = $('sw').value;
+  $('vN').textContent = $('n').value;
+
+  const poses = {
+    'standing':  {},
+    'greeting':  {armL:150, bendL:10, armR:28},
+    'carrying':  {armL:120, bendL:60, armR:120, bendR:60},
+    'walking':   {legL:34, legR:-8, armL:44, armR:-16},
+    'milking':   {armL:96, bendL:52, armR:88, bendR:58, legL:30, legR:4},
+    'pointing':  {armL:104, bendL:-14, armR:22}
+  };
+  $('poses').innerHTML = Object.entries(poses)
+    .map(([k,v]) => draw(figure(v), k)).join('');
+
+  $('props').innerHTML = [
+    draw(cow(), 'cow'), draw(tree(), 'tree'),
+    draw(sun(), 'sun'), draw(ground(), 'water / soil')
+  ].join('');
+
+  const t = tarpa(), w = +$('w').value;
+  $('tarpa').innerHTML = `<figure><svg width="300" height="200" viewBox="-150 -110 300 200">
+    <g stroke-width="${w}">${t.f.join('')}${t.s.join('')}</g></svg>
+    <figcaption>${$('n').value} dancers, one generator</figcaption></figure>`;
+
+  $('quirk').innerHTML =
+    draw(figure({armL:30}), 'hover me &rarr; waves') +
+    draw(cow(), 'hover me &rarr; tail flicks');
+  const [fig, bull] = $('quirk').querySelectorAll('figure');
+  fig.onpointerenter = () => {
+    fig.querySelector('svg').innerHTML =
+      draw(figure({armL:150, bendL:12}), '').match(/<g[\s\S]*<\/g>/)[0];
+    setTimeout(() => render(), 900);
+  };
+  bull.onpointerenter = () => bull.querySelector('svg')
+    .animate([{transform:'rotate(0deg)'},{transform:'rotate(-3deg)'},{transform:'rotate(0deg)'}],
+             {duration:500, easing:'ease-in-out'});
+  animate();
+}
+
+function animate(){
+  document.querySelectorAll('.s').forEach((p,i) => {
+    if (!p.getTotalLength) return;
+    const L = p.getTotalLength();
+    if (!L) return;
+    p.style.strokeDasharray = L;
+    p.animate([{strokeDashoffset:L},{strokeDashoffset:0}],
+      {duration:700, delay:i*18, easing:'ease-out', fill:'backwards'});
+  });
+  document.querySelectorAll('.f').forEach((p,i) => {
+    p.animate([{opacity:0},{opacity:1}], {duration:400, delay:280+i*22, easing:'ease-out', fill:'backwards'});
+  });
+}
+
+document.querySelectorAll('input').forEach(el => el.addEventListener('input', render));
+$('anim').onclick = animate;
+render();
+</script>
