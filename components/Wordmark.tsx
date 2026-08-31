@@ -4,32 +4,46 @@ import { BRAND } from '@/lib/content';
 /**
  * The real wordmark, as outlines lifted from the client's vector logo PDF.
  *
- * This is why it matters: the MILKI reference puts a giant wordmark behind the
- * bottle, and at that size an approximated typeface is obvious. Outlines are also
- * ~20 KB of vector that stays crisp at any size — no webfont request, no FOUT, no
- * licensing question about the display face.
+ * `line` picks what to draw:
+ *   'both'  the full lockup, Maavuli over Farm Milk
+ *   'name'  just "Maavuli" — what the hero wants, because a two-line lockup
+ *           cannot be positioned like a single word
+ *   'sub'   just "Farm Milk"
  *
- * Falls back to type if the PDF was never converted, so the build never breaks on
- * a missing asset.
+ * Every viewBox is tightened to the actual glyphs. That matters more than it
+ * sounds: the untightened line1 box was 587 units wide for 446 units of letters,
+ * so ~24% of any requested width was invisible padding and nothing could be
+ * placed predictably.
+ *
+ * Falls back to type if the PDF was never converted, so a missing asset cannot
+ * break the build.
  */
 export default function Wordmark({
+  line = 'both',
   className,
   title,
 }: {
+  line?: 'both' | 'name' | 'sub';
   className?: string;
   title?: string;
 }) {
-  if (!WORDMARK) {
+  const src =
+    !WORDMARK ? null
+    : line === 'name' ? WORDMARK.line1
+    : line === 'sub' ? WORDMARK.line2
+    : WORDMARK;
+
+  if (!src) {
     return (
       <span className={className} aria-label={title}>
-        {BRAND.name}
+        {line === 'sub' ? 'Farm Milk' : BRAND.name}
       </span>
     );
   }
 
   return (
     <svg
-      viewBox={WORDMARK.viewBox.join(' ')}
+      viewBox={src.viewBox.join(' ')}
       className={className}
       role={title ? 'img' : undefined}
       aria-label={title}
@@ -37,7 +51,7 @@ export default function Wordmark({
       preserveAspectRatio="xMidYMid meet"
     >
       <g fill="currentColor">
-        {WORDMARK.paths.map((d, i) => (
+        {src.paths.map((d, i) => (
           <path key={i} d={d} />
         ))}
       </g>

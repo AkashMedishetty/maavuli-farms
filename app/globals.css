@@ -840,3 +840,121 @@ body {
   border: 1px solid #2c2c2c; border-radius: 4px; padding: 8px;
   font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical;
 }
+
+/* ================================================================
+ * ADMIN — fulfilment panel (BACKEND TASK E)
+ *
+ * Appended block, owned by the admin task. Reuses .page / .page-head / .panel /
+ * .pending / .cta / .plan-table from above rather than inventing a table system.
+ * The page renders on the white field like the rest of the site; .panel blocks are
+ * the inset red cards already defined in the panel system.
+ * ================================================================ */
+
+.admin .page-head code,
+.admin code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--red) 10%, white);
+}
+
+/* date picker bar — sits under the page heading */
+.admin-datebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+.admin-datebar label {
+  display: block;
+  width: 100%;
+  font-size: var(--step--1);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: 0.35rem;
+}
+.admin-datebar input[type="date"] {
+  font: inherit;
+  padding: 0.55em 0.8em;
+  border: 1px solid color-mix(in srgb, var(--red) 24%, white);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+.admin-datebar .cta { padding: 0.7em 1.3em; }
+
+/* honest failure state — a reachability problem is stated, never blank panels */
+.admin-alert { padding: clamp(1.2rem, 3vw, 2rem); }
+.admin-alert p { max-width: none; }
+
+/* the round is the primary view */
+.admin-round { margin-bottom: clamp(3rem, 8vh, 5rem); }
+.admin-round-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+.admin-round-head h2 { font-size: var(--step-2); }
+.admin-grandtotal { color: color-mix(in srgb, var(--red) 68%, white); font-size: var(--step--1); }
+.admin-grandtotal strong {
+  font-weight: 400;
+  font-family: var(--serif);
+  font-size: var(--step-1);
+  color: var(--red);
+}
+
+/* one pincode = one inset red panel */
+.admin-pincode { padding: clamp(1.2rem, 3vw, 2rem); margin-bottom: 1rem; }
+.admin-pincode-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.admin-pincode-head h3 { font-family: var(--serif); font-size: var(--step-2); }
+.admin-pincode-total {
+  font-family: var(--serif);
+  font-size: var(--step-1);
+  color: var(--milk);
+}
+/* the plan-table borders are tuned for the white field; on the red panel they
+   need the milk-faint treatment so the rules read */
+.admin-pincode .plan-table th,
+.admin-pincode .plan-table td { border-bottom-color: var(--milk-faint); }
+.admin-pincode .plan-table thead th { opacity: 0.7; }
+
+/* delivery status chips */
+.admin-status {
+  display: inline-block;
+  padding: 0.1em 0.6em;
+  border-radius: 999px;
+  font-size: var(--step--1);
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+.admin-status.is-scheduled { opacity: 0.7; }
+.admin-status.is-delivered { color: #bff0c4; }
+.admin-status.is-skipped { opacity: 0.8; }
+.admin-status.is-failed { color: #ffc9c2; }
+
+.admin-hint { margin-top: 1rem; font-size: var(--step--1); opacity: 0.7; max-width: 60ch; }
+
+.admin-section { margin-bottom: clamp(3rem, 8vh, 5rem); }
+.admin-section > h2 { font-size: var(--step-2); margin-bottom: 1.25rem; }
+
+/* revenue card */
+.admin-revenue { padding: clamp(1.4rem, 3.5vw, 2.4rem); display: grid; gap: 0.4rem; }
+.admin-revenue-total {
+  font-family: var(--serif);
+  font-size: var(--step-3);
+  line-height: 1;
+}
+.admin-revenue-total strong { font-weight: 400; }
+.admin-revenue-note { color: var(--milk-dim); font-size: var(--step--1); }

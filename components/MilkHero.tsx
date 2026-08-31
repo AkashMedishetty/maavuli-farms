@@ -5,8 +5,12 @@ import Link from 'next/link';
 import Image from 'next/image';
 import Wordmark from './Wordmark';
 import Nav from './Nav';
-import { VARIANTS, ASSETS_READY, assetPath, SLOT_SIZE, type Slot } from '@/lib/hero';
+import {
+  VARIANTS, ASSETS_READY, assetPath, SLOT_SIZE, LAYOUT, layoutVars,
+  type Slot, type BreakPoint,
+} from '@/lib/hero';
 import { quote, formatINR } from '@/lib/pricing';
+import { BRAND } from '@/lib/content';
 
 /**
  * Hero rebuilt against measurements taken from the reference video, not from eye.
@@ -34,7 +38,17 @@ const SWITCH_MS = 900;
 
 export default function MilkHero() {
   const [active, setActive] = useState(0);
+  // which layout set to use. Observed rather than assumed, so a resize re-reads it.
+  const [bp, setBp] = useState<BreakPoint>('desktop');
   const rootRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 900px)');
+    const sync = () => setBp(mq.matches ? 'mobile' : 'desktop');
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
 
   /* pointer + scroll parallax, written to CSS custom props in one rAF */
   useEffect(() => {
@@ -99,20 +113,25 @@ export default function MilkHero() {
 
       <Nav />
 
-      <Wordmark className="vh-word" />
-
       <div className="vh-stage">
         {VARIANTS.map((v, i) => (
-          <div key={v.kind} className="vh-slide" data-on={i === active || undefined}>
+          <div
+            key={v.kind}
+            className="vh-slide"
+            data-on={i === active || undefined}
+            style={layoutVars(LAYOUT[bp][v.kind])}
+          >
+            <Wordmark className="vh-word" />
             {ASSETS_READY ? (
               <>
-                {(['splash', 'bottle', 'objects'] as Slot[]).map(slot => {
+                {(['splash', 'bottle', 'objects'] as Exclude<Slot, 'word'>[]).map(slot => {
                   const d = SLOT_SIZE[slot][v.kind];
                   const isHeroBottle = i === 0 && slot === 'bottle';
                   return (
                     <Image
                       key={slot}
                       className={`vh-${slot}`}
+                      data-mirror={v.mirror.includes(slot) || undefined}
                       src={assetPath(slot, v.kind)}
                       alt={slot === 'bottle' ? `${v.name} in a glass bottle` : ''}
                       width={d.w}

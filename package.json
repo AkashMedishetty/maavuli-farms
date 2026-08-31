@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:pricing": "node --experimental-strip-types scripts/verify-pricing.ts"
+    "test:pricing": "node --experimental-strip-types scripts/verify-pricing.ts",
+    "db:roll": "node scripts/roll-deliveries.mjs",
+    "db:init": "node scripts/init-db.mjs",
+    "db:seed-pincodes": "node scripts/seed-pincodes.mjs"
   },
   "dependencies": {
     "mongodb": "6.12.0",

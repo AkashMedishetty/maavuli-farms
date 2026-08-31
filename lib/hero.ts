@@ -1,41 +1,101 @@
 import type { MilkKind } from './pricing';
 
 /**
- * Hero variant config, MILKI-style: one saturated field per milk, giant wordmark
- * behind, bottle centre, crown splash around it, objects suspended in front.
+ * Hero config.
  *
- * The renders are in. Masters live in assets/brand/hero-src/ at full size; what
- * ships in public/hero/ is downscaled to display size, and next/image serves AVIF
- * or WebP per breakpoint from there. Raw PNG is never sent to a browser — 4.8 MB
- * of PNG on patchy 4G would defeat the reason this is a PWA.
+ * Positions are DATA, one set per breakpoint x variant x layer. Units are a
+ * percentage of the STAGE for x/y, svh for the bottle's size and a percentage of
+ * stage width for the other sizes. Nothing is a pixel, which is what makes a
+ * placement hold at every viewport.
+ *
+ * Arrange by dragging at /hero-lab and paste the exported block back here.
  */
 export const ASSETS_READY = true;
 
-export type Slot = 'bottle' | 'splash' | 'objects';
+export type Slot = 'bottle' | 'splash' | 'objects' | 'word';
+export type BreakPoint = 'desktop' | 'mobile';
+
+export interface Placement {
+  x: number;
+  y: number;
+  size: number;
+}
+
+export type Layout = Record<Slot, Placement>;
 
 /** True pixel dimensions, so next/image reserves the right box and CLS stays 0. */
-export const SLOT_SIZE: Record<Slot, Record<MilkKind, { w: number; h: number }>> = {
-  bottle: {
-    cow: { w: 1100, h: 1100 },
-    buffalo: { w: 1100, h: 1100 },
-  },
-  splash: {
-    cow: { w: 1400, h: 933 },
-    buffalo: { w: 1400, h: 788 },
-  },
-  objects: {
-    cow: { w: 1400, h: 933 },
-    buffalo: { w: 1400, h: 933 },
-  },
+export const SLOT_SIZE: Record<Exclude<Slot, 'word'>, Record<MilkKind, { w: number; h: number }>> = {
+  bottle: { cow: { w: 1100, h: 1100 }, buffalo: { w: 1100, h: 1100 } },
+  splash: { cow: { w: 1400, h: 933 }, buffalo: { w: 1400, h: 788 } },
+  objects: { cow: { w: 1400, h: 933 }, buffalo: { w: 1400, h: 933 } },
 };
+
+/**
+ * Buffalo is the mirror of cow: every x negated. Deriving it rather than storing a
+ * second set means the two can never drift apart — re-drag cow and buffalo follows.
+ * (A consequence: editing buffalo directly in the lab is discarded on the next
+ * paste. Change `mirrorLayout` to a literal if you ever want them independent.)
+ */
+function mirrorLayout(l: Layout): Layout {
+  const flip = (p: Placement): Placement => ({ ...p, x: -p.x });
+  return { bottle: flip(l.bottle), splash: flip(l.splash), objects: flip(l.objects), word: flip(l.word) };
+}
+
+/** Arranged on the free canvas. */
+const DESKTOP_COW: Layout = {
+  bottle: { x: 19, y: -4.5, size: 62 },
+  splash: { x: 18, y: -2, size: 33.5 },
+  objects: { x: -12.5, y: 6, size: 34 },
+  word: { x: -31.5, y: 51.5, size: 35 },
+};
+
+const MOBILE_COW: Layout = {
+  bottle: { x: 0, y: 6, size: 38 },
+  splash: { x: 0, y: 4, size: 96 },
+  objects: { x: 0, y: 10, size: 84 },
+  word: { x: 0, y: 30, size: 150 },
+};
+
+export const LAYOUT: Record<BreakPoint, Record<MilkKind, Layout>> = {
+  desktop: { cow: DESKTOP_COW, buffalo: mirrorLayout(DESKTOP_COW) },
+  // on a phone the composition is centred, so a mirror would be a no-op
+  mobile: { cow: MOBILE_COW, buffalo: MOBILE_COW },
+};
+
+/** CSS custom properties for one variant's layout. Applied inline by the hero. */
+export function layoutVars(l: Layout): Record<string, string> {
+  return {
+    '--bottle-h': `${l.bottle.size}svh`,
+    '--bottle-x': `${l.bottle.x}%`,
+    '--bottle-y': `${l.bottle.y}%`,
+    '--splash-w': `${l.splash.size}%`,
+    '--splash-x': `${l.splash.x}%`,
+    '--splash-y': `${l.splash.y}%`,
+    '--objects-w': `${l.objects.size}%`,
+    '--objects-x': `${l.objects.x}%`,
+    '--objects-y': `${l.objects.y}%`,
+    '--word-w': `${l.word.size}%`,
+    '--word-x': `${l.word.x}%`,
+    '--word-y': `${l.word.y}%`,
+  };
+}
 
 export interface HeroVariant {
   kind: MilkKind;
   name: string;
   line: string;
   field: string;
-  /** how the milk itself differs — the honest differentiator, not a flavour */
   body: string;
+  /**
+   * Which layers to flip horizontally.
+   *
+   * Deliberately NOT the bottle. Every render was lit from the upper left, and
+   * mirroring the bottle flips its highlight and condensation to the upper right —
+   * which reads as a second light source sitting next to an unmirrored splash. The
+   * splash and the floating objects have no such tell, so they mirror cleanly and
+   * carry the whole sense of the composition having turned around.
+   */
+  mirror: Exclude<Slot, 'word'>[];
 }
 
 export const VARIANTS: readonly HeroVariant[] = [
@@ -45,6 +105,7 @@ export const VARIANTS: readonly HeroVariant[] = [
     line: 'Lighter on the tongue, warm in the glass. At your door before the day starts.',
     field: '#8c170e',
     body: 'Light · warm white · easy daily',
+    mirror: [],
   },
   {
     kind: 'buffalo',
@@ -52,7 +113,9 @@ export const VARIANTS: readonly HeroVariant[] = [
     line: 'Thick, and it stays thick. The one that sets curd overnight.',
     field: '#650f08',
     body: 'Dense · high fat · chalk white',
+    mirror: ['splash', 'objects'],
   },
 ] as const;
 
-export const assetPath = (slot: Slot, kind: MilkKind) => `/hero/${slot}-${kind}.png`;
+export const assetPath = (slot: Exclude<Slot, 'word'>, kind: MilkKind) =>
+  `/hero/${slot}-${kind}.png`;

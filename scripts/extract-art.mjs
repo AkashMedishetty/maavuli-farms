@@ -80,6 +80,18 @@ for (const [file, key] of Object.entries(WARLI_MAP)) {
  * pdftocairo emits absolute M/L/C commands only, so numbers alternate x,y and a
  * crude bbox scan is reliable here.
  * ------------------------------------------------------------------------- */
+function bboxX(d) {
+  const nums = d.match(/-?\d*\.?\d+/g);
+  if (!nums) return { min: 0, max: 0 };
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < nums.length; i += 2) {
+    const x = Number(nums[i]);
+    if (x < min) min = x;
+    if (x > max) max = x;
+  }
+  return { min, max };
+}
+
 function bboxY(d) {
   const nums = d.match(/-?\d*\.?\d+/g);
   if (!nums) return { min: 0, max: 0 };
@@ -102,16 +114,44 @@ try {
     : [...vec.matchAll(/<path[^>]*\sd="([^"]+)"[^>]*fill="rgb\(100%,\s*100%,\s*100%\)"/g)].map(m => m[1]);
   const parts = alt.map(d => ({ d, y: bboxY(d) })).filter(p => Number.isFinite(p.y.min));
   if (parts.length) {
-    // split where the vertical gap between sorted paths is widest in the middle
     const SPLIT = vb[3] * 0.46;
     const lower = parts.filter(p => p.y.min > SPLIT);
     if (lower.length) {
-      const minY = Math.min(...lower.map(p => p.y.min));
-      const maxY = Math.max(...lower.map(p => p.y.max));
-      wordmark = {
-        viewBox: [0, Math.round(minY - 6), vb[2], Math.round(maxY - minY + 12)],
-        paths: lower.map(p => p.d),
+      const PAD = 4;
+      const box = ps => {
+        const minY = Math.min(...ps.map(p => p.y.min));
+        const maxY = Math.max(...ps.map(p => p.y.max));
+        const xs = ps.map(p => bboxX(p.d));
+        const minX = Math.min(...xs.map(x => x.min));
+        const maxX = Math.max(...xs.map(x => x.max));
+        return {
+          viewBox: [
+            Math.round(minX - PAD), Math.round(minY - PAD),
+            Math.round(maxX - minX + PAD * 2), Math.round(maxY - minY + PAD * 2),
+          ],
+          paths: ps.map(p => p.d),
+        };
       };
+
+      /* Split the lockup into its two lines. "Maavuli" and "Farm Milk" are one
+       * block in the PDF, but a two-line lockup cannot be placed like a single
+       * word — and the big word is what the hero actually needs. Find the widest
+       * vertical gap between sorted glyph tops and cut there. */
+      const sorted = [...lower].sort((a, b) => a.y.min - b.y.min);
+      let gapAt = -1, gap = 0;
+      for (let i = 1; i < sorted.length; i++) {
+        const g = sorted[i].y.min - sorted[i - 1].y.max;
+        if (g > gap) { gap = g; gapAt = i; }
+      }
+      const l1 = gapAt > 0 ? sorted.slice(0, gapAt) : sorted;
+      const l2 = gapAt > 0 ? sorted.slice(gapAt) : [];
+
+      wordmark = {
+        ...box(lower),
+        line1: box(l1),
+        line2: l2.length ? box(l2) : null,
+      };
+      console.log(`wordmark split: gap ${gap.toFixed(1)}u · line1 ${l1.length} paths · line2 ${l2.length} paths`);
     }
   }
 } catch {
@@ -134,8 +174,18 @@ export type WarliKey = ${Object.values(WARLI_MAP).map(k => `'${k}'`).join(' | ')
 export const WARLI: Record<WarliKey, Art> = ${JSON.stringify(warli, null, 2)} as const;
 
 /** The real wordmark as outlines, from the client's vector PDF. */
-export const WORDMARK: { viewBox: readonly [number, number, number, number]; paths: readonly string[] } | null =
-  ${JSON.stringify(wordmark, null, 2)};
+export interface WordmarkLine {
+  viewBox: readonly [number, number, number, number];
+  paths: readonly string[];
+}
+/**
+ * line1 is "Maavuli", line2 is "Farm Milk". Separated because a two-line lockup
+ * cannot be placed like a single word, and the hero needs the big word alone.
+ */
+export const WORDMARK: (WordmarkLine & {
+  line1: WordmarkLine;
+  line2: WordmarkLine | null;
+}) | null = ${JSON.stringify(wordmark, null, 2)};
 `;
 
 mkdirSync(dirname(OUT), { recursive: true });

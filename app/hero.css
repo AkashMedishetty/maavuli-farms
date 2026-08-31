@@ -41,14 +41,18 @@
   --word-w: 132%;
   --word-x: 0%;
   --word-y: 44%;
-  --word-alpha: 0.17;
+  --word-alpha: 0.12;
+
+  /* baseline the layers sit on; everything else is per-variant data */
+  --base-b: 6%;
 
   position: relative;
   min-height: 100svh;
   overflow: hidden;
   isolation: isolate;
-  display: grid;
-  grid-template-rows: auto 1fr;
+  /* NOT a grid. This is a layered composition: the stage and the copy are absolute
+     siblings, so the copy's size can never shift where the bottle centres. The nav
+     is the only thing in normal flow. */
 }
 
 /* ---- field: stacked, so the colour cross-fades instead of tweening a hue ---- */
@@ -66,23 +70,22 @@
 .vh-word {
   position: absolute;
   z-index: -2;
-  left: 50%;
-  top: var(--word-y);
+  left: calc(50% + var(--word-x));
+  bottom: calc(var(--base-b) + var(--word-y));
   width: var(--word-w);
   max-width: none;
   height: auto;
   color: var(--milk);
   opacity: var(--word-alpha);
   pointer-events: none;
-  translate: calc(-50% + var(--word-x) + var(--px) * 12px)
-             calc(-50% + var(--py) * 6px - var(--sy) * 44px);
+  translate: calc(-50% + var(--px) * 12px) calc(var(--py) * 6px - var(--sy) * 44px);
   transition: translate 800ms var(--ease);
 }
 
 /* ---- stage ---- */
 .vh-stage {
-  position: relative;
-  grid-row: 2;
+  position: absolute;
+  inset: 0;
   pointer-events: none;
 }
 .vh-slide {
@@ -98,14 +101,15 @@
   transition: opacity var(--switch) var(--ease), visibility 0s;
 }
 
-/* every layer is centred on the same anchor point, then given its OWN size and
-   offset from it — that anchor is what keeps the composition registered */
+/* Offsets live on left/bottom, NOT in translate.
+   A percentage inside `translate` resolves against the ELEMENT's own size, while a
+   percentage on left/bottom resolves against the PARENT. The editor measures drag
+   as a share of the stage, so only left/bottom agree with it. translate is left to
+   carry parallax in px, where the unit is unambiguous. */
 .vh-splash,
 .vh-bottle,
 .vh-objects {
   position: absolute;
-  left: 50%;
-  bottom: 8%;
   height: auto;
   width: auto;
   transform-origin: 50% 100%;
@@ -115,37 +119,42 @@
 .vh-bottle {
   z-index: 2;
   height: var(--bottle-h);
-  width: auto;
-  translate: calc(-50% + var(--bottle-x) + var(--px) * 34px)
-             calc(var(--bottle-y) + var(--py) * 16px - var(--sy) * 70px);
+  left: calc(50% + var(--bottle-x));
+  bottom: calc(var(--base-b) - var(--bottle-y));
+  translate: calc(-50% + var(--px) * 34px) calc(var(--py) * 16px - var(--sy) * 70px);
   transition: translate 700ms var(--ease),
               opacity var(--switch) var(--ease) 110ms,
-              scale var(--switch) var(--ease) 110ms;
+              scale var(--switch) var(--ease) 110ms,
+              left var(--switch) var(--ease),
+              bottom var(--switch) var(--ease);
 }
 
 /* splash erupts PAST the bottle, so it is width-driven and sits behind */
 .vh-splash {
   z-index: 1;
   width: var(--splash-w);
-  height: auto;
-  translate: calc(-50% + var(--splash-x) + var(--px) * 18px)
-             calc(var(--splash-y) + var(--py) * 10px - var(--sy) * 34px);
+  left: calc(50% + var(--splash-x));
+  bottom: calc(var(--base-b) - var(--splash-y));
+  translate: calc(-50% + var(--px) * 18px) calc(var(--py) * 10px - var(--sy) * 34px);
   transition: translate 900ms var(--ease),
               opacity var(--switch) var(--ease) 40ms,
-              scale var(--switch) var(--ease) 40ms;
+              scale var(--switch) var(--ease) 40ms,
+              left var(--switch) var(--ease),
+              bottom var(--switch) var(--ease);
 }
 
-/* objects sit IN FRONT and lower, so the vessel never covers the label —
-   that overlap was the single worst thing in the previous build */
+/* objects sit IN FRONT and lower, so the vessel never covers the label */
 .vh-objects {
   z-index: 3;
   width: var(--objects-w);
-  height: auto;
-  translate: calc(-50% + var(--objects-x) + var(--px) * 54px)
-             calc(var(--objects-y) + var(--py) * 26px - var(--sy) * 104px);
+  left: calc(50% + var(--objects-x));
+  bottom: calc(var(--base-b) - var(--objects-y));
+  translate: calc(-50% + var(--px) * 54px) calc(var(--py) * 26px - var(--sy) * 104px);
   transition: translate 560ms var(--ease),
               opacity var(--switch) var(--ease) 180ms,
-              scale var(--switch) var(--ease) 180ms;
+              scale var(--switch) var(--ease) 180ms,
+              left var(--switch) var(--ease),
+              bottom var(--switch) var(--ease);
 }
 
 /* Directional switch. Opacity alone reads as a slideshow; the incoming art has to
@@ -160,15 +169,18 @@
 
 /* ---- copy: bottom-left, big enough that the product name does not wrap ---- */
 .vh-copy {
-  position: relative;
+  position: absolute;
   z-index: 4;
-  grid-row: 2;
-  align-self: end;
-  justify-self: start;
+  left: 0;
+  bottom: 0;
+  transition: left var(--switch) var(--ease), right var(--switch) var(--ease);
   display: grid;
   padding: 0 var(--gutter) clamp(4.5rem, 12vh, 7rem);
   width: min(38ch, 92vw);
+  /* the block is a click target; the empty space around it must not be */
+  pointer-events: none;
 }
+.vh-copy-slide > * { pointer-events: auto; }
 .vh-copy-slide {
   grid-area: 1 / 1;
   display: flex;
@@ -277,3 +289,18 @@
   .vh-word { translate: -50% -50% !important; }
   .vh-slide .vh-splash, .vh-slide .vh-bottle, .vh-slide .vh-objects { scale: 1; }
 }
+
+
+
+/*
+ * Horizontal flip for the mirrored variant.
+ *
+ * `transform` is used rather than `scale` on purpose: `scale` already carries the
+ * switch animation (0.94 -> 1), and CSS applies the individual transform
+ * properties after `transform`, so the two compose instead of fighting. Writing
+ * the flip into `scale` would have the switch overwrite it mid-transition.
+ *
+ * transform-origin is already 50% 100%, so the box does not move — only its
+ * content turns around.
+ */
+.vh-slide img[data-mirror] { transform: scaleX(-1); }
