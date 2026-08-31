@@ -26,7 +26,13 @@ const SEL: Record<Slot, string> = {
   bottle: '.vh-slide[data-on] .vh-bottle',
   objects: '.vh-slide[data-on] .vh-objects',
 };
-const FRAME_W: Record<BreakPoint, number | null> = { desktop: null, mobile: 390 };
+/* A phone preview needs a phone HEIGHT as well as a width: the bottle is sized in
+   cqh, so a 390-wide frame that is still 100svh tall would size it against the
+   desktop window and the preview would lie. */
+const FRAME: Record<BreakPoint, { w: number; h: number } | null> = {
+  desktop: null,
+  mobile: { w: 390, h: 844 },
+};
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
@@ -152,7 +158,11 @@ export default function HeroLab() {
         <div
           className="lab-frame"
           ref={frameRef}
-          style={FRAME_W[bp] ? { width: FRAME_W[bp]!, margin: '0 auto' } : undefined}
+          style={
+            FRAME[bp]
+              ? { width: FRAME[bp]!.w, height: FRAME[bp]!.h, minHeight: 0, margin: '2rem auto' }
+              : undefined
+          }
         >
           <MilkHero />
         </div>
@@ -169,7 +179,7 @@ export default function HeroLab() {
         <div className="lab-seg">
           {(['desktop', 'mobile'] as BreakPoint[]).map(b => (
             <button key={b} className={b === bp ? 'on' : undefined} onClick={() => setBp(b)}>
-              {b}{FRAME_W[b] ? ` ${FRAME_W[b]}` : ''}
+              {b}{FRAME[b] ? ` ${FRAME[b]!.w}×${FRAME[b]!.h}` : ''}
             </button>
           ))}
         </div>
@@ -214,6 +224,12 @@ export default function HeroLab() {
                 onClick={() => { void navigator.clipboard?.writeText(out); }}>
           copy LAYOUT
         </button>
+
+        <p className="lab-live">
+          {slot}: x {p.x}% · y {p.y}% · {slot === 'bottle' ? 'h' : 'w'} {p.size}{unit}
+          <br />
+          <span>y is positive UP from the baseline — the same for every layer now.</span>
+        </p>
 
         <label>Paste into lib/hero.ts</label>
         <textarea className="lab-out" readOnly value={out} rows={20} />

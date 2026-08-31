@@ -43,17 +43,19 @@ function mirrorLayout(l: Layout): Layout {
 
 /** Arranged on the free canvas. */
 const DESKTOP_COW: Layout = {
-  bottle: { x: 19, y: -4.5, size: 62 },
+  bottle: { x: 19, y: -4.5, size: 69.5 },
   splash: { x: 18, y: -2, size: 33.5 },
   objects: { x: -12.5, y: 6, size: 34 },
   word: { x: -31.5, y: 51.5, size: 35 },
 };
 
+/* Centred starting point. The previous mobile numbers were recorded while the y
+   sign was inconsistent between layers, so they are not salvageable — re-drag. */
 const MOBILE_COW: Layout = {
-  bottle: { x: 0, y: 6, size: 38 },
-  splash: { x: 0, y: 4, size: 96 },
-  objects: { x: 0, y: 10, size: 84 },
-  word: { x: 0, y: 30, size: 150 },
+  bottle: { x: 0, y: 4, size: 44 },
+  splash: { x: 0, y: 10, size: 104 },
+  objects: { x: 0, y: 2, size: 88 },
+  word: { x: 0, y: 58, size: 120 },
 };
 
 export const LAYOUT: Record<BreakPoint, Record<MilkKind, Layout>> = {
@@ -66,7 +68,7 @@ export const LAYOUT: Record<BreakPoint, Record<MilkKind, Layout>> = {
 /** CSS custom properties for one variant's layout. Applied inline by the hero. */
 export function layoutVars(l: Layout): Record<string, string> {
   return {
-    '--bottle-h': `${l.bottle.size}svh`,
+    '--bottle-h': `${l.bottle.size}cqh`,
     '--bottle-x': `${l.bottle.x}%`,
     '--bottle-y': `${l.bottle.y}%`,
     '--splash-w': `${l.splash.size}%`,

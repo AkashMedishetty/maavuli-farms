@@ -53,7 +53,7 @@
   /* The hero responds to its OWN width, not the viewport's. That is what makes the
      390px frame in /hero-lab a faithful phone preview instead of a desktop layout
      squeezed into a narrow box. */
-  container-type: inline-size;
+  container-type: size;
   container-name: hero;
   /* NOT a grid. This is a layered composition: the stage and the copy are absolute
      siblings, so the copy's size can never shift where the bottle centres. The nav
@@ -123,9 +123,9 @@
 /* the bottle sets the scale: height-driven, nothing else */
 .vh-bottle {
   z-index: 2;
-  height: var(--bottle-h);
+  height: var(--bottle-h);   /* cqh — container height, so the lab frame is honest */
   left: calc(50% + var(--bottle-x));
-  bottom: calc(var(--base-b) - var(--bottle-y));
+  bottom: calc(var(--base-b) + var(--bottle-y));
   translate: calc(-50% + var(--px) * 34px) calc(var(--py) * 16px - var(--sy) * 70px);
   transition: translate 700ms var(--ease),
               opacity var(--switch) var(--ease) 110ms,
@@ -139,7 +139,7 @@
   z-index: 1;
   width: var(--splash-w);
   left: calc(50% + var(--splash-x));
-  bottom: calc(var(--base-b) - var(--splash-y));
+  bottom: calc(var(--base-b) + var(--splash-y));
   translate: calc(-50% + var(--px) * 18px) calc(var(--py) * 10px - var(--sy) * 34px);
   transition: translate 900ms var(--ease),
               opacity var(--switch) var(--ease) 40ms,
@@ -153,7 +153,7 @@
   z-index: 3;
   width: var(--objects-w);
   left: calc(50% + var(--objects-x));
-  bottom: calc(var(--base-b) - var(--objects-y));
+  bottom: calc(var(--base-b) + var(--objects-y));
   translate: calc(-50% + var(--px) * 54px) calc(var(--py) * 26px - var(--sy) * 104px);
   transition: translate 560ms var(--ease),
               opacity var(--switch) var(--ease) 180ms,
