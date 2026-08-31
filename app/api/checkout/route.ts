@@ -4,7 +4,8 @@ import { getDb, NotConfiguredError } from '@/lib/db';
 import { col, normalizeMobile } from '@/lib/models';
 import { quote, type MilkKind } from '@/lib/pricing';
 import { createOrder } from '@/lib/razorpay';
-import { isServiceable } from '@/lib/serviceability';
+import { isServiceable, isServiceablePoint, activeZoneCount } from '@/lib/serviceability';
+import { normalizePoint } from '@/lib/geo';
 
 /**
  * POST /api/checkout
@@ -24,6 +25,10 @@ const KINDS: readonly MilkKind[] = ['buffalo', 'cow'];
 interface CheckoutBody {
   mobile?: unknown;
   kind?: unknown;
+  name?: unknown;
+  landmark?: unknown;
+  lat?: unknown;
+  lng?: unknown;
   quantityId?: unknown;
   tenureId?: unknown;
   pincode?: unknown;
@@ -70,6 +75,30 @@ export async function POST(req: Request) {
   }
   const pincode = body.pincode.trim();
 
+  /*
+   * A DELIVERY needs more than a pincode.
+   *
+   * Name and address are required, not optional: a rider cannot deliver to
+   * "500047". The location point is optional — plenty of customers will decline the
+   * browser permission, and refusing their order for that would be absurd — but
+   * when it is given it becomes the authoritative serviceability check, because a
+   * point inside a drawn zone is a far stronger promise than a pincode that may
+   * span kilometres.
+   */
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (name.length < 2) return bad('A name for the delivery is required', 400);
+
+  const landmark = typeof body.landmark === 'string' && body.landmark.trim() !== ''
+    ? body.landmark.trim()
+    : undefined;
+
+  const point = normalizePoint(body.lat, body.lng);
+
+  const addressRaw = typeof body.address === 'string' ? body.address.trim() : '';
+  if (addressRaw.length < 10) {
+    return bad('A delivery address is required (flat or house, street and area)', 400);
+  }
+
   const address = typeof body.address === 'string' && body.address.trim() !== ''
     ? body.address.trim()
     : undefined;
@@ -87,9 +116,23 @@ export async function POST(req: Request) {
     // --- serviceability (authoritative by pincode) -------------------------
     // Owned by another agent's lib/serviceability. An empty pincodes collection
     // must mean "we deliver nowhere", so a false here is a hard 409.
-    const serviceable = await isServiceable(pincode);
-    if (!serviceable) {
-      return bad(`We do not deliver to ${pincode} yet.`, 409);
+    /*
+     * Geo first when we can: a point checked against a drawn zone is the promise we
+     * actually want to make. Falls back to the pincode list when the customer did
+     * not share a location, or when no zones are configured yet — so this works
+     * during the migration instead of requiring a flag day.
+     */
+    let serviceable: boolean;
+    if (point && (await activeZoneCount()) > 0) {
+      serviceable = await isServiceablePoint(point);
+      if (!serviceable) {
+        return bad('That address is outside our delivery area at the moment.', 409);
+      }
+    } else {
+      serviceable = await isServiceable(pincode);
+      if (!serviceable) {
+        return bad(`We do not deliver to ${pincode} yet.`, 409);
+      }
     }
 
     const db = await getDb();
@@ -113,10 +156,27 @@ export async function POST(req: Request) {
       days: q.days,
       litres: q.litres,
       pincode,
+      name,
       address,
+      ...(landmark ? { landmark } : {}),
+      ...(point ? { location: { lat: point.lat, lng: point.lng } } : {}),
       status: 'created',
       createdAt: new Date(),
     });
+
+    /*
+     * Remember the customer so a repeat purchase does not retype all of this. Upsert
+     * rather than insert: the account already exists from the OTP sign-in, and we
+     * must not clobber it. $setOnInsert guards createdAt.
+     */
+    await col.users(db).updateOne(
+      { mobile },
+      {
+        $set: { name, address, pincode, lastSeenAt: new Date() },
+        $setOnInsert: { mobile, createdAt: new Date() },
+      },
+      { upsert: true },
+    );
 
     // keyId is public (it goes to the browser checkout); the secret never leaves.
     return NextResponse.json({

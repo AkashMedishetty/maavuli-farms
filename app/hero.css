@@ -100,13 +100,29 @@
   place-items: center;
   opacity: 0;
   visibility: hidden;
-  transition: opacity var(--switch) var(--ease), visibility 0s linear var(--switch);
+  /*
+   * DIRECTIONAL SWITCH.
+   *
+   * A slide waiting its turn is parked off to one side; the active one is centred;
+   * the one being replaced travels on OUT the far side. So the two move the same
+   * way rather than crossing through each other, and pressing "next" reads
+   * differently from pressing "previous". --dir is +1/-1 from the component.
+   *
+   * This is on .vh-slide, not on the layers: the layers already use `translate`
+   * for parallax, and a second writer on the same property would overwrite it.
+   */
+  translate: calc(var(--dir, 1) * 7%) 0;
+  transition: opacity var(--switch) var(--ease), translate var(--switch) var(--ease),
+              visibility 0s linear var(--switch);
 }
 .vh-slide[data-on] {
   opacity: 1;
   visibility: visible;
-  transition: opacity var(--switch) var(--ease), visibility 0s;
+  translate: 0 0;
+  transition: opacity var(--switch) var(--ease), translate var(--switch) var(--ease),
+              visibility 0s;
 }
+.vh-slide[data-out] { translate: calc(var(--dir, 1) * -7%) 0; }
 
 /*
  * The composition box.
@@ -191,32 +207,48 @@
 .vh-slide[data-on] .vh-bottle,
 .vh-slide[data-on] .vh-objects { scale: 1; }
 
-/* ---- copy: bottom-left, big enough that the product name does not wrap ---- */
+/* ---- copy: lives in the SAME box as the product ----
+ *
+ * Previously the copy was positioned against the page gutter while the product sat
+ * inside the composition box. Two different coordinate systems, so they drifted
+ * apart as the aspect ratio changed — at 1024x768 the copy ran into the brass
+ * vessel, and the wordmark floated away from the heading at 1920x620.
+ *
+ * Giving the copy the identical fixed-aspect box means copy, wordmark and product
+ * share one coordinate space and the whole arrangement is rigid.
+ */
 .vh-copy {
   position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
   z-index: 4;
-  left: 0;
-  bottom: 0;
-  transition: left var(--switch) var(--ease), right var(--switch) var(--ease);
-  display: grid;
-  padding: 0 var(--gutter) clamp(4.5rem, 12vh, 7rem);
-  width: min(38ch, 92vw);
-  /* the block is a click target; the empty space around it must not be */
+  aspect-ratio: var(--comp-ar, 16 / 10);
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
   pointer-events: none;
 }
 .vh-copy-slide > * { pointer-events: auto; }
 .vh-copy-slide {
-  grid-area: 1 / 1;
+  position: absolute;
+  left: var(--copy-x, 3%);
+  bottom: var(--copy-y, 13%);
+  width: var(--copy-w, 36%);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.7rem;
   opacity: 0;
   visibility: hidden;
-  translate: 0 18px;
+  /* the copy travels with its composition, but shorter — type moving as far as the
+     artwork reads as the whole page sliding rather than the product changing */
+  translate: calc(var(--dir, 1) * 2.5%) 14px;
   transition: opacity var(--switch) var(--ease), translate var(--switch) var(--ease),
               visibility 0s linear var(--switch);
 }
+.vh-copy-slide[data-out] { translate: calc(var(--dir, 1) * -2.5%) 14px; }
 .vh-copy-slide[data-on] {
   opacity: 1;
   visibility: visible;
@@ -225,6 +257,20 @@
   transition: opacity var(--switch) var(--ease) 40ms, translate var(--switch) var(--ease) 40ms,
               visibility 0s;
 }
+
+/* Buffalo is cow's reflection, so its words cross to the other side. Note this
+   reuses the SAME --copy-x, just measured from the opposite edge, which is what
+   keeps the two variants each other's mirror rather than two hand-placed layouts
+   that can drift apart. */
+.vh-copy-slide[data-side='right'] {
+  left: auto;
+  right: var(--copy-x, 3%);
+  align-items: flex-end;
+  text-align: right;
+}
+/* .vh-line is capped at 30ch, so without this it stays glued to the left edge of
+   the column while everything above it is right-aligned */
+.vh-copy-slide[data-side='right'] .vh-line { margin-left: auto; }
 .vh-copy h1 {
   font-size: var(--step-4);
   line-height: 0.92;
@@ -303,23 +349,62 @@
    */
   .vh-stage { inset: 0 0 44% 0; }
   .vh-comp { --comp-ar: 4 / 5; }
+  /*
+   * The copy becomes a BAND under the stage.
+   *
+   * The desktop rule centres this box with top:50% + translate(-50%,-50%) and pins
+   * it to a fixed aspect ratio. None of that survives stacking, and because the
+   * mobile override only changed left/right/width, the translate stayed — pushing
+   * the copy to left:-190 on a 412px screen, i.e. half of it off the edge. Every
+   * desktop-only property is therefore explicitly unset here rather than partially
+   * overridden.
+   *
+   * top:56% is the mirror of .vh-stage's `inset: 0 0 44% 0` — the product owns the
+   * upper 56%, the copy the rest.
+   */
   .vh-copy {
     left: 0;
     right: 0;
+    top: 56%;
+    bottom: 0;
+    translate: none;
     width: auto;
+    height: auto;
+    aspect-ratio: auto;
+    max-width: none;
+    max-height: none;
     text-align: center;
-    padding-bottom: clamp(4.5rem, 13vh, 7rem);
+    padding: 0 var(--gutter) clamp(3.5rem, 10vh, 5.5rem);
   }
-  .vh-copy-slide { align-items: center; }
+  /* On a phone the product is stacked above the copy and there is no left/right to
+     mirror into, so both variants centre and the side rule is neutralised. The
+     copy also has to reclaim the full width here — it is no longer a 36% column
+     beside the artwork. */
+  .vh-copy-slide,
+  .vh-copy-slide[data-side='right'] {
+    /* fill the band and centre within it; both variants stay stacked so they can
+       still cross-fade, which is why they remain absolutely positioned */
+    inset: 0;
+    width: auto;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  .vh-copy-slide[data-side='right'] .vh-line { margin-inline: auto; }
   .vh-line { max-width: 34ch; margin-inline: auto; }
-  .vh-switch { left: 0; right: 0; justify-content: center; bottom: 1.5rem; }
+
   .vh-copy h1 { font-size: var(--step-3); }
   .vh-arrow { display: none; }
-  .vh-switch { left: var(--gutter); right: auto; bottom: 1.25rem; }
+  /* one rule only — there were two, and the second silently overrode the first,
+     pinning the switcher left under centred copy */
+  .vh-switch { left: 0; right: 0; justify-content: center; bottom: 1.25rem; }
 }
 
 /* Motion is decoration: the layout and the switch both work without it. */
 @media (prefers-reduced-motion: reduce) {
+  /* the switch still works, it just cuts instead of travelling */
+  .vh-slide, .vh-slide[data-out],
+  .vh-copy-slide, .vh-copy-slide[data-out] { translate: none !important; }
   .vh-word, .vh-splash, .vh-bottle, .vh-objects { translate: -50% 0 !important; }
   .vh-word { translate: -50% -50% !important; }
   .vh-slide .vh-splash, .vh-slide .vh-bottle, .vh-slide .vh-objects { scale: 1; }
@@ -339,3 +424,4 @@
  * content turns around.
  */
 .vh-slide img[data-mirror] { transform: scaleX(-1); }
+

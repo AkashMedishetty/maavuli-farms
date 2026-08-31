@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import Kolam from './Kolam';
 import { BRAND } from '@/lib/content';
 
 /**
@@ -56,7 +55,6 @@ export default function Nav() {
 
       {/* the tab: sits above the panel's top edge, white on the white page */}
       <Link href="/" className="vnav-brand" onClick={() => setOpen(false)}>
-        <Kolam size={22} strokeWidth={6} dots={false} />
         <span>{BRAND.name}</span>
       </Link>
 

@@ -36,6 +36,7 @@ export const COL = {
   deliveries: 'deliveries',
   pincodes: 'pincodes',
   webhookEvents: 'webhook_events',
+  zones: 'zones',
 } as const;
 
 /** The only accepted mobile form. Returns null when it is not a valid Indian mobile. */
@@ -77,6 +78,26 @@ export interface Session {
 
 export type OrderStatus = 'created' | 'paid' | 'failed' | 'refunded';
 
+/**
+ * Everything needed to actually put a bottle on a doorstep.
+ *
+ * Defined ONCE and reused by Order and Subscription, because these two drifting
+ * apart is how a rider ends up with a name but no landmark, or a pincode but no
+ * house number. `location` is the exact point; `address` is what a human reads out
+ * loud. Both matter — a pin with no flat number is as useless as a flat number with
+ * no pin in an unmapped lane.
+ */
+export interface DeliveryDetails {
+  /** who to ask for at the door */
+  name: string;
+  /** flat / house, street, area — free text, as the customer writes it */
+  address: string;
+  /** "opposite the water tank" — how deliveries actually get found here */
+  landmark?: string;
+  /** exact doorstep, when the customer shared it */
+  location?: { lat: number; lng: number };
+}
+
 export interface Order {
   _id?: ObjectId;
   razorpayOrderId: string;
@@ -91,7 +112,15 @@ export interface Order {
   days: number;
   litres: number;
   pincode: string;
+  /**
+   * Delivery details, captured at checkout and frozen with the order. Optional on
+   * the TYPE only so orders written before this field existed still parse; the
+   * checkout route requires name and address.
+   */
+  name?: string;
   address?: string;
+  landmark?: string;
+  location?: { lat: number; lng: number };
   status: OrderStatus;
   createdAt: Date;
   paidAt?: Date;
@@ -113,8 +142,22 @@ export interface Subscription {
   daysDelivered: number;
   daysPaused: number;
   status: SubStatus;
+  /**
+   * Kept for the existing pincode flow. Becomes optional once every subscription
+   * carries a `location`; not loosened yet because other backend modules read it
+   * unconditionally and a silent empty string is worse than a required field.
+   */
   pincode: string;
+  /** who to ask for at the door — copied from the order on activation */
+  name?: string;
   address?: string;
+  landmark?: string;
+  /**
+   * The exact delivery point, for the rider. This is the geo replacement for
+   * matching on pincode alone: a pincode in Hyderabad can span several kilometres,
+   * which is a delivery instruction nobody can follow.
+   */
+  location?: { lat: number; lng: number; note?: string };
   createdAt: Date;
 }
 
@@ -156,6 +199,33 @@ export interface WebhookEvent {
   error?: string;
 }
 
+/**
+ * A delivery ZONE — the geo replacement for the pincode list.
+ *
+ * `shape` is how the admin defined it and is what the admin UI edits. `geometry`
+ * is the DERIVED GeoJSON the database actually queries: a circle is stored as a
+ * 64-sided polygon so that both circular and hand-drawn zones are answered by one
+ * $geoIntersects query instead of two code paths.
+ *
+ * Both are kept because they answer different questions — "what did the operator
+ * mean" and "what does the index match". Recomputing `shape` from `geometry` would
+ * lose the operator's intent (a 3km circle becomes an arbitrary 64-gon).
+ */
+export interface Zone {
+  _id?: ObjectId;
+  name: string;
+  active: boolean;
+  shape:
+    | { kind: 'circle'; centre: { lat: number; lng: number }; radiusM: number }
+    | { kind: 'polygon'; points: { lat: number; lng: number }[] };
+  /** GeoJSON Polygon, coordinates in [lng, lat] order. Indexed 2dsphere. */
+  geometry: { type: 'Polygon'; coordinates: [number, number][][] };
+  /** free text for the rider — landmark, gate code, "ring the bell twice" */
+  note?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export const col = {
   users: (db: Db) => db.collection<User>(COL.users),
   otps: (db: Db) => db.collection<Otp>(COL.otps),
@@ -165,6 +235,7 @@ export const col = {
   deliveries: (db: Db) => db.collection<Delivery>(COL.deliveries),
   pincodes: (db: Db) => db.collection<Pincode>(COL.pincodes),
   webhookEvents: (db: Db) => db.collection<WebhookEvent>(COL.webhookEvents),
+  zones: (db: Db) => db.collection<Zone>(COL.zones),
 };
 
 /**
@@ -186,4 +257,8 @@ export const INDEXES = [
   { col: COL.deliveries, spec: { subscriptionId: 1, date: 1 }, options: { unique: true } },
   { col: COL.pincodes, spec: { pincode: 1 }, options: { unique: true } },
   { col: COL.webhookEvents, spec: { eventId: 1 }, options: { unique: true } },
+  // 2dsphere is what makes $geoIntersects usable; without it the point-in-zone
+  // query is a collection scan and errors on anything but tiny data.
+  { col: COL.zones, spec: { geometry: '2dsphere' }, options: {} },
+  { col: COL.zones, spec: { active: 1 }, options: {} },
 ] as const;

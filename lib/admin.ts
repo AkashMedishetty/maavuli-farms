@@ -19,6 +19,8 @@ import { adminMobiles } from '@/lib/env';
 import { getDb } from '@/lib/db';
 import { col, type DeliveryStatus } from '@/lib/models';
 import type { MilkKind } from '@/lib/pricing';
+import { mapsUrl } from './geo';
+import { ObjectId } from 'mongodb';
 
 /** A session the caller can trust is an allowlisted admin. */
 export interface AdminSession {
@@ -67,6 +69,15 @@ export interface RoundDelivery {
   litres: number;
   status: DeliveryStatus;
   note?: string;
+  /* ---- who and where, joined from the subscription ----
+     Deliveries store only mobile, litres and pincode, so on its own this list told
+     a rider "500047, 1 litre" and nothing else. These come from the subscription,
+     which is where checkout freezes the delivery details. */
+  name?: string;
+  address?: string;
+  landmark?: string;
+  /** deep link the rider can open in any maps app — no API key involved */
+  mapsUrl?: string;
 }
 
 export interface RoundPincode {
@@ -100,6 +111,19 @@ export async function todaysRound(date: string, pincode?: string): Promise<Today
     .sort({ pincode: 1, mobile: 1 })
     .toArray();
 
+  /*
+   * One extra query, not N. Collect every subscription referenced by today's rows
+   * and fetch them in a single $in — a per-delivery lookup would be one round trip
+   * per customer on the one screen that has to load fast at 5am.
+   */
+  const subIds = [...new Set(rows.map(r => String(r.subscriptionId)))]
+    .filter(id => ObjectId.isValid(id))
+    .map(id => new ObjectId(id));
+  const subs = subIds.length
+    ? await col.subscriptions(db).find({ _id: { $in: subIds } }).toArray()
+    : [];
+  const detailsBySub = new Map(subs.map(sub => [String(sub._id), sub]));
+
   const byPincode = new Map<string, RoundPincode>();
   let litresTotal = 0;
 
@@ -118,6 +142,16 @@ export async function todaysRound(date: string, pincode?: string): Promise<Today
       litres: d.litres,
       status: d.status,
       note: d.note,
+      ...(() => {
+        const sub = detailsBySub.get(String(d.subscriptionId));
+        if (!sub) return {};
+        return {
+          ...(sub.name ? { name: sub.name } : {}),
+          ...(sub.address ? { address: sub.address } : {}),
+          ...(sub.landmark ? { landmark: sub.landmark } : {}),
+          ...(sub.location ? { mapsUrl: mapsUrl(sub.location) } : {}),
+        };
+      })(),
     });
   }
 

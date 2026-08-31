@@ -44,6 +44,11 @@ export default function Story() {
 
     const items = Array.from(listRef.current?.querySelectorAll('li') ?? []);
 
+    /* Opt in to the hidden-until-revealed state only now that the script is
+       running. Without this the CSS hides the pillars unconditionally and a failed
+       or blocked script leaves the section empty. */
+    wrap.classList.add('story-js');
+
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       line.style.strokeDashoffset = '0';
       items.forEach(li => li.classList.add('in'));
@@ -74,6 +79,7 @@ export default function Story() {
 
   return (
     <section className="story" id="story" ref={wrapRef}>
+      <div className="wrap">
       <div className="story-head">
         <p className="eyebrow">How Maavuli works</p>
         <h2>Five things we will not cut corners on.</h2>
@@ -115,6 +121,7 @@ export default function Story() {
           );
         })}
       </ol>
+      </div>
     </section>
   );
 }

@@ -38,6 +38,14 @@ const SWITCH_MS = 900;
 
 export default function MilkHero({ motion = true }: { motion?: boolean } = {}) {
   const [active, setActive] = useState(0);
+  /* The switch is DIRECTIONAL: the outgoing composition leaves the way you came
+     from and the incoming one arrives from the other side, so pressing "next"
+     feels different from pressing "previous". That needs two things a plain
+     cross-fade does not — which way we are travelling, and which slide is the one
+     leaving. `leaving` is cleared once the transition is over so the waiting slide
+     parks on the correct side for the next press. */
+  const [dir, setDir] = useState(1);
+  const [leaving, setLeaving] = useState<number | null>(null);
   // which layout set to use. Observed rather than assumed, so a resize re-reads it.
   const [bp, setBp] = useState<BreakPoint>('desktop');
   const rootRef = useRef<HTMLElement>(null);
@@ -102,13 +110,29 @@ export default function MilkHero({ motion = true }: { motion?: boolean } = {}) {
     };
   }, [motion]);
 
-  const go = (n: number) => setActive((n + VARIANTS.length) % VARIANTS.length);
+  /* `d` is the direction of travel, passed by the caller rather than inferred:
+     with a wrap-around carousel, comparing indices gets the direction backwards
+     exactly when it wraps. */
+  const go = (n: number, d: number) => {
+    const next = (n + VARIANTS.length) % VARIANTS.length;
+    if (next === active) return;
+    setDir(d);
+    setLeaving(active);
+    setActive(next);
+  };
+
+  // park the outgoing slide back on its waiting side once the switch has finished
+  useEffect(() => {
+    if (leaving === null) return;
+    const t = setTimeout(() => setLeaving(null), SWITCH_MS);
+    return () => clearTimeout(t);
+  }, [leaving, active]);
 
   return (
     <header
       className="vh panel"
       ref={rootRef}
-      style={{ ['--switch' as string]: `${SWITCH_MS}ms` }}
+      style={{ ['--switch' as string]: `${SWITCH_MS}ms`, ['--dir' as string]: String(dir) }}
     >
       {/* fields stack so the colour genuinely cross-fades instead of tweening
           through an intermediate hue */}
@@ -129,6 +153,7 @@ export default function MilkHero({ motion = true }: { motion?: boolean } = {}) {
             key={v.kind}
             className="vh-slide"
             data-on={i === active || undefined}
+            data-out={i === leaving || undefined}
             style={layoutVars(LAYOUT[bp][v.kind])}
           >
             {/* Fixed-aspect box that scales to fit. Every layer sizes and positions
@@ -172,7 +197,7 @@ export default function MilkHero({ motion = true }: { motion?: boolean } = {}) {
       {/* copy sits bottom-left, matching the reference's card position */}
       <div className="vh-copy">
         {VARIANTS.map((v, i) => (
-          <div key={v.kind} className="vh-copy-slide" data-on={i === active || undefined}>
+          <div key={v.kind} className="vh-copy-slide" data-side={v.copySide} data-on={i === active || undefined} data-out={i === leaving || undefined}>
             <p className="eyebrow">{v.body}</p>
             <h1>{v.name}</h1>
             <p className="vh-line">{v.line}</p>
@@ -187,10 +212,10 @@ export default function MilkHero({ motion = true }: { motion?: boolean } = {}) {
       </div>
 
       {/* side arrows at mid-height, as in the reference */}
-      <button className="vh-arrow vh-prev" onClick={() => go(active - 1)} aria-label="Previous milk">
+      <button className="vh-arrow vh-prev" onClick={() => go(active - 1, -1)} aria-label="Previous milk">
         ‹
       </button>
-      <button className="vh-arrow vh-next" onClick={() => go(active + 1)} aria-label="Next milk">
+      <button className="vh-arrow vh-next" onClick={() => go(active + 1, 1)} aria-label="Next milk">
         ›
       </button>
 
@@ -204,7 +229,7 @@ export default function MilkHero({ motion = true }: { motion?: boolean } = {}) {
             aria-label={v.name}
             className={i === active ? 'on' : undefined}
             style={{ ['--dot' as string]: v.field }}
-            onClick={() => go(i)}
+            onClick={() => go(i, i > active ? 1 : -1)}
           >
             <span aria-hidden />
           </button>

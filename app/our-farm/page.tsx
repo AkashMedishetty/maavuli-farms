@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Footer } from '@/components/Sections';
 import Kolam from '@/components/Kolam';
+import KolamDraw from '@/components/KolamDraw';
 import { PILLARS, BRAND, CONTACT } from '@/lib/content';
 import { WARLI } from '@/lib/generated/art';
 import { cow, tree, ground, figure, render } from '@/lib/warli';
@@ -21,15 +22,20 @@ export default function OurFarmPage() {
     <>
       <NavPanel />
       <main className="page">
-        <header className="page-head">
-          <p className="eyebrow">Our farm</p>
-          <h1>{BRAND.premise}</h1>
-          <p>
-            Maavuli is a working dairy, not a distribution brand. The milk you get in the
-            morning was in the animal the same morning — it does not travel to a plant, get
-            standardised, and come back.
-          </p>
-        </header>
+        <div className="farm-intro">
+          <header className="page-head">
+            <p className="eyebrow">Our farm</p>
+            <h1>{BRAND.premise}</h1>
+            <p>
+              Maavuli is a working dairy, not a distribution brand. The milk you get in the
+              morning was in the animal the same morning — it does not travel to a plant, get
+              standardised, and come back.
+            </p>
+          </header>
+
+          {/* draws itself when it scrolls into view, dots before line */}
+          <KolamDraw className="farm-kolam" />
+        </div>
 
         <svg className="farm-band" viewBox="0 0 820 330" aria-hidden="true">
           <g dangerouslySetInnerHTML={{ __html: HEADER_SCENE }} />

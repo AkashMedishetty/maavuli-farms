@@ -25,3 +25,6 @@ pnpm-debug.log*
 # NOTE: lib/generated/ IS committed on purpose — it is derived from
 # assets/brand/*.svg by scripts/extract-art.mjs, and committing it means a clone
 # builds without needing the source artwork present.
+
+# verification screenshots — regenerate with scripts/shoot*.mjs, not source
+ss/

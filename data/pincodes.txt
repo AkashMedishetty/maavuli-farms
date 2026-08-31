@@ -1,0 +1,12 @@
+# Serviceable pincodes, one per line: "pincode" or "pincode,area".
+#
+# EVERY ENTRY BELOW IS TEST DATA. The real service area has not been confirmed by
+# the client, and serviceability is fail-closed — an empty collection means we
+# deliver nowhere, which is the correct default. These exist only so the subscribe
+# flow can be exercised end to end, and the area labels say so on purpose: if one
+# of these ever appears in front of a real customer, it is obvious.
+#
+# Replace this file with the confirmed list, then re-run: pnpm db:seed-pincodes
+500047,TEST DATA - not a confirmed service area
+500015,TEST DATA - not a confirmed service area
+500062,TEST DATA - not a confirmed service area

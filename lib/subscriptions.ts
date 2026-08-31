@@ -143,7 +143,13 @@ export async function activateSubscriptionForOrder(orderId: ObjectId): Promise<v
     daysPaused: 0,
     status: 'active',
     pincode: order.pincode,
+    // Delivery details travel with the subscription, not just the order: the
+    // fulfilment panel and the rider read the subscription, and an order is a
+    // payment record they should never have to join against.
+    ...(order.name ? { name: order.name } : {}),
     ...(order.address ? { address: order.address } : {}),
+    ...(order.landmark ? { landmark: order.landmark } : {}),
+    ...(order.location ? { location: order.location } : {}),
     createdAt: now,
   };
 

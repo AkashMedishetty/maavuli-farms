@@ -9,9 +9,11 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:pricing": "node --experimental-strip-types scripts/verify-pricing.ts",
-    "db:roll": "node scripts/roll-deliveries.mjs",
-    "db:init": "node scripts/init-db.mjs",
-    "db:seed-pincodes": "node scripts/seed-pincodes.mjs"
+    "db:roll": "node --env-file-if-exists=.env.local scripts/roll-deliveries.mjs",
+    "db:init": "node --env-file-if-exists=.env.local scripts/init-db.mjs",
+    "db:seed-pincodes": "node --env-file-if-exists=.env.local scripts/seed-pincodes.mjs",
+    "test:geo": "node --experimental-strip-types scripts/verify-geo.ts",
+    "db:seed-zones": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/seed-zones.mjs"
   },
   "dependencies": {
     "mongodb": "6.12.0",
@@ -24,6 +26,7 @@
     "@types/node": "22.10.5",
     "@types/react": "19.0.7",
     "@types/react-dom": "19.0.3",
+    "playwright": "^1.62.1",
     "typescript": "5.7.3"
   }
 }

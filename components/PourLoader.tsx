@@ -56,19 +56,44 @@ export default function PourLoader() {
 
   useEffect(() => {
     const done = () => {
-      try { sessionStorage.setItem('mv-loaded', '1'); } catch { /* private mode */ }
+      /*
+       * Removing `loading` is NOT cosmetic — `.loading body { overflow: hidden }`
+       * locks the page scroll, and this class was previously only removed in the
+       * effect's cleanup. That cleanup never runs: the loader hides itself by
+       * returning null, which does not unmount the component, and the dependency
+       * array is empty. So `loading` stayed on <html> for the life of the page and
+       * the site could not be scrolled at all.
+       *
+       * It went unnoticed because every capture and test script sets
+       * mv-skip-loader, which returns early before `loading` is ever added — the
+       * tooling skipped the exact path that breaks.
+       */
+      document.documentElement.classList.remove('loading');
       document.documentElement.classList.add('loaded');
       setGone(true);
     };
 
-    let seen = false;
-    try { seen = sessionStorage.getItem('mv-loaded') === '1'; } catch { /* ignore */ }
-    // ?loader forces a replay — once-per-session otherwise makes it invisible
-    // after the first visit, which reads as "it isn't wired up".
-    const forced = new URLSearchParams(window.location.search).has('loader');
-    if (forced) { seen = false; try { sessionStorage.removeItem('mv-loaded'); } catch { /* ignore */ } }
+    /*
+     * The loader now plays on EVERY load, not once per session.
+     *
+     * It used to write sessionStorage['mv-loaded'] and skip on every subsequent
+     * navigation, which made the pour effectively invisible — you saw it once and
+     * never again, so it read as broken.
+     *
+     * The one remaining skip is `mv-skip-loader`, which ONLY the capture and test
+     * scripts set. It is deliberately a different key from the old one: nothing in
+     * the app writes it, so a real visitor can never end up in the skipped state by
+     * accident, which is exactly how the old key silenced the animation.
+     *
+     * Reduced motion still skips, because a full-screen pour is precisely the kind
+     * of motion that setting exists to suppress.
+     */
+    let skip = false;
+    try { skip = sessionStorage.getItem('mv-skip-loader') === '1'; } catch { /* private mode */ }
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if ((seen || reduced) && !forced) { done(); return; }
+    // ?loader still forces a replay, so the animation can be re-watched on demand
+    const forced = new URLSearchParams(window.location.search).has('loader');
+    if ((skip || reduced) && !forced) { done(); return; }
 
     document.documentElement.classList.add('loading');
 

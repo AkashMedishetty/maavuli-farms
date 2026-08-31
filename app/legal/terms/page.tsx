@@ -1,4 +1,6 @@
 import LegalPage from '@/components/LegalPage';
+import { assumptionsFor } from '@/lib/legal';
+import { TENURES } from '@/lib/pricing';
 
 export const metadata = { title: 'Terms & Conditions' };
 
@@ -6,27 +8,31 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms & Conditions"
-      intro="The structure of the agreement is here. The clauses that bind you and us both need the farm's decisions and a lawyer's review, and are marked as such rather than filled with plausible wording."
+      intro="The agreement between you and Maavuli Farm Milk for a prepaid daily-milk subscription. Governing law, renewal and a few other clauses are draft defaults for review; each is listed for confirmation."
       blocks={[
         {
           heading: 'What is being sold',
-          facts: [
-            'A prepaid subscription for daily delivery of fresh cow or buffalo milk, in half-litre or one-litre quantities, over a fixed term of 30, 90, 180 or 360 days.',
-            'Prices are a fixed rate per litre per milk, reduced by a discount that grows with the term. Buffalo milk is ₹95 per litre and cow milk is ₹115 per litre before any discount.',
+          body: [
+            'Maavuli Farm Milk sells prepaid subscriptions for daily doorstep delivery of fresh cow or buffalo milk, in half-litre or one-litre quantities, over a fixed term. A longer term carries a larger discount off the standard per-litre rate.',
           ],
-          pending: [
-            'Whether a term auto-renews at the end, or simply ends',
-            'Whether the rate is held for the whole term if input costs move',
+          facts: [
+            `Available terms and their discounts are defined in code: ${TENURES.map(t => `${t.label} at ${t.discountPct === 0 ? 'the standard rate' : `−${t.discountPct}%`}`).join(', ')}.`,
+            'All prices are derived from a single formula in the pricing module and are shown, exact, on the plans page — they are never restated by hand in these terms.',
           ],
         },
         {
-          heading: 'Delivery',
-          pending: [
-            'The delivery window each morning, and the daily cutoff for changes',
-            'What happens on a missed delivery — credit, replacement, or extension of the term',
-            'Whether deliveries pause on specific festivals or holidays',
-            'How many pause days a term allows, and how much notice they need',
-            'The serviceable pincode list',
+          heading: 'Orders and payment',
+          body: [
+            'You place an order by choosing a milk type, quantity and term, entering a serviceable delivery address, and paying the full amount up front. Payment is processed by Razorpay; card and UPI credentials are handled entirely by Razorpay and never reach this site or its database.',
+          ],
+          facts: [
+            'A subscription becomes active only after payment is confirmed as paid. Deliveries are then scheduled for each day of the term.',
+          ],
+        },
+        {
+          heading: 'Delivery, pauses and cancellation',
+          body: [
+            'Delivery timing, serviceable area and missed-delivery handling are set out in the Shipping & Delivery Policy. Pauses, skips, cancellations and refunds are set out in the Refund & Cancellation Policy. In short: a pause or skip never forfeits paid days — they are added back to the end of your term.',
           ],
         },
         {
@@ -35,23 +41,19 @@ export default function TermsPage() {
             'Milk is collected, bottled and delivered from the farm without intermediate processing.',
           ],
           pending: [
-            'FSSAI licence number, which must be displayed',
-            'The window for raising a quality complaint about a delivery',
-            'Whether milk fat or SNF is guaranteed to a stated figure',
+            'FSSAI licence number, which must be displayed and is not yet supplied.',
+            'Whether milk fat or SNF is guaranteed to a stated figure.',
           ],
         },
         {
-          heading: 'Payment',
-          facts: [
-            'Payments will be processed by Razorpay. Card and UPI credentials are never held by this site.',
-          ],
-          pending: [
-            'Whether subscriptions are prepaid one-time payments or true auto-renew mandates — this changes what you are agreeing to and is not yet decided',
-            'Governing law and jurisdiction (expected: Hyderabad, Telangana — to be confirmed)',
+          heading: 'Renewal and governing law',
+          body: [
+            'A prepaid term ends on its last delivery day and does not auto-renew; you start a new subscription to continue. These terms are governed by the laws of India, and courts at Hyderabad, Telangana have exclusive jurisdiction over any dispute — both stated as drafts below.',
           ],
         },
       ]}
-      note="Razorpay will not activate live keys without published Terms and a published Refund & Cancellation policy. Both need to be finished before payments can be switched on."
+      toConfirm={assumptionsFor('terms')}
+      note="Draft prepared for Razorpay activation in test mode. Razorpay will not activate live keys without published Terms and a published Refund & Cancellation policy; these are drafts pending Maavuli’s confirmation and legal review, not executed terms."
     />
   );
 }

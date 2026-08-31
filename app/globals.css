@@ -15,6 +15,11 @@
   --milk-dim: rgba(255, 255, 255, 0.66);
   --milk-faint: rgba(255, 255, 255, 0.2);
 
+  /* the same two weights in red, for anything sitting on the white page rather
+     than inside a red panel. #8c170e is rgb(140, 23, 14). */
+  --red-dim: rgba(140, 23, 14, 0.72);
+  --red-faint: rgba(140, 23, 14, 0.22);
+
   --serif: "Iowan Old Style", Georgia, "Times New Roman", serif;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
@@ -27,6 +32,10 @@
 
   --gutter: clamp(1.25rem, 4vw, 4.5rem);
   --measure: 62ch;
+  /* The widest a column of content is allowed to get. Without this every section
+     is as wide as the screen, so on a 32:9 monitor the page collapses into its
+     left sixth and the reader's eye has to travel 5000px to find anything. */
+  --content: 74rem;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -180,7 +189,10 @@ a { color: inherit; }
 
 /* --------------------------------------------------------------- story ---- */
 
-.story { position: relative; padding: clamp(4rem, 10vh, 9rem) var(--gutter); }
+.story { padding: clamp(4rem, 10vh, 9rem) var(--gutter); }
+/* the path is absolutely positioned to inset:0, so the POSITIONED ancestor decides
+   how wide the serpentine gets — the measure, not the monitor */
+.story .wrap { position: relative; }
 
 .story-path {
   position: absolute;
@@ -209,10 +221,17 @@ a { color: inherit; }
   align-items: center;
   min-height: 26rem;
   padding: clamp(2rem, 6vh, 5rem) 0;
-  opacity: 0;
-  transform: translate3d(0, 30px, 0);
   transition: opacity 1s cubic-bezier(0.65, 0.02, 0.31, 1),
               transform 1s cubic-bezier(0.65, 0.02, 0.31, 1);
+}
+/* The hidden state is applied only once the component has mounted and added
+   .story-js. Previously it was on the base rule, so if the script never ran — or
+   the reader jumped past the trigger point — four fifths of the section stayed
+   permanently invisible. Now the content is there by default and the reveal is
+   the enhancement. */
+.story-js .story-items li:not(.in) {
+  opacity: 0;
+  transform: translate3d(0, 30px, 0);
 }
 .story-items li.in { opacity: 1; transform: none; }
 .story-items li:nth-child(even) .story-text { order: 2; }
@@ -239,6 +258,8 @@ a { color: inherit; }
 .foot {
   border-top: 1px solid var(--milk-faint);
   padding: clamp(3rem, 8vh, 6rem) var(--gutter);
+}
+.foot-grid {
   display: grid;
   gap: 2.5rem;
   grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
@@ -301,14 +322,20 @@ a { color: inherit; }
   transition: opacity 0.55s cubic-bezier(0.65, 0.02, 0.31, 1);
 }
 .loader.out { opacity: 0; pointer-events: none; }
-.loader-svg { width: min(86vh, 520px); height: auto; }
+/* Sized against BOTH axes. `min(86vh, 520px)` alone ignored viewport width, so on a
+   412px phone the mark rendered 520px wide and hung off both edges — which reads as
+   "the logo animation is not centred". 88vw is the cap that actually bites there. */
+.loader-svg { width: min(86vh, 88vw, 520px); height: auto; }
 .ldr-word { font-family: var(--serif); font-size: 78px; }
 .ldr-sub { font-family: var(--serif); font-size: 32px; letter-spacing: 1px; }
 
 /* hidden before first paint once the session has already seen it */
 .loaded .loader { display: none; }
 /* nothing scrolls behind the overlay while it plays */
-.loading body { overflow: hidden; }
+/* Belt and braces: scoped to :not(.loaded) so that even if `loading` were left on
+   <html> by a future change, finishing the loader still restores the scroll. This
+   rule locking the page permanently is exactly the bug it now cannot cause. */
+.loading:not(.loaded) body { overflow: hidden; }
 
 /* ----------------------------------------------------------------- nav ---- */
 
@@ -405,31 +432,97 @@ a { color: inherit; }
 
 /* ---------------------------------------------------------------- farm ---- */
 
+/* The centred content column. A panel's BACKGROUND still runs the full width — it
+   is only the reading column that is capped, so the red band stays edge to edge
+   while the words stay reachable. */
+.wrap { width: 100%; max-width: var(--content); margin-inline: auto; }
+
+/*
+ * Farm panel, rebuilt. It was a two-column grid with the copy left and a small
+ * Warli scene floating in the right half, which left the panel looking
+ * half-finished. Now the type and three proof points share the reading column and
+ * the Warli runs as a HORIZON across the whole panel — which is how Warli is
+ * actually composed: figures standing on a common ground line, not centred in a
+ * box.
+ */
 .farm {
+  position: relative;
+  /* room for the horizon band to sit beneath the content */
+  padding-bottom: clamp(9rem, 24vh, 15rem);
+}
+.farm-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
   gap: clamp(2rem, 6vw, 5rem);
-  align-items: center;
+  align-items: start;
 }
 .farm-copy { display: flex; flex-direction: column; gap: 1.1rem; align-items: flex-start; }
 .farm-copy h2 { font-size: var(--step-2); max-width: 22ch; }
-.farm-art { width: 100%; height: auto; color: var(--milk); opacity: 0.92; }
 
-@media (max-width: 820px) { .farm { grid-template-columns: 1fr; } }
+/* the three things actually being claimed, given their own weight instead of
+   being buried in the middle of a paragraph */
+.farm-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 1.1rem; }
+.farm-points li { padding-top: 1rem; border-top: 1px solid var(--milk-faint); }
+.farm-points b {
+  display: block;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: var(--step-1);
+}
+.farm-points span { color: var(--milk-dim); font-size: var(--step--1); }
+
+/* Capped to the reading measure and centred, not stretched edge to edge: a horizon
+   scaled to a 5120px monitor would render the figures absurdly large. The panel's
+   red still runs full width behind it. */
+.farm-horizon-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  translate: -50% 0;
+  width: min(100% - 2 * var(--gutter), var(--content));
+  pointer-events: none;
+}
+.farm-horizon {
+  display: block;
+  width: 100%;
+  height: auto;
+  color: var(--milk);
+  opacity: 0.8;
+}
+
+@media (max-width: 820px) {
+  .farm-grid { grid-template-columns: 1fr; }
+  .farm { padding-bottom: clamp(7rem, 18vh, 10rem); }
+}
 
 /* ------------------------------------------------------------- pricing ---- */
 
-.pricing h2 { font-size: var(--step-2); max-width: 26ch; margin: 0.5rem 0 2.5rem; }
+/*
+ * Pricing, rebuilt. It was left-aligned with `max-width: 60rem` and no auto
+ * margins, so on a 32:9 monitor the whole offer sat in the left sixth of the
+ * screen. Now the section is a centred band: the pitch is centred, the two cards
+ * are centred as a pair and capped so they never stretch into billboards, and the
+ * longest term is marked rather than left for the reader to work out.
+ */
+.pricing .wrap { text-align: center; }
+.pricing h2 {
+  font-size: var(--step-2);
+  max-width: 26ch;
+  margin: 0.5rem auto 2.5rem;
+}
 .price-grid {
   display: grid;
   gap: clamp(1rem, 2.5vw, 2rem);
-  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-  max-width: 60rem;
+  /* a max as well as a min, so two cards on a wide screen stay card-shaped */
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 23rem));
+  justify-content: center;
+  text-align: left;
 }
 .price-card {
   padding: clamp(1.4rem, 3vw, 2.2rem);
-  border: 1px solid var(--milk-faint);
-  border-radius: 6px;
+  border: 1px solid var(--red-faint);
+  border-radius: 14px;
+  background: rgba(140, 23, 14, 0.035);
 }
 .price-card h3 { font-size: var(--step-1); margin-bottom: 1rem; }
 .price-card ul { list-style: none; margin: 0; padding: 0; }
@@ -439,8 +532,19 @@ a { color: inherit; }
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.6rem 0;
-  border-top: 1px solid var(--milk-faint);
+  border-top: 1px solid var(--red-faint);
 }
+/* the best row earns a label instead of a colour the reader has to decode */
+.price-term em {
+  display: block;
+  font-style: normal;
+  font-size: 0.72em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.price-note { margin: 2rem auto; max-width: 52ch; }
+.pricing .cta { margin-inline: auto; }
 .price-term { color: var(--milk-dim); font-size: var(--step--1); }
 .price-rate { font-family: var(--serif); font-size: var(--step-1); }
 .price-rate i { font-style: normal; font-size: var(--step--1); color: var(--milk-dim); }
@@ -450,13 +554,13 @@ a { color: inherit; }
 
 /* ------------------------------------------------------------ cta band ---- */
 
-.cta-band {
+.cta-band { border-top: 1px solid var(--milk-faint); }
+.cta-band-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
   gap: 1.2rem;
-  border-top: 1px solid var(--milk-faint);
 }
 .cta-band h2 { font-size: var(--step-3); }
 .cta-band p { color: var(--milk-dim); }
@@ -503,7 +607,14 @@ a { color: inherit; }
 
 /* ---------------------------------------------------------------- pages ---- */
 
-.page { padding: clamp(6rem, 14vh, 10rem) var(--gutter) clamp(4rem, 10vh, 7rem); }
+/* Inner pages were full-bleed, so on a wide monitor their content ran the whole
+   screen width while the homepage sections were capped — the same left-hugging
+   problem, one level up. */
+.page {
+  padding: clamp(6rem, 14vh, 10rem) var(--gutter) clamp(4rem, 10vh, 7rem);
+  max-width: calc(var(--content) + 2 * var(--gutter));
+  margin-inline: auto;
+}
 .page-head { max-width: 44ch; display: flex; flex-direction: column; gap: 1rem; margin-bottom: clamp(2.5rem, 7vh, 5rem); }
 .page-head h1 { font-size: var(--step-3); }
 .page-head p { color: var(--milk-dim); }
@@ -966,3 +1077,314 @@ body {
   font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #cfe8cf;
 }
 .lab-live span { color: #8a8a8a; }
+
+/* ================================================================
+ * PAGE-GROUND INK
+ *
+ * The panel system inverted the page — white page, inset red panels — but every
+ * section stylesheet above it was written for the old all-red page and paints its
+ * ink in --milk. Inside a panel that is white on red and correct. On the white
+ * page it is white on WHITE, which is why the story's drawn line, all five Warli
+ * drawings, the pillar body copy, the price term labels, the discount column and
+ * every card border rendered invisible rather than missing.
+ *
+ * These rules restate just those declarations in red, for the grounds that are
+ * actually white: .story and .pricing (plain sections on the page) and .invert
+ * (the plans / contact / legal pages).
+ *
+ * Deliberately explicit rather than redefining --milk for non-panel grounds:
+ * --milk is also a literal BACKGROUND in three places — .invert itself, the nav
+ * brand tab and the nav CTA pill — so a token override would paint those red.
+ * ================================================================ */
+
+/* ---- the drawn line threading the five pillars ---- */
+.story-line { stroke: var(--red); opacity: 0.3; }
+
+/* ---- the Warli panels: outline strokes and rice-paste fill both use
+        currentColor, so one colour on the wrapper fixes both ---- */
+.story .wart { color: var(--red); }
+
+.story-text p { color: var(--red-dim); }
+.story .eyebrow { color: var(--red-dim); }
+.story-empty span { background: var(--red-faint); }
+
+/* ---- pricing table ---- */
+.pricing .eyebrow,
+.price-term,
+.price-off,
+.price-foot,
+.price-note,
+.price-rate i { color: var(--red-dim); }
+.price-card { border-color: var(--red-faint); }
+.price-card li { border-top-color: var(--red-faint); }
+
+/* ---- the inverted inner pages ---- */
+.invert .eyebrow,
+.invert .plan-note,
+.invert .plan-rate i,
+.invert .plan-serviceable,
+.invert .foot-legal { color: var(--red-dim); }
+.invert .plan-card { border-color: var(--red-faint); }
+
+/* the pending chip is a dashed outline plus dimmed italic text — both were white.
+   It appears in the pricing note and on the inner pages, so cover all three. */
+.story .pending,
+.pricing .pending,
+.invert .pending { border-color: var(--red-faint); color: var(--red-dim); }
+
+/* ---- a call to action on the white page inverts the other way ---- */
+.story .cta,
+.pricing .cta,
+.invert .cta { border-color: var(--red); color: var(--red); }
+.story .cta:hover,
+.pricing .cta:hover,
+.invert .cta:hover { background: var(--red); color: var(--milk); }
+
+/* ---- subscribe flow -------------------------------------------------------
+ * The four-step flow was fully built — area check, milk, quantity, term,
+ * summary — but `main.sub` is neither a panel nor .invert, so every control was
+ * drawn in white on the white page: the step rail, the pincode field, all the
+ * choice cards, the notices, the summary rules and the back link. The page read
+ * as an empty heading because the UI was invisible, not absent.
+ */
+.sub {
+  max-width: calc(var(--content) + 2 * var(--gutter));
+  margin-inline: auto;
+}
+
+.sub-rail span { background: var(--red-faint); }
+.sub-rail span.on { background: var(--red); }
+
+.sub-help,
+.sub-choice-rate,
+.sub-back { color: var(--red-dim); }
+.sub-back:hover { color: var(--red); }
+
+.sub-notice { border-color: var(--red-faint); }
+.sub-notice.ok { border-color: var(--red); background: rgba(140, 23, 14, 0.04); }
+
+.sub-pin input {
+  color: var(--red);
+  border-color: var(--red-faint);
+}
+.sub-pin input:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+  border-color: var(--red);
+}
+.sub-pin input::placeholder { color: var(--red-faint); }
+
+.sub-choice { border-color: var(--red-faint); }
+.sub-choice:hover {
+  border-color: var(--red);
+  background: rgba(140, 23, 14, 0.05);
+}
+.sub-choice:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+
+.sub-summary li { border-bottom-color: var(--red-faint); }
+.sub .pending { border-color: var(--red-faint); color: var(--red-dim); }
+.sub .cta { border-color: var(--red); color: var(--red); }
+.sub .cta:hover { background: var(--red); color: var(--milk); }
+
+/* ---- every inner page is a white ground -----------------------------------
+ * /plans, /contact and /legal carry .invert; /our-farm, /account and /admin do
+ * not — but once the body went white they became the same ground, so .invert
+ * stopped distinguishing anything. Keying off .page covers all of them at once
+ * instead of one block per page, which is how /our-farm ended up with an
+ * invisible Warli band, invisible pillar copy and an invisible CTA.
+ *
+ * `:not(.panel *)` is load-bearing: the admin page nests red .panel cards INSIDE
+ * .page, and their ink has to stay white.
+ */
+.page :is(
+  .eyebrow,
+  .page-head p,
+  .farm-pillars p,
+  .farm-close p,
+  .plan-note,
+  .plan-serviceable,
+  .sub-help,
+  .sub-foot,
+  .sub-back
+):not(.panel *) { color: var(--red-dim); }
+
+.page :is(.wart, .farm-band):not(.panel *) { color: var(--red); }
+
+.page .cta:not(.panel *) { border-color: var(--red); color: var(--red); }
+.page .cta:not(.panel *):hover { background: var(--red); color: var(--milk); }
+
+.page .pending:not(.panel *) { border-color: var(--red-faint); color: var(--red-dim); }
+.page :is(.plan-card, .sub-notice):not(.panel *) { border-color: var(--red-faint); }
+.page .sub-summary li:not(.panel *) { border-bottom-color: var(--red-faint); }
+.page .sub-back:not(.panel *):hover { color: var(--red); }
+/* .sub-foot a is styled white-dim for the red panel; on a page ground it vanished */
+.page .sub-foot a:not(.panel *) { color: var(--red-dim); }
+.page .sub-foot a:not(.panel *):hover { color: var(--red); }
+
+/* ---- kolam drawn on scroll -------------------------------------------------
+ * Dots first, then the line looped around them — the order a kolam is actually
+ * made in. Each of the 49 strokes is its own element with pathLength="1", so the
+ * stagger produces drawing rather than a fade.
+ */
+.kd {
+  width: 100%;
+  height: auto;
+  color: var(--red);
+  overflow: visible;
+}
+.kd-dot {
+  fill: currentColor;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.kd-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  vector-effect: non-scaling-stroke;
+}
+.kd.kd-on .kd-dot {
+  animation: kd-dot 260ms ease-out forwards;
+  animation-delay: calc(var(--i) * 40ms);
+}
+.kd.kd-on .kd-line {
+  animation: kd-draw var(--kd-stroke, 620ms) cubic-bezier(0.65, 0.02, 0.31, 1) forwards;
+  /* wait for the pulli grid to be laid down before looping the line around it */
+  animation-delay: calc(900ms + var(--i) * var(--kd-step, 95ms));
+}
+@keyframes kd-dot {
+  from { opacity: 0; transform: scale(0.35); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes kd-draw {
+  to { stroke-dashoffset: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* show the finished kolam — an empty box is worse than no animation */
+  .kd .kd-dot { opacity: 1; animation: none; }
+  .kd .kd-line { stroke-dashoffset: 0; animation: none; }
+}
+
+/* the farm page's intro: copy left, kolam drawing itself on the right */
+.farm-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr);
+  gap: clamp(2rem, 6vw, 5rem);
+  align-items: center;
+}
+.farm-intro .page-head { margin-bottom: 0; }
+.farm-kolam { max-width: 24rem; margin-inline: auto; }
+
+@media (max-width: 820px) {
+  .farm-intro { grid-template-columns: 1fr; }
+  .farm-kolam { max-width: 15rem; }
+}
+
+/* ---- admin: delivery zone editor ------------------------------------------
+ * Sits inside .page (white ground), so ink is red via the .page rules above.
+ */
+.zone-editor { margin: 0 0 clamp(2.5rem, 7vh, 4rem); }
+.zone-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; align-items: baseline; }
+.zone-head h2 { font-size: var(--step-2); }
+.zone-state { color: var(--red-dim); font-size: var(--step--1); }
+
+.zone-map {
+  height: clamp(18rem, 46vh, 30rem);
+  margin: 1.25rem 0;
+  border: 1px solid var(--red-faint);
+  border-radius: 12px;
+  overflow: hidden;
+  /* Leaflet needs a positioned, sized box before it will render tiles */
+  position: relative;
+  z-index: 0;
+}
+
+.zone-form { display: grid; gap: 0.9rem; max-width: 32rem; }
+.zone-hint { color: var(--red-dim); font-size: var(--step--1); }
+.zone-form label { display: grid; gap: 0.35rem; }
+.zone-form label > span {
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--red-dim);
+}
+.zone-form input[type='text'], .zone-form input:not([type]) {
+  font: inherit;
+  padding: 0.6em 0.8em;
+  color: var(--red);
+  background: transparent;
+  border: 1px solid var(--red-faint);
+  border-radius: 999px;
+}
+.zone-form input:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.zone-form input[type='range'] { accent-color: var(--red); }
+.zone-form .cta { justify-self: start; }
+.zone-form .cta:disabled { opacity: 0.4; cursor: not-allowed; }
+.zone-msg { color: var(--red-dim); font-size: var(--step--1); }
+
+.zone-list { list-style: none; margin: 1.5rem 0 0; padding: 0; display: grid; gap: 0.5rem; max-width: 44rem; }
+.zone-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--red-faint);
+}
+.zone-name { font-family: var(--serif); font-size: var(--step-1); }
+.zone-shape { color: var(--red-dim); font-size: var(--step--1); }
+.zone-list button {
+  font: inherit;
+  font-size: var(--step--1);
+  padding: 0.35em 0.9em;
+  color: var(--red);
+  background: transparent;
+  border: 1px solid var(--red-faint);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.zone-list button:hover { border-color: var(--red); }
+
+/* ---- touch hit areas -------------------------------------------------------
+ * The footer links are the smallest targets on the site — 19px tall text, which is
+ * below every published minimum (WCAG 2.5.8 asks 24px, Apple and Android both
+ * recommend 44px). A mis-tap in a footer sends someone to the wrong legal page.
+ *
+ * Scoped to `pointer: coarse` on purpose: it grows the hit area on phones and
+ * tablets and leaves the desktop footer exactly as designed, rather than padding
+ * every layout to satisfy a touch guideline that does not apply to a mouse.
+ */
+@media (pointer: coarse) {
+  .foot a,
+  .foot-legal a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  /* the lists get tighter gaps to absorb the extra height */
+  .foot ul { display: grid; }
+}
+
+/* ---- mobile nav on inner pages --------------------------------------------
+ * The nav band on a hero-less page is only ~73px tall, and `.panel` sets
+ * `overflow: hidden` for its rounded corners. The mobile dropdown is absolutely
+ * positioned BELOW the band (inset: 100% …), so it was clipped away entirely —
+ * the burger opened, the sheet rendered, and nothing appeared. The homepage was
+ * fine only because its panel is the full-height hero.
+ *
+ * `overflow: visible` is safe here: a background is always clipped to the border
+ * radius regardless of overflow, so the rounded corners are unaffected. Only child
+ * content escapes, which is exactly what the dropdown needs to do.
+ *
+ * The z-index is required too — `.panel` sets `isolation: isolate`, so without
+ * raising this band the sheet would paint underneath the page content that follows
+ * it in the DOM.
+ */
+.navpanel {
+  overflow: visible;
+  z-index: 30;
+}

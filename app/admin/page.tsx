@@ -1,3 +1,4 @@
+import ZoneMap from '@/components/ZoneMap';
 import Link from 'next/link';
 import { NotConfiguredError } from '@/lib/db';
 import { formatINR } from '@/lib/pricing';
@@ -138,6 +139,8 @@ export default async function AdminPage({
       )}
 
       {/* ---- primary view: the round, pincode-grouped, litres totalled ---- */}
+      {!dbError && <ZoneMap />}
+
       {!dbError && round && (
         <section className="admin-round">
           <div className="admin-round-head">

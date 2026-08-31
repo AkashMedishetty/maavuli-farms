@@ -112,3 +112,44 @@ export function verifyWebhookSignature(rawBody: string, signatureHeader: string 
   if (expectedBuf.length !== givenBuf.length) return false;
   return timingSafeEqual(expectedBuf, givenBuf);
 }
+
+/**
+ * Verify the signature Razorpay Checkout hands back to the BROWSER on success.
+ *
+ * This is a DIFFERENT computation from verifyWebhookSignature, and conflating them
+ * is a real trap:
+ *
+ *   webhook   HMAC_SHA256( raw request body , RAZORPAY_WEBHOOK_SECRET )
+ *   handshake HMAC_SHA256( "<order_id>|<payment_id>" , RAZORPAY_KEY_SECRET )
+ *
+ * Different message, different key. Checking the handshake with the webhook secret
+ * fails every time; checking it with the wrong message shape fails silently in the
+ * same way.
+ *
+ * Why this exists at all: the webhook was the only fulfilment path, and Razorpay
+ * cannot reach a loopback address, so locally a paid order never became a
+ * subscription. It is also the right thing in production — the handshake confirms
+ * the payment synchronously so the customer sees their subscription immediately,
+ * while the webhook remains the durable backstop for a closed tab. Both funnel
+ * through the same guarded state transition, so whichever arrives first wins and
+ * the second is a no-op.
+ */
+export function verifyPaymentSignature(
+  razorpayOrderId: string,
+  razorpayPaymentId: string,
+  signature: string | null,
+): boolean {
+  if (!signature || !razorpayOrderId || !razorpayPaymentId) return false;
+
+  const cfg = razorpayConfig();
+  if (!cfg.ok) return false;
+
+  const expected = createHmac('sha256', cfg.value.RAZORPAY_KEY_SECRET)
+    .update(`${razorpayOrderId}|${razorpayPaymentId}`, 'utf8')
+    .digest('hex');
+
+  const expectedBuf = Buffer.from(expected, 'utf8');
+  const givenBuf = Buffer.from(signature, 'utf8');
+  if (expectedBuf.length !== givenBuf.length) return false;
+  return timingSafeEqual(expectedBuf, givenBuf);
+}

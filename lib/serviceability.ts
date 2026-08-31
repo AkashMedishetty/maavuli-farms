@@ -1,5 +1,6 @@
 import { getDb } from './db';
-import { col, type Pincode } from './models';
+import { col, type Pincode, type Zone } from './models';
+import { toGeoJSON, type GeoPoint } from './geo';
 
 /**
  * Serviceability is decided by PINCODE, authoritatively, against the `pincodes`
@@ -48,4 +49,53 @@ export async function listServiceable(): Promise<Pincode[]> {
     .find({ active: true })
     .sort({ pincode: 1 })
     .toArray();
+}
+
+
+/* ------------------------------------------------------------------ geo ---- */
+
+/**
+ * The geo replacement for pincode matching. A Hyderabad pincode can span several
+ * kilometres, which is not a delivery instruction anyone can follow — a zone plus
+ * an exact point is.
+ *
+ * The two invariants at the top of this file apply UNCHANGED, and they are the
+ * reason this is not just a findOne:
+ *
+ *  1. No active zones means we deliver NOWHERE. Never true by default.
+ *  2. An outage THROWS rather than returning false, so "we do not deliver there"
+ *     stays distinguishable from "we could not check".
+ *
+ * The query is $geoIntersects against a 2dsphere index, which asks the question we
+ * actually have — "does this point fall inside a stored zone" — rather than
+ * $centerSphere, which asks the inverse and cannot express a hand-drawn area.
+ */
+export async function zoneForPoint(point: GeoPoint): Promise<Zone | null> {
+  const db = await getDb();
+  return col.zones(db).findOne({
+    active: true,
+    geometry: {
+      $geoIntersects: {
+        // GeoJSON is [lng, lat]; toGeoJSON is the only thing allowed to build this
+        $geometry: { type: 'Point', coordinates: toGeoJSON(point) },
+      },
+    },
+  });
+}
+
+/** True only when the point falls in an active zone. Throws on outage. */
+export async function isServiceablePoint(point: GeoPoint): Promise<boolean> {
+  return (await zoneForPoint(point)) !== null;
+}
+
+/** How many zones we currently serve. 0 means nowhere — the honest default. */
+export async function activeZoneCount(): Promise<number> {
+  const db = await getDb();
+  return col.zones(db).countDocuments({ active: true });
+}
+
+/** Every active zone, for the admin list and the map. Throws on outage. */
+export async function listZones(): Promise<Zone[]> {
+  const db = await getDb();
+  return col.zones(db).find({}).sort({ name: 1 }).toArray();
 }

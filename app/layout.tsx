@@ -18,6 +18,16 @@ export const metadata: Metadata = {
     'doorstep every morning. No processing, no middlemen.',
   applicationName: BRAND.fullName,
   manifest: '/manifest.webmanifest',
+  // iOS does not read the manifest for the home-screen icon, so the PNG is declared
+  // here — without it an installed app falls back to a screenshot of the page.
+  icons: {
+    icon: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { url: '/icon.svg', type: 'image/svg+xml' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180' }],
+  },
   appleWebApp: { capable: true, title: BRAND.name, statusBarStyle: 'black-translucent' },
   formatDetection: { telephone: true, address: false },
 };
@@ -34,13 +44,27 @@ export const viewport: Viewport = {
  * loader would flash on every navigation within a session — the overlay ships in
  * the HTML and this is what hides it again in time.
  */
-const NO_FLASH = `try{if(sessionStorage.getItem('mv-loaded'))document.documentElement.classList.add('loaded')}catch(e){}`;
+// Pre-paint guard. Only the capture/test scripts set mv-skip-loader; a real visit
+// never has it, so the loader is no longer suppressed on a reload the way the old
+// 'mv-loaded' key suppressed it.
+/*
+ * Register the service worker after load, so it never competes with first paint.
+ * Registration is wrapped in a try and deliberately silent on failure: an
+ * unavailable worker (private mode, insecure origin, unsupported browser) must
+ * degrade to a plain website, not surface an error to a customer.
+ */
+const SW_REGISTER =
+  `if('serviceWorker' in navigator){addEventListener('load',function(){` +
+  `navigator.serviceWorker.register('/sw.js').catch(function(){})})}`;
+
+const NO_FLASH = `try{if(sessionStorage.getItem('mv-skip-loader'))document.documentElement.classList.add('loaded')}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en-IN">
       <head>
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH }} />
+        <script dangerouslySetInnerHTML={{ __html: SW_REGISTER }} />
       </head>
       <body>
         <KolamDefs />

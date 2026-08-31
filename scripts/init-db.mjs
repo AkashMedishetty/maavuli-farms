@@ -19,6 +19,7 @@ const COL = {
   deliveries: 'deliveries',
   pincodes: 'pincodes',
   webhookEvents: 'webhook_events',
+  zones: 'zones',
 };
 
 // ---- KEEP IN SYNC with INDEXES in lib/models.ts ----
@@ -35,6 +36,8 @@ const INDEXES = [
   { col: COL.deliveries, spec: { subscriptionId: 1, date: 1 }, options: { unique: true } },
   { col: COL.pincodes, spec: { pincode: 1 }, options: { unique: true } },
   { col: COL.webhookEvents, spec: { eventId: 1 }, options: { unique: true } },
+  { col: COL.zones, spec: { geometry: '2dsphere' }, options: {} },
+  { col: COL.zones, spec: { active: 1 }, options: {} },
 ];
 
 const uri = (process.env.MONGODB_URI ?? '').trim();

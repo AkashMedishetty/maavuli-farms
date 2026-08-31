@@ -95,13 +95,22 @@ export interface HeroVariant {
   /**
    * Which layers to flip horizontally.
    *
-   * Deliberately NOT the bottle. Every render was lit from the upper left, and
-   * mirroring the bottle flips its highlight and condensation to the upper right —
-   * which reads as a second light source sitting next to an unmirrored splash. The
-   * splash and the floating objects have no such tell, so they mirror cleanly and
-   * carry the whole sense of the composition having turned around.
+   * All of them, so buffalo is an exact reflection of cow — the client's call.
+   * Worth knowing what it costs: every render is lit from the upper left, so
+   * flipping the bottle puts its highlight and condensation on the upper right.
+   * Because the splash and objects flip with it the light stays internally
+   * consistent, but it is the opposite hand from the cow slide. Drop 'bottle' from
+   * this list to keep the glassware lit the same way in both.
    */
   mirror: Exclude<Slot, 'word'>[];
+  /**
+   * Which side of the hero the words sit on.
+   *
+   * Buffalo is cow's mirror — its splash and objects are flipped and every layer
+   * offset is negated — so the copy has to cross over with them. Left it where it
+   * was, the words sat on top of the artwork instead of opposite it.
+   */
+  copySide: 'left' | 'right';
 }
 
 export const VARIANTS: readonly HeroVariant[] = [
@@ -112,6 +121,7 @@ export const VARIANTS: readonly HeroVariant[] = [
     field: '#8c170e',
     body: 'Light · warm white · easy daily',
     mirror: [],
+    copySide: 'left',
   },
   {
     kind: 'buffalo',
@@ -119,7 +129,8 @@ export const VARIANTS: readonly HeroVariant[] = [
     line: 'Thick, and it stays thick. The one that sets curd overnight.',
     field: '#650f08',
     body: 'Dense · high fat · chalk white',
-    mirror: ['splash', 'objects'],
+    mirror: ['splash', 'objects', 'bottle'],
+    copySide: 'right',
   },
 ] as const;
 

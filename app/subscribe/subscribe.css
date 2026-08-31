@@ -1,0 +1,467 @@
+/*
+ * /subscribe styling.
+ *
+ * CRITICAL CONTEXT: /subscribe renders on the WHITE page (body is white here).
+ * The global .sub-* classes were authored for the OLD all-red page and paint with
+ * --milk (white) ink — on this white page that is invisible. This file therefore
+ * uses its OWN .sb-* namespace and paints every stroke in RED, depending on
+ * nothing from the white-ink globals. Reused global classes (.cta, .eyebrow,
+ * .pending) already have .invert red-ink variants on the white page, so they are
+ * safe; everything bespoke lives here.
+ *
+ * Ink colours all derive from --red (#8c170e = rgb(140,23,14)) and its tokens.
+ */
+
+/* ---- shell: two columns — the flow on the left, a sticky summary on the right */
+.sb {
+  padding: clamp(6rem, 14vh, 10rem) var(--gutter) clamp(4rem, 10vh, 7rem);
+  /* wider than the --content cap other pages use: this screen is a two-column
+     working surface, and on a 32:9 monitor a 74rem cap strands it in the middle
+     with empty flanks. 96rem keeps the measure comfortable while filling more. */
+  max-width: calc(96rem + 2 * var(--gutter));
+  margin-inline: auto;
+}
+
+.sb-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(21rem, 0.8fr);
+  gap: clamp(2rem, 5vw, 5rem);
+  align-items: start;
+}
+
+/* On a genuinely ultra-wide viewport, give the flow room to breathe and let the
+   summary rail grow, so the composition fills the width instead of hugging. */
+@media (min-width: 120rem) {
+  .sb { max-width: 132rem; }
+  .sb-grid { grid-template-columns: minmax(0, 1.5fr) minmax(28rem, 0.7fr); gap: 7rem; }
+  .sb-panel h1 { font-size: clamp(5.4rem, 5vw, 7rem); }
+  .sb-lead { max-width: 52ch; }
+}
+
+/* ---- progress ------------------------------------------------------------ */
+.sb-progress { margin-bottom: clamp(2rem, 6vh, 3.25rem); }
+.sb-steps {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+.sb-steps li {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: var(--step--1);
+  letter-spacing: 0.04em;
+  color: var(--red-faint);
+}
+.sb-steps li .sb-num {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--red-faint);
+  font-family: var(--sans);
+  font-size: var(--step--1);
+  color: var(--red-dim);
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+.sb-steps li.is-current { color: var(--red); }
+.sb-steps li.is-current .sb-num { border-color: var(--red); color: var(--red); }
+.sb-steps li.is-done { color: var(--red-dim); }
+.sb-steps li.is-done .sb-num { background: var(--red); border-color: var(--red); color: var(--milk); }
+
+.sb-bar { height: 3px; width: 100%; background: var(--red-faint); border-radius: 999px; overflow: hidden; }
+.sb-bar-fill { height: 100%; background: var(--red); border-radius: 999px; transition: width 0.45s cubic-bezier(0.65, 0.02, 0.31, 1); }
+
+/* ---- step panel ---------------------------------------------------------- */
+.sb-panel { display: flex; flex-direction: column; gap: 1.1rem; align-items: flex-start; }
+.sb-panel h1 { font-size: var(--step-3); color: var(--red); }
+.sb-panel h2 { font-size: var(--step-2); color: var(--red); }
+.sb-lead { color: var(--red-dim); max-width: 46ch; }
+.sb-hint { color: var(--red-dim); font-size: var(--step--1); max-width: 52ch; }
+
+/* pincode entry */
+.sb-pin { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+.sb-pin input {
+  font: inherit;
+  font-size: var(--step-1);
+  letter-spacing: 0.22em;
+  padding: 0.55em 0.85em;
+  width: 9.5em;
+  background: var(--milk);
+  color: var(--red);
+  border: 1px solid var(--red-faint);
+  border-radius: 999px;
+}
+.sb-pin input::placeholder { color: var(--red-faint); letter-spacing: 0.16em; }
+.sb-pin input:hover { border-color: var(--red-dim); }
+
+/* choice cards */
+.sb-choices { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); width: 100%; }
+.sb-choices.sb-two { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+.sb-choices.sb-terms { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.sb-choice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+  padding: 1.35rem 1.5rem;
+  background: var(--milk);
+  border: 1px solid var(--red-faint);
+  border-radius: 10px;
+  color: var(--red);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.3s ease, background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+}
+.sb-choice:hover {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 4%, white);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px -20px var(--red-dim);
+}
+.sb-choice.is-selected {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 7%, white);
+}
+.sb-choice.is-selected::after {
+  content: "";
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  background: var(--red);
+}
+.sb-choice-name { font-family: var(--serif); font-size: var(--step-1); }
+.sb-choice-sub { font-size: var(--step--1); color: var(--red-dim); }
+.sb-choice-rate { font-size: var(--step--1); color: var(--red-dim); }
+.sb-choice-off {
+  font-size: var(--step--1);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, white);
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+}
+
+/* back / nav row */
+.sb-nav { display: flex; gap: 1.25rem; align-items: center; margin-top: 0.5rem; flex-wrap: wrap; }
+.sb-back {
+  background: none;
+  border: 0;
+  color: var(--red-dim);
+  font: inherit;
+  font-size: var(--step--1);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  padding: 0;
+}
+.sb-back:hover { color: var(--red); }
+
+/* notices — three serviceability states + errors, all red ink */
+.sb-notice {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  padding: 0.85rem 1.05rem;
+  border: 1px solid var(--red-faint);
+  border-radius: 8px;
+  font-size: var(--step--1);
+  max-width: 54ch;
+  color: var(--red);
+  background: var(--milk);
+}
+.sb-notice .sb-dot { flex: none; width: 0.6rem; height: 0.6rem; border-radius: 999px; margin-top: 0.45em; background: var(--red-dim); }
+.sb-notice.is-ok { border-color: var(--red); background: color-mix(in srgb, var(--red) 6%, white); }
+.sb-notice.is-ok .sb-dot { background: var(--red); }
+.sb-notice.is-warn { border-style: dashed; }
+.sb-notice.is-err { border-color: var(--red); }
+.sb-notice.is-err .sb-dot { background: var(--red); }
+.sb-notice b { font-weight: 400; font-family: var(--serif); font-size: var(--step-0); }
+.sb-notice a { color: var(--red); text-underline-offset: 3px; }
+
+/* developer 503 notice — names the missing env vars, on purpose */
+.sb-dev {
+  max-width: 54ch;
+  padding: 0.85rem 1.05rem;
+  border: 1px dashed color-mix(in srgb, var(--red) 34%, white);
+  border-radius: 8px;
+  font-size: var(--step--1);
+  color: var(--red-dim);
+  background: color-mix(in srgb, var(--red) 3%, white);
+}
+.sb-dev code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.92em;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 9%, white);
+  padding: 0.05em 0.4em;
+  border-radius: 4px;
+}
+.sb-dev ul { margin: 0.4rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.25rem; }
+
+/* test-mode banner — unmistakable */
+.sb-testmode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--red);
+  border-radius: 999px;
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, white);
+}
+.sb-testmode::before { content: ""; width: 0.55rem; height: 0.55rem; border-radius: 999px; background: var(--red); }
+
+/* ---- summary rail (right column, sticky) --------------------------------- */
+.sb-rail { position: sticky; top: clamp(1.5rem, 5vh, 3rem); }
+.sb-card {
+  border: 1px solid var(--red-faint);
+  border-radius: 14px;
+  background: var(--milk);
+  padding: clamp(1.5rem, 3vw, 2.25rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.sb-card-eyebrow {
+  font-size: var(--step--1);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--red-dim);
+}
+.sb-price { display: flex; flex-direction: column; gap: 0.15rem; }
+.sb-price .sb-amount { font-family: var(--serif); font-size: var(--step-3); line-height: 1; color: var(--red); }
+.sb-price .sb-amount.is-pending { font-size: var(--step-2); color: var(--red-dim); }
+.sb-price .sb-per { font-size: var(--step--1); color: var(--red-dim); }
+
+.sb-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.sb-lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-top: 1px solid color-mix(in srgb, var(--red) 14%, white);
+  font-size: var(--step--1);
+  color: var(--red-dim);
+}
+.sb-lines li span { color: var(--red-dim); }
+.sb-lines li b { font-weight: 400; font-family: var(--serif); font-size: var(--step-0); color: var(--red); text-align: right; }
+.sb-lines li.is-empty b { font-family: var(--sans); font-size: var(--step--1); color: var(--red-faint); font-style: italic; }
+.sb-lines li.sb-save b { color: var(--red); }
+.sb-lines li.sb-strike b { text-decoration: line-through; color: var(--red-faint); font-size: var(--step--1); }
+
+.sb-rail-note { font-size: var(--step--1); color: var(--red-dim); }
+.sb-rail-note a { color: var(--red); }
+.sb-nowrap { white-space: nowrap; }
+/* The shared .pending pill paints with --milk (white) ink — it was authored for
+   the red page. Inside this white surface that is invisible (white-on-white), so
+   re-ink it red here, matching the .invert variant used on the other white pages. */
+.sb .pending {
+  border-color: color-mix(in srgb, var(--red) 30%, white);
+  color: color-mix(in srgb, var(--red) 62%, white);
+  vertical-align: baseline;
+}
+
+/* ---- pay / auth block ---------------------------------------------------- */
+.sb-pay { display: flex; flex-direction: column; gap: 0.9rem; width: 100%; }
+.sb-field { display: grid; gap: 0.35rem; width: 100%; max-width: 22rem; }
+.sb-field label { font-size: var(--step--1); letter-spacing: 0.1em; text-transform: uppercase; color: var(--red-dim); }
+.sb-input {
+  font: inherit;
+  padding: 0.7em 0.85em;
+  border: 1px solid var(--red-faint);
+  border-radius: 8px;
+  background: var(--milk);
+  color: var(--red);
+}
+.sb-input::placeholder { color: var(--red-faint); }
+.sb-input:hover { border-color: var(--red-dim); }
+.sb-otp { letter-spacing: 0.4em; font-size: var(--step-1); text-align: center; }
+
+/* the primary red button — solid, distinct from the outline .cta */
+.sb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6em;
+  padding: 0.95em 1.8em;
+  border: 1px solid var(--red);
+  border-radius: 999px;
+  background: var(--red);
+  color: var(--milk);
+  font: inherit;
+  font-size: var(--step--1);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.3s ease, color 0.3s ease, opacity 0.3s ease;
+}
+.sb-btn:hover { background: var(--red-deep); border-color: var(--red-deep); }
+.sb-btn:disabled { opacity: 0.4; cursor: not-allowed; background: var(--milk); color: var(--red-dim); }
+.sb-btn.is-busy { opacity: 0.7; cursor: progress; }
+
+.sb-spinner {
+  width: 1em; height: 1em; border-radius: 999px;
+  border: 2px solid currentColor; border-right-color: transparent;
+  display: inline-block; animation: sb-spin 0.7s linear infinite;
+}
+@keyframes sb-spin { to { transform: rotate(360deg); } }
+
+.sb-secondary { display: inline-flex; gap: 0.4rem; align-items: center; font-size: var(--step--1); color: var(--red-dim); }
+.sb-secondary a, .sb-linkbtn { color: var(--red); }
+.sb-linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--red); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+.sb-foot { margin-top: clamp(2.5rem, 7vh, 4rem); font-size: var(--step--1); }
+.sb-foot a { color: var(--red-dim); text-underline-offset: 3px; }
+.sb-foot a:hover { color: var(--red); }
+
+/* success (order created / paid) */
+.sb-success { display: flex; flex-direction: column; gap: 1.1rem; align-items: flex-start; }
+.sb-success .sb-check {
+  display: grid; place-items: center;
+  width: 3rem; height: 3rem; border-radius: 999px;
+  border: 1.5px solid var(--red); color: var(--red); font-size: 1.4rem;
+}
+
+/* ---- focus-visible rings, uniform and red ------------------------------- */
+.sb :is(button, a, input):focus-visible,
+.sb-choice:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+.sb .cta:focus-visible, .sb .sb-btn:focus-visible { outline-offset: 4px; }
+
+/* ---- responsive: collapse to one column, real 390px layout --------------- */
+@media (max-width: 60rem) {
+  .sb-grid { grid-template-columns: 1fr; gap: clamp(1.75rem, 6vw, 2.75rem); }
+  /* On a phone the running price belongs near the top — but AFTER the progress,
+     not above it. Flatten the flow column so progress, the summary rail and the
+     step become siblings in the single-column grid, then order them explicitly:
+     progress → summary → step. */
+  .sb-flow { display: contents; }
+  .sb-flow-progress { order: -2; }
+  .sb-rail { position: static; order: -1; }
+  .sb-flow-step { order: 0; }
+  .sb-card { padding: 1.25rem 1.3rem; }
+  .sb-price .sb-amount { font-size: var(--step-2); }
+}
+
+@media (max-width: 30rem) {
+  .sb { padding-left: 1.1rem; padding-right: 1.1rem; }
+  .sb-panel h1 { font-size: var(--step-2); }
+  .sb-choices, .sb-choices.sb-two, .sb-choices.sb-terms { grid-template-columns: 1fr; }
+  .sb-steps { gap: 0.4rem 0.9rem; }
+  .sb-steps li .sb-label { display: none; }   /* keep the numbered dots + bar; drop labels to fit 390px */
+  .sb-pin { width: 100%; }
+  .sb-pin input { flex: 1; width: auto; min-width: 0; }
+  .sb-field { max-width: none; }
+  .sb-btn { width: 100%; }
+}
+
+/* ---- details step: name, address, landmark, optional pin -------------------
+ * All ink is red: /subscribe sits on the WHITE page, and painting in --milk here
+ * is the recurring white-on-white bug this stylesheet exists to avoid.
+ */
+.sb-fields { display: grid; gap: 1.1rem; margin: 1.4rem 0; max-width: 34rem; }
+
+.sb-field { display: grid; gap: 0.4rem; }
+.sb-field > span {
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--red-dim);
+}
+.sb-field > span i { font-style: normal; text-transform: none; letter-spacing: 0; opacity: 0.8; }
+
+.sb-field input,
+.sb-field textarea {
+  font: inherit;
+  width: 100%;
+  padding: 0.7em 0.9em;
+  color: var(--red);
+  background: transparent;
+  border: 1px solid var(--red-faint);
+  border-radius: 12px;
+  resize: vertical;
+}
+.sb-field input::placeholder,
+.sb-field textarea::placeholder { color: rgba(140, 23, 14, 0.38); }
+.sb-field input:focus-visible,
+.sb-field textarea:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+  border-color: var(--red);
+}
+.sb-fieldnote { font-style: normal; font-size: var(--step--1); color: var(--red-dim); }
+
+.sb-locbox {
+  margin: 1.5rem 0;
+  padding: 1.1rem 1.2rem;
+  border: 1px dashed var(--red-faint);
+  border-radius: 14px;
+  max-width: 34rem;
+}
+.sb-locrow { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.sb-locbox .sb-help { margin-top: 0.6rem; }
+
+.sb-actions { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-top: 1.5rem; }
+.sb-actions .cta:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* on a phone the fields and buttons go full width — a half-width text input beside
+   nothing reads as a broken layout */
+@media (max-width: 640px) {
+  .sb-fields, .sb-locbox { max-width: none; }
+  .sb-actions { flex-direction: column-reverse; align-items: stretch; }
+  .sb-actions .cta { text-align: center; justify-content: center; }
+}
+
+/* ---- the global .cta is white ink, authored for the old all-red page ------
+ * /subscribe's root class is `.sb`, not `.page`, so the page-ground rules in
+ * globals.css never matched it and every .cta here rendered white-on-white —
+ * invisible, which is why the Continue button looked missing entirely.
+ *
+ * The disabled state deliberately does NOT fade to 0.4: a ghost button reads as
+ * "broken", not "not yet". It stays fully opaque in a muted colour, and the step
+ * says in words what is still needed.
+ */
+.sb .cta {
+  border-color: var(--red);
+  color: var(--red);
+}
+.sb .cta:hover:not(:disabled) {
+  background: var(--red);
+  color: var(--milk);
+}
+.sb .cta:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+.sb .cta:disabled,
+.sb-actions .cta:disabled {
+  opacity: 1;
+  color: var(--red-dim);
+  border-color: var(--red-faint);
+  cursor: not-allowed;
+}
+.sb-hint { font-size: var(--step--1); color: var(--red-dim); }
+
+/* `.sb` is not `.page`, so none of the page-ground rules in globals.css reach it.
+   Anything inherited from globals that paints in --milk has to be restated here.
+   The step eyebrow ("Step 1 of 5") was invisible for exactly this reason. */
+.sb .eyebrow { color: var(--red-dim); }
+.sb .sub-foot a { color: var(--red-dim); }
+.sb .sub-foot a:hover { color: var(--red); }
+.sb .pending { border-color: var(--red-faint); color: var(--red-dim); }
