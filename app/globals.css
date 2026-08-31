@@ -501,147 +501,6 @@ a { color: inherit; }
 .invert .wart { color: var(--red); }
 .invert .pending { border-color: color-mix(in srgb, var(--red) 30%, white); color: color-mix(in srgb, var(--red) 60%, white); }
 
-/* ------------------------------------------------------- MILKI-style hero ---- */
-
-.mhero {
-  position: relative;
-  min-height: 100svh;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
-  align-items: center;
-  overflow: hidden;
-  isolation: isolate;
-  padding: clamp(4rem, 10vh, 7rem) var(--gutter) clamp(3rem, 8vh, 5rem);
-}
-
-/* the field is its own layer so the colour can cross-fade between variants
-   without the content flashing */
-.mhero-field {
-  position: absolute;
-  inset: 0;
-  z-index: -3;
-  background: var(--field, var(--red));
-  transition: background 0.9s cubic-bezier(0.65, 0.02, 0.31, 1);
-}
-
-/* giant wordmark behind the product — real outlines, so it stays crisp at any
-   size and costs no webfont request */
-.mhero-word {
-  position: absolute;
-  z-index: -2;
-  left: 50%;
-  top: 44%;
-  translate: -50% -50%;
-  width: min(128%, 1500px);
-  height: auto;
-  color: var(--milk);
-  opacity: 0.16;
-  pointer-events: none;
-}
-
-.mhero-stage {
-  position: relative;
-  grid-column: 2;
-  display: grid;
-  place-items: center;
-  min-height: min(66svh, 620px);
-}
-.mhero-stage img,
-.mh-ph { width: 100%; height: auto; max-height: 74svh; object-fit: contain; }
-
-.mh-splash  { position: absolute; z-index: 1; scale: 1.35; }
-.mh-bottle  { position: relative; z-index: 2; }
-.mh-objects { position: absolute; z-index: 3; }
-
-/* stand-ins: line art, obviously provisional */
-.mh-ph { color: var(--milk); }
-.mh-ph g { stroke: currentColor; }
-.ph-splash  { opacity: 0.4; }
-.ph-bottle  { opacity: 0.85; }
-.ph-objects { opacity: 0.45; }
-.ph-label {
-  fill: currentColor;
-  stroke: none;
-  opacity: 0.5;
-  font-family: var(--sans);
-  font-size: 15px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-}
-
-.mhero-copy {
-  grid-column: 1;
-  grid-row: 1;
-  position: relative;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1rem;
-  max-width: 30ch;
-}
-.mhero-copy h1 { font-size: var(--step-3); }
-.mhero-line { color: var(--milk-dim); }
-.mhero-price { font-family: var(--serif); font-size: var(--step-1); }
-.mhero-price strong { font-weight: 400; }
-
-.mhero-switch {
-  position: absolute;
-  right: var(--gutter);
-  bottom: clamp(1.5rem, 5vh, 3rem);
-  z-index: 5;
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.4rem;
-  border: 1px solid var(--milk-faint);
-  border-radius: 999px;
-  backdrop-filter: blur(6px);
-}
-.mhero-switch button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5em;
-  padding: 0.5em 1em;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--milk-dim);
-  font: inherit;
-  font-size: var(--step--1);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.4s ease, color 0.4s ease;
-}
-.mhero-switch button span {
-  width: 0.85em;
-  height: 0.85em;
-  border-radius: 50%;
-  background: var(--dot);
-  outline: 1px solid var(--milk-faint);
-}
-.mhero-switch button.on { background: var(--milk); color: var(--red); }
-
-.mhero-flag {
-  position: absolute;
-  left: var(--gutter);
-  bottom: clamp(1rem, 3vh, 2rem);
-  z-index: 5;
-  font-size: var(--step--1);
-  color: var(--milk-dim);
-  max-width: 44ch;
-}
-.mhero-flag code { background: rgba(255, 255, 255, 0.12); padding: 0.1em 0.4em; border-radius: 3px; }
-
-@media (max-width: 900px) {
-  .mhero { grid-template-columns: 1fr; text-align: left; padding-top: 6rem; }
-  .mhero-stage { grid-column: 1; grid-row: 2; min-height: 42svh; }
-  .mhero-copy { grid-row: 1; max-width: none; }
-  .mhero-word { width: 170%; top: 38%; }
-  .mhero-switch { right: auto; left: var(--gutter); bottom: 1rem; }
-  .mhero-flag { position: static; margin-top: 1.5rem; }
-}
-
 /* ---------------------------------------------------------------- pages ---- */
 
 .page { padding: clamp(6rem, 14vh, 10rem) var(--gutter) clamp(4rem, 10vh, 7rem); }
@@ -937,3 +796,47 @@ body {
 .navpanel { min-height: 0; }
 .navpanel + .page { padding-top: clamp(2.5rem, 7vh, 5rem); }
 .navpanel + .sub { padding-top: clamp(2.5rem, 7vh, 5rem); }
+
+/* ------------------------------------------------------------ hero lab ---- */
+/* Visual editor. Dev surface — it is not linked from the site. */
+.lab { display: flex; min-height: 100svh; background: #101010; }
+.lab-stage { flex: 1; overflow: auto; }
+.lab-stage.outline .vh-splash { outline: 1px dashed rgba(120, 220, 255, 0.7); }
+.lab-stage.outline .vh-bottle { outline: 1px dashed rgba(255, 210, 90, 0.8); }
+.lab-stage.outline .vh-objects { outline: 1px dashed rgba(150, 255, 150, 0.7); }
+.lab-stage.outline .vh-word { outline: 1px dashed rgba(255, 130, 190, 0.6); }
+.lab-frame { min-height: 100svh; }
+.lab-frame .vh-splash, .lab-frame .vh-bottle,
+.lab-frame .vh-objects, .lab-frame .vh-word { pointer-events: auto; cursor: grab; }
+.lab-frame .vh-stage { pointer-events: auto; }
+
+.lab-panel {
+  width: 300px; flex: none; padding: 18px 16px 28px; background: #171717;
+  color: #eee; overflow: auto; font: 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+}
+.lab-panel strong { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.6; }
+.lab-hint { font-size: 11px; opacity: 0.5; margin: 0.6rem 0 1rem; }
+.lab-panel label {
+  display: flex; justify-content: space-between; margin: 12px 0 3px;
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55;
+}
+.lab-panel label span { opacity: 0.9; text-transform: none; letter-spacing: 0; }
+.lab-panel input[type=range] { width: 100%; }
+.lab-check { text-transform: none !important; letter-spacing: 0 !important; justify-content: flex-start !important; gap: 0.5rem; opacity: 0.8 !important; }
+.lab-seg { display: flex; gap: 5px; }
+.lab-seg-col { flex-wrap: wrap; }
+.lab-seg button {
+  flex: 1; padding: 6px 8px; background: #262626; color: #ddd;
+  border: 1px solid #3d3d3d; border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.lab-seg button.on { background: #3f3f28; border-color: #8a8a4a; }
+.lab-btn {
+  width: 100%; margin-top: 8px; padding: 8px; background: #262626; color: #eee;
+  border: 1px solid #444; border-radius: 4px; font: inherit; cursor: pointer;
+}
+.lab-btn:hover { background: #333; }
+.lab-out {
+  width: 100%; margin-top: 4px; background: #0d0d0d; color: #b9e6b9;
+  border: 1px solid #2c2c2c; border-radius: 4px; padding: 8px;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical;
+}

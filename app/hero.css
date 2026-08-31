@@ -1,14 +1,22 @@
 /*
- * Hero, to the reference's measured proportions.
+ * Hero.
  *
- * Scanline sampling put the design card at 660x420 inside the 800x600 recording,
- * so everything here is a percentage of the hero box rather than a pixel from a
- * downscaled video. Timing constant --switch = 900ms comes from frame-difference
- * analysis of the two transitions (1.08-2.04s and 2.64-3.52s).
+ * The previous version's core bug: `.vh-slide img` gave the splash, the bottle and
+ * the objects plate ONE shared box. Three different compositions cannot share a
+ * box — the objects landed on the bottle's label and the splash shrank to a halo.
+ * Every layer now has its own width, offset and depth, driven by per-slot vars so
+ * they can be tuned without touching the rest.
  *
- * --px / --py are pointer offset (-0.5..0.5), --sy is scroll progress (0..1),
- * written by one rAF in the component. Every parallax below reads those, so there
- * is a single source of motion and no competing listeners.
+ * The bottle is HEIGHT-anchored (it is the tallest thing and sets the scale);
+ * splash and objects are WIDTH-anchored relative to the stage, because their job
+ * is to spread past the bottle.
+ *
+ * --px/--py = pointer offset (-0.5..0.5), --sy = scroll progress (0..1), all
+ * written by one rAF in the component.
+ *
+ * Timings measured from the reference: two transitions at 1.08-2.04s and
+ * 2.64-3.52s -> 900ms, and the frame-difference sawtooth showed staggered layers,
+ * so each layer has its own delay.
  */
 
 .vh {
@@ -16,14 +24,34 @@
   --py: 0;
   --sy: 0;
   --ease: cubic-bezier(0.65, 0.02, 0.31, 1);
+
+  /* per-layer geometry — the visual editor at /hero-lab writes these.
+     Offsets are % of the STAGE (so they scale with width) and the bottle is sized
+     in svh (so it scales with height). Nothing here is a pixel, which is what
+     makes a dragged position hold at every viewport. */
+  --bottle-h: 60svh;
+  --bottle-x: 0%;
+  --bottle-y: 0%;
+  --splash-w: 108%;
+  --splash-x: 0%;
+  --splash-y: -3%;
+  --objects-w: 116%;
+  --objects-x: 0%;
+  --objects-y: 12%;
+  --word-w: 132%;
+  --word-x: 0%;
+  --word-y: 44%;
+  --word-alpha: 0.17;
+
   position: relative;
   min-height: 100svh;
   overflow: hidden;
   isolation: isolate;
   display: grid;
+  grid-template-rows: auto 1fr;
 }
 
-/* ---- field: stacked so colours cross-fade rather than tween through a hue ---- */
+/* ---- field: stacked, so the colour cross-fades instead of tweening a hue ---- */
 .vh-field {
   position: absolute;
   inset: 0;
@@ -33,34 +61,33 @@
 }
 .vh-field[data-on] { opacity: 1; }
 
-/* ---- giant wordmark: furthest back, so it moves least ---- */
+/* ---- wordmark: furthest back, moves least, spans wider than the stage so the
+        bottle covers its middle exactly as in the reference ---- */
 .vh-word {
   position: absolute;
   z-index: -2;
   left: 50%;
-  top: 42%;
-  width: min(118%, 1460px);
+  top: var(--word-y);
+  width: var(--word-w);
+  max-width: none;
   height: auto;
   color: var(--milk);
-  opacity: 0.15;
+  opacity: var(--word-alpha);
   pointer-events: none;
-  translate: calc(-50% + var(--px) * 14px) calc(-50% + var(--py) * 8px - var(--sy) * 40px);
-  transition: translate 700ms var(--ease);
+  translate: calc(-50% + var(--word-x) + var(--px) * 12px)
+             calc(-50% + var(--py) * 6px - var(--sy) * 44px);
+  transition: translate 800ms var(--ease);
 }
 
-/* ---- stage: bottle centred, bottom of the bottle at ~78% height ---- */
+/* ---- stage ---- */
 .vh-stage {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
+  position: relative;
+  grid-row: 2;
   pointer-events: none;
 }
 .vh-slide {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
   opacity: 0;
   visibility: hidden;
   transition: opacity var(--switch) var(--ease), visibility 0s linear var(--switch);
@@ -71,76 +98,86 @@
   transition: opacity var(--switch) var(--ease), visibility 0s;
 }
 
-.vh-slide img,
-.vh-ph {
+/* every layer is centred on the same anchor point, then given its OWN size and
+   offset from it — that anchor is what keeps the composition registered */
+.vh-splash,
+.vh-bottle,
+.vh-objects {
   position: absolute;
-  width: min(74%, 720px);
+  left: 50%;
+  bottom: 8%;
   height: auto;
-  max-height: 76svh;
-  object-fit: contain;
+  width: auto;
+  transform-origin: 50% 100%;
 }
 
-/*
- * Depth. Each layer takes a different parallax rate — splash slowest because it
- * sits behind, objects fastest because they are nearest the viewer. That rate
- * difference IS the depth cue; without it the composite reads flat.
- *
- * The per-layer enter offsets are also staggered, which is what the sawtooth in
- * the frame-difference data showed the original doing.
- */
-.vh-splash {
-  z-index: 1;
-  scale: 1.34;
-  translate: calc(var(--px) * 22px) calc(var(--py) * 12px - var(--sy) * 30px);
-  transition: translate 900ms var(--ease), opacity var(--switch) var(--ease) 40ms;
-}
+/* the bottle sets the scale: height-driven, nothing else */
 .vh-bottle {
   z-index: 2;
-  translate: calc(var(--px) * 40px) calc(var(--py) * 20px - var(--sy) * 64px);
-  transition: translate 700ms var(--ease), opacity var(--switch) var(--ease) 110ms;
+  height: var(--bottle-h);
+  width: auto;
+  translate: calc(-50% + var(--bottle-x) + var(--px) * 34px)
+             calc(var(--bottle-y) + var(--py) * 16px - var(--sy) * 70px);
+  transition: translate 700ms var(--ease),
+              opacity var(--switch) var(--ease) 110ms,
+              scale var(--switch) var(--ease) 110ms;
 }
+
+/* splash erupts PAST the bottle, so it is width-driven and sits behind */
+.vh-splash {
+  z-index: 1;
+  width: var(--splash-w);
+  height: auto;
+  translate: calc(-50% + var(--splash-x) + var(--px) * 18px)
+             calc(var(--splash-y) + var(--py) * 10px - var(--sy) * 34px);
+  transition: translate 900ms var(--ease),
+              opacity var(--switch) var(--ease) 40ms,
+              scale var(--switch) var(--ease) 40ms;
+}
+
+/* objects sit IN FRONT and lower, so the vessel never covers the label —
+   that overlap was the single worst thing in the previous build */
 .vh-objects {
   z-index: 3;
-  translate: calc(var(--px) * 66px) calc(var(--py) * 34px - var(--sy) * 96px);
-  transition: translate 560ms var(--ease), opacity var(--switch) var(--ease) 180ms;
+  width: var(--objects-w);
+  height: auto;
+  translate: calc(-50% + var(--objects-x) + var(--px) * 54px)
+             calc(var(--objects-y) + var(--py) * 26px - var(--sy) * 104px);
+  transition: translate 560ms var(--ease),
+              opacity var(--switch) var(--ease) 180ms,
+              scale var(--switch) var(--ease) 180ms;
 }
 
-/* stand-in inherits the same depth so the layout is honest about final position */
-.vh-ph {
-  z-index: 2;
-  color: var(--milk);
-  translate: calc(var(--px) * 40px) calc(var(--py) * 20px - var(--sy) * 64px);
-  transition: translate 700ms var(--ease);
-}
-.vh-ph g { stroke: currentColor; }
-.ph-splash { opacity: 0.34; }
-.ph-bottle { opacity: 0.8; }
-.ph-objects { opacity: 0.4; }
-.ph-label {
-  fill: currentColor; stroke: none; opacity: 0.5;
-  font-family: var(--sans); font-size: 15px;
-  letter-spacing: 0.24em; text-transform: uppercase;
-}
+/* Directional switch. Opacity alone reads as a slideshow; the incoming art has to
+   arrive. Outgoing sits slightly small, incoming settles to 1 — staggered by the
+   same per-layer delays above, which is what the reference's sawtooth showed. */
+.vh-slide .vh-splash  { scale: 0.94; }
+.vh-slide .vh-bottle  { scale: 0.96; }
+.vh-slide .vh-objects { scale: 0.92; }
+.vh-slide[data-on] .vh-splash,
+.vh-slide[data-on] .vh-bottle,
+.vh-slide[data-on] .vh-objects { scale: 1; }
 
-/* ---- copy: bottom-left, matching the reference card position ---- */
+/* ---- copy: bottom-left, big enough that the product name does not wrap ---- */
 .vh-copy {
   position: relative;
   z-index: 4;
+  grid-row: 2;
   align-self: end;
   justify-self: start;
   display: grid;
-  padding: 0 var(--gutter) clamp(5.5rem, 14vh, 9rem);
-  max-width: min(34ch, 90vw);
+  padding: 0 var(--gutter) clamp(4.5rem, 12vh, 7rem);
+  width: min(38ch, 92vw);
 }
 .vh-copy-slide {
   grid-area: 1 / 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.85rem;
+  gap: 0.7rem;
   opacity: 0;
   visibility: hidden;
-  translate: 0 14px;
+  translate: 0 18px;
   transition: opacity var(--switch) var(--ease), translate var(--switch) var(--ease),
               visibility 0s linear var(--switch);
 }
@@ -148,93 +185,95 @@
   opacity: 1;
   visibility: visible;
   translate: 0 0;
-  /* copy leads the product in slightly — it is what the eye lands on first */
-  transition: opacity var(--switch) var(--ease) 60ms, translate var(--switch) var(--ease) 60ms,
+  /* copy leads the art in — it is what the eye lands on first */
+  transition: opacity var(--switch) var(--ease) 40ms, translate var(--switch) var(--ease) 40ms,
               visibility 0s;
 }
-.vh-copy h1 { font-size: var(--step-3); }
-.vh-line { color: var(--milk-dim); }
+.vh-copy h1 {
+  font-size: var(--step-4);
+  line-height: 0.92;
+  /* "Cow Milk" must not break across two lines at desktop */
+  text-wrap: balance;
+}
+.vh-line { color: var(--milk-dim); max-width: 30ch; }
 .vh-price { font-family: var(--serif); font-size: var(--step-1); }
 .vh-price strong { font-weight: 400; }
 
-/* ---- arrows at mid-height on the edges ---- */
+/* ---- arrows ---- */
 .vh-arrow {
   position: absolute;
   top: 50%;
   translate: 0 -50%;
-  z-index: 5;
-  width: 2.75rem;
-  height: 2.75rem;
+  z-index: 6;
+  width: 3rem;
+  height: 3rem;
   display: grid;
   place-items: center;
   border: 1px solid var(--milk-faint);
   border-radius: 50%;
   background: transparent;
   color: var(--milk);
-  font-size: 1.5rem;
+  font-size: 1.6rem;
   line-height: 1;
   cursor: pointer;
   transition: background 0.35s var(--ease), color 0.35s var(--ease), border-color 0.35s var(--ease);
 }
 .vh-arrow:hover { background: var(--milk); color: var(--red); border-color: var(--milk); }
-.vh-prev { left: clamp(0.5rem, 2vw, 1.5rem); }
-.vh-next { right: clamp(0.5rem, 2vw, 1.5rem); }
+.vh-prev { left: clamp(0.75rem, 2vw, 1.75rem); }
+.vh-next { right: clamp(0.75rem, 2vw, 1.75rem); }
 
-/* ---- switcher bottom-right ---- */
+/* ---- switcher ---- */
 .vh-switch {
   position: absolute;
   right: var(--gutter);
-  bottom: clamp(1.5rem, 5vh, 3rem);
-  z-index: 5;
+  bottom: clamp(1.75rem, 5vh, 3rem);
+  z-index: 6;
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: 0.85rem;
 }
+.vh-switch .eyebrow { white-space: nowrap; }
 .vh-switch button {
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 2.1rem;
+  height: 2.1rem;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid transparent;
+  border: 1px solid var(--milk-faint);
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
-  transition: border-color 0.35s var(--ease), scale 0.35s var(--ease);
+  transition: border-color 0.35s var(--ease), background 0.35s var(--ease);
 }
 .vh-switch button span {
-  width: 0.7rem;
-  height: 0.7rem;
+  width: 0.95rem;
+  height: 0.95rem;
   border-radius: 50%;
   background: var(--dot);
-  outline: 1px solid var(--milk-faint);
+  outline: 1px solid rgba(255, 255, 255, 0.5);
   transition: scale 0.35s var(--ease);
 }
-.vh-switch button.on { border-color: var(--milk); scale: 1.12; }
-.vh-switch button.on span { scale: 1.1; }
-
-.vh-flag {
-  position: absolute;
-  left: var(--gutter);
-  bottom: clamp(1rem, 3vh, 1.75rem);
-  z-index: 5;
-  font-size: var(--step--1);
-  color: var(--milk-dim);
-  max-width: 46ch;
-}
-.vh-flag code { background: rgba(255, 255, 255, 0.12); padding: 0.1em 0.4em; border-radius: 3px; }
+.vh-switch button:hover { border-color: var(--milk); }
+.vh-switch button.on { border-color: var(--milk); background: rgba(255, 255, 255, 0.14); }
+.vh-switch button.on span { scale: 1.14; }
 
 @media (max-width: 900px) {
-  .vh-word { width: 168%; top: 34%; }
-  .vh-slide img, .vh-ph { width: 88%; max-height: 46svh; }
-  .vh-stage { align-items: start; padding-top: 16svh; }
-  .vh-copy { padding-bottom: clamp(6rem, 18vh, 10rem); }
+  .vh {
+    --bottle-h: 40svh;
+    --splash-w: 122%;
+    --objects-w: 132%;
+    --word-w: 190%;
+    --word-y: 36%;
+  }
+  .vh-copy { width: auto; padding-bottom: clamp(5.5rem, 16vh, 8rem); }
+  .vh-copy h1 { font-size: var(--step-3); }
   .vh-arrow { display: none; }
-  .vh-switch { left: var(--gutter); right: auto; bottom: 4.5rem; }
-  .vh-flag { bottom: 1rem; }
+  .vh-switch { left: var(--gutter); right: auto; bottom: 1.25rem; }
 }
 
-/* Motion is decoration here; the layout and the switch still work without it. */
+/* Motion is decoration: the layout and the switch both work without it. */
 @media (prefers-reduced-motion: reduce) {
-  .vh-word, .vh-splash, .vh-bottle, .vh-objects, .vh-ph { translate: none !important; }
+  .vh-word, .vh-splash, .vh-bottle, .vh-objects { translate: -50% 0 !important; }
+  .vh-word { translate: -50% -50% !important; }
+  .vh-slide .vh-splash, .vh-slide .vh-bottle, .vh-slide .vh-objects { scale: 1; }
 }
