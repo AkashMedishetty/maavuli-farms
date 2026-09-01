@@ -1,19 +1,21 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import Kolam from './Kolam';
 import { BRAND, CONTACT, SERVICEABLE_PINCODES } from '@/lib/content';
 import { PRODUCTS, TENURES, quote, formatINR } from '@/lib/pricing';
 import { cow, tree, ground, figure, sun, render } from '@/lib/warli';
+import { FARM } from '@/lib/photos';
 
 /* ------------------------------------------------------------------ farm ---- */
 
 /**
- * No photography anywhere on this site, by decision. So the farm section carries
- * itself on type and on parametric Warli — which also keeps it a few KB instead
- * of a few hundred.
+ * The farm panel pairs the promise with the animal that keeps it: a real Gir cow
+ * and her calf beside the copy, then a Warli HORIZON along the foot of the panel —
+ * the illustrated cows standing on the same ground line the photographed one does.
  *
- * The scene is composed as a HORIZON: one ground line with everything standing on
- * it, which is how Warli is actually laid out. The viewBox is 1440x260 — wide and
- * short — so it reads as a band under the copy rather than a picture beside it.
+ * The horizon is composed the way Warli actually is: one ground line with
+ * everything standing on it. Its viewBox is 1440x260 — wide and short — so it reads
+ * as a band under the panel rather than a picture beside it.
  */
 const FARM_SCENE = [
   `<g transform="translate(60,80) scale(1.05)">${render(tree(), 3.2)}</g>`,
@@ -47,19 +49,31 @@ export function Farm() {
             What leaves the farm in the morning is what arrives at your door — the same
             milk, in the same bottle, with nothing in between.
           </p>
+
+          <ul className="farm-points">
+            {FARM_POINTS.map(p => (
+              <li key={p.title}>
+                <b>{p.title}</b>
+                <span>{p.note}</span>
+              </li>
+            ))}
+          </ul>
+
           <Link className="cta" href="/our-farm">
             Read the whole story
           </Link>
         </div>
 
-        <ul className="farm-points">
-          {FARM_POINTS.map(p => (
-            <li key={p.title}>
-              <b>{p.title}</b>
-              <span>{p.note}</span>
-            </li>
-          ))}
-        </ul>
+        <figure className="farm-figure">
+          <Image
+            src={FARM.cowCalfTall.src}
+            alt={FARM.cowCalfTall.alt}
+            width={FARM.cowCalfTall.w}
+            height={FARM.cowCalfTall.h}
+            sizes="(max-width: 820px) 92vw, 40vw"
+          />
+          <figcaption>A mother and her calf, at the farm.</figcaption>
+        </figure>
       </div>
 
       {/* Capped to the reading measure and centred rather than stretched edge to
@@ -148,12 +162,26 @@ export function CallToAction() {
   return (
     <section className="section cta-band panel">
       <div className="wrap cta-band-inner">
-      <Kolam size={128} strokeWidth={2.4} className="cta-mark" />
-      <h2>{BRAND.tagline}</h2>
-      <p>{BRAND.premise}</p>
-      <Link className="cta" href="/subscribe">
-        Start a subscription
-      </Link>
+        <div className="cta-band-copy">
+          <Kolam size={112} strokeWidth={2.4} className="cta-mark" />
+          <h2>{BRAND.tagline}</h2>
+          <p>{BRAND.premise}</p>
+          <Link className="cta" href="/subscribe">
+            Start a subscription
+          </Link>
+        </div>
+
+        {/* The family holding the sign — the people behind the milk, and the one
+            claim no illustration can make. */}
+        <figure className="cta-band-photo">
+          <Image
+            src={FARM.family.src}
+            alt={FARM.family.alt}
+            width={FARM.family.w}
+            height={FARM.family.h}
+            sizes="(max-width: 900px) 92vw, 46vw"
+          />
+        </figure>
       </div>
     </section>
   );

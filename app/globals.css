@@ -1454,3 +1454,135 @@ body {
     .vh-switch { bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px)); }
   }
 }
+
+/* ================================================================
+ * PHOTOGRAPHY
+ * The site was built photo-free; these three surfaces bring in the farm
+ * photography as a deliberate layer — a feature on the farm panel, a gallery on
+ * the white field, and the family on the closing CTA. Every frame shares the
+ * same rounded-corner language as the panels themselves.
+ * ================================================================ */
+
+/* ---- feature photo inside the red farm panel ---- */
+.farm-points { width: 100%; margin-top: 0.4rem; }
+
+.farm-figure {
+  margin: 0;
+  align-self: stretch;
+  position: relative;
+  z-index: 1;                 /* sit above the absolutely-placed Warli horizon */
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.farm-figure img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  border-radius: clamp(12px, 1.4vw, 20px);
+  box-shadow: 0 0 0 1px var(--milk-faint), 0 24px 60px -30px rgba(0, 0, 0, 0.55);
+}
+.farm-figure figcaption {
+  font-size: var(--step--1);
+  color: var(--milk-dim);
+  letter-spacing: 0.01em;
+}
+@media (max-width: 820px) {
+  /* on one column the photo leads, then the copy */
+  .farm-figure { order: -1; margin-bottom: 0.5rem; }
+  .farm-figure img { aspect-ratio: 4 / 3; }
+}
+
+/* ---- the gallery on the white field ---- */
+.farm-gallery-head { max-width: 46ch; margin-bottom: clamp(2rem, 5vh, 3.5rem); }
+.farm-gallery-head h2 { font-size: var(--step-2); margin: 0.5rem 0 0.9rem; }
+.farm-gallery .eyebrow { color: var(--red-dim); }
+.farm-gallery-head p { color: var(--red-dim); }
+
+.farm-gallery-grid {
+  display: grid;
+  gap: clamp(8px, 1vw, 16px);
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(2, clamp(160px, 19vw, 250px));
+  grid-template-areas:
+    "land land land tall"
+    "a    b    c    tall";
+}
+.fg-land { grid-area: land; }
+.fg-tall { grid-area: tall; }
+.fg-a { grid-area: a; }
+.fg-b { grid-area: b; }
+.fg-c { grid-area: c; }
+
+.fg-item {
+  margin: 0;
+  overflow: hidden;
+  border-radius: clamp(12px, 1.4vw, 18px);
+  background: var(--red-faint);
+}
+.fg-item img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.7s cubic-bezier(0.65, 0.02, 0.31, 1);
+}
+@media (hover: hover) {
+  .fg-item:hover img { transform: scale(1.045); }
+}
+
+@media (max-width: 820px) {
+  /* collapse the magazine grid to a simple stack with natural crops */
+  .farm-gallery-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: none;
+    grid-template-areas: none;
+    grid-auto-rows: clamp(150px, 40vw, 230px);
+  }
+  .fg-item { grid-area: auto !important; }
+  .fg-land, .fg-tall { grid-column: 1 / -1; }
+  .fg-tall { grid-row: span 1; }
+}
+
+/* ---- the family photo on the closing call to action ---- */
+.cta-band-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  align-items: center;
+  text-align: left;
+}
+.cta-band-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.2rem;
+}
+.cta-band-copy .cta-mark { align-self: flex-start; }
+.cta-band-photo {
+  margin: 0;
+  overflow: hidden;
+  border-radius: clamp(14px, 1.6vw, 22px);
+  box-shadow: 0 0 0 1px var(--milk-faint), 0 30px 70px -34px rgba(0, 0, 0, 0.6);
+}
+.cta-band-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 5 / 6;
+  object-fit: cover;
+  object-position: center 42%;   /* keep the faces and the sign in frame */
+}
+@media (max-width: 900px) {
+  .cta-band-inner {
+    grid-template-columns: 1fr;
+    text-align: center;
+    gap: clamp(1.75rem, 5vw, 2.5rem);
+  }
+  .cta-band-copy { align-items: center; }
+  .cta-band-copy .cta-mark { align-self: center; }
+  .cta-band-photo { order: -1; width: 100%; }
+  .cta-band-photo img { aspect-ratio: 4 / 5; max-height: 72vh; }
+}

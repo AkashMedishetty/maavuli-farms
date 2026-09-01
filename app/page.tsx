@@ -1,5 +1,6 @@
 import MilkHero from '@/components/MilkHero';
 import Story from '@/components/Story';
+import FarmGallery from '@/components/FarmGallery';
 import { Farm, PricingOverview, CallToAction, Footer } from '@/components/Sections';
 
 export default function Page() {
@@ -8,6 +9,7 @@ export default function Page() {
       <main>
         <MilkHero />
         <Farm />
+        <FarmGallery />
         <Story />
         <PricingOverview />
         <CallToAction />
