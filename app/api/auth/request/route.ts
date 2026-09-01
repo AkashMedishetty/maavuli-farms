@@ -30,8 +30,25 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   try {
     const result = await issueOtp(mobile);
-    // devCode is present only in non-production with no SMS provider configured.
-    return NextResponse.json(result.devCode ? { ok: true, devCode: result.devCode } : { ok: true });
+    /*
+     * devCode is present when no SMS provider is configured — in development, or in
+     * production with OTP_DEMO_MODE explicitly on. `demo` tells the client to show a
+     * test-mode warning rather than presenting an on-screen code as normal.
+     * `adminCodeWithheld` means a code WAS minted and logged but is not being
+     * returned, because the mobile is on the admin allowlist.
+     */
+    return NextResponse.json({
+      ok: true,
+      ...(result.devCode ? { devCode: result.devCode } : {}),
+      ...(result.demo ? { demo: true } : {}),
+      ...(result.adminCodeWithheld
+        ? {
+            adminCodeWithheld: true,
+            message:
+              'This is an admin number, so the code is not shown on screen. Read it from the server logs.',
+          }
+        : {}),
+    });
   } catch (err) {
     if (err instanceof InvalidMobileError) {
       return NextResponse.json({ error: err.message }, { status: 400 });

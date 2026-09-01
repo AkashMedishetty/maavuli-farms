@@ -1098,7 +1098,14 @@ body {
  * ================================================================ */
 
 /* ---- the drawn line threading the five pillars ---- */
-.story-line { stroke: var(--red); opacity: 0.3; }
+/* Thicker and more present: at 1.5px/0.3 opacity the line the pillars hang off was
+   barely visible, so the section read as floating headings. It is drawn by scroll
+   (see components/Story.tsx) — this only sets its weight. */
+.story-line {
+  stroke: var(--red);
+  stroke-width: 3.5;
+  opacity: 0.55;
+}
 
 /* ---- the Warli panels: outline strokes and rice-paste fill both use
         currentColor, so one colour on the wrapper fixes both ---- */

@@ -59,3 +59,16 @@ export function adminMobiles(): string[] {
 }
 
 export const isProd = () => process.env.NODE_ENV === 'production';
+
+/**
+ * Show the OTP in the HTTP response even in production.
+ *
+ * This is a demo affordance for showing the flow to a client before an SMS gateway
+ * is wired, and it is a REAL hole: with it on, any visitor can sign in as any
+ * mobile. Off unless explicitly set to "1" or "true" — an unset or malformed value
+ * is off, never on, because the failure mode of guessing wrong is account takeover.
+ */
+export function otpDemoMode(): boolean {
+  const v = (read('OTP_DEMO_MODE') ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true';
+}

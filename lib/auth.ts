@@ -21,7 +21,7 @@ import { createHash, randomInt, randomBytes } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { getDb } from './db';
 import { col, normalizeMobile, type Session, type User } from './models';
-import { requireEnv, adminMobiles, smsConfig, isProd } from './env';
+import { requireEnv, adminMobiles, smsConfig, isProd, otpDemoMode } from './env';
 
 export const SESSION_COOKIE = 'mv_session';
 
@@ -48,6 +48,10 @@ export function isAdminMobile(mobile: string): boolean {
 }
 
 export interface IssueResult {
+  /** set when the mobile is on the admin allowlist: a code was minted and logged, but deliberately not returned. */
+  adminCodeWithheld?: boolean;
+  /** true when the code is being shown on screen in PRODUCTION via OTP_DEMO_MODE. */
+  demo?: boolean;
   /** true when the code was accepted for delivery (or dev-logged). */
   ok: true;
   /** ONLY present when NODE_ENV !== 'production' and no SMS provider is configured. */
@@ -107,9 +111,24 @@ export async function issueOtp(mobile: string): Promise<IssueResult> {
     throw new RateLimitError(Math.max(1, Math.ceil(retryAfterMs / 1000)));
   }
 
-  // Decide delivery BEFORE minting a code, so a 503 does not leave a live OTP behind.
+  /*
+   * Decide delivery BEFORE minting a code, so a 503 does not leave a live OTP behind.
+   *
+   * DEMO MODE — read this before turning it on.
+   *
+   * With OTP_DEMO_MODE set, the code is returned in the HTTP response even in
+   * production, so the flow can be demonstrated before an SMS gateway exists. That
+   * means ANYONE WHO CAN REACH THE SITE CAN SIGN IN AS ANY MOBILE NUMBER. It is a
+   * deliberate, temporary hole for a client demo — not a configuration to leave on.
+   *
+   * The one thing it will not do is hand out an ADMIN code. An admin mobile still
+   * gets a real code minted and logged server-side, but it is withheld from the
+   * response, so a demo visitor cannot walk into the fulfilment panel and the zone
+   * editor. Whoever runs the demo can read that code from the server logs.
+   */
   const sms = smsConfig();
-  if (!sms.ok && isProd()) {
+  const demo = otpDemoMode();
+  if (!sms.ok && isProd() && !demo) {
     throw new SmsNotConfiguredError(sms.missing);
   }
 
@@ -129,12 +148,17 @@ export async function issueOtp(mobile: string): Promise<IssueResult> {
     return { ok: true };
   }
 
-  // No provider AND not production: this is local development. Log to the server
-  // console (never a response field, never a log of a production code) and echo the
-  // code back so a developer can complete the flow without an SMS gateway.
+  // No provider: either local development, or production with demo mode explicitly
+  // enabled. Always log server-side so an operator can retrieve it.
   // eslint-disable-next-line no-console
-  console.log(`[dev OTP] ${normalized}: ${code}`);
-  return { ok: true, devCode: code };
+  console.log(`[otp] ${normalized}: ${code}`);
+
+  // Admin codes are never echoed to the browser. In demo mode the response is the
+  // public internet, and an echoed admin code is admin access for any visitor.
+  if (isAdminMobile(normalized)) {
+    return { ok: true, adminCodeWithheld: true };
+  }
+  return { ok: true, devCode: code, demo: demo && isProd() };
 }
 
 /**
