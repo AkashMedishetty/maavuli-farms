@@ -1395,3 +1395,62 @@ body {
   overflow: visible;
   z-index: 30;
 }
+
+/* ---- iOS safe areas (installed PWA) ---------------------------------------
+ * The viewport is `viewport-fit=cover` and the status bar style is
+ * `black-translucent`, which together tell iOS to draw the web view UNDERNEATH the
+ * status bar and the home indicator. That is what gives the inset red panel its
+ * edge-to-edge look in the browser — but nothing was reserving space for the
+ * status bar, so in the installed app the nav sat beneath the clock and the pills
+ * were physically untappable.
+ *
+ * env() resolves to 0 wherever there is no inset, so these are no-ops on desktop
+ * and on Android. Wrapped in @supports because a browser that does not understand
+ * env() would otherwise drop the whole declaration and lose the base padding.
+ */
+@supports (padding-top: env(safe-area-inset-top)) {
+  /* the nav is the thing that was being covered — push its content clear */
+  .vnav {
+    padding-top: calc(clamp(0.9rem, 2.2vh, 1.6rem) + env(safe-area-inset-top, 0px));
+  }
+
+  /* The brand tab is absolutely positioned at `top: 0`, which anchors to the nav's
+     PADDING EDGE — above the padding-top added above. Without this it stays under
+     the status bar even though the rest of the nav has moved clear. */
+  .vnav-brand {
+    top: env(safe-area-inset-top, 0px);
+  }
+
+  /* landscape on a notched phone eats into the sides too */
+  .panel {
+    margin-left: calc(clamp(8px, 1.1vw, 18px) + env(safe-area-inset-left, 0px));
+    margin-right: calc(clamp(8px, 1.1vw, 18px) + env(safe-area-inset-right, 0px));
+  }
+
+  /* the hero is 100svh; without subtracting the inset the page gains a scrollbar's
+     worth of overflow it does not need */
+  .vh.panel {
+    min-height: calc(100svh - clamp(16px, 2.2vw, 36px) - env(safe-area-inset-top, 0px));
+  }
+
+  /* the home indicator sits over the bottom edge: keep the milk switcher and the
+     footer links above it */
+  .vh-switch {
+    bottom: calc(clamp(1.75rem, 5vh, 3rem) + env(safe-area-inset-bottom, 0px));
+  }
+  .foot {
+    padding-bottom: calc(clamp(3rem, 8vh, 6rem) + env(safe-area-inset-bottom, 0px));
+  }
+  .sub,
+  .page {
+    padding-bottom: calc(clamp(4rem, 10vh, 7rem) + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (pointer: coarse) {
+  /* the mobile switcher rule sits in a container query further up; repeat the inset
+     here so the phone layout gets it too */
+  @supports (padding-bottom: env(safe-area-inset-bottom)) {
+    .vh-switch { bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px)); }
+  }
+}
