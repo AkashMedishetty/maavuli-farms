@@ -228,6 +228,67 @@ export async function activateSubscriptionForOrder(orderId: ObjectId): Promise<v
  * keep parsing; nothing sets it any more.)
  */
 
+/* ----------------------------------------------------------------- cancel -- */
+
+export interface CancelResult {
+  status: 'cancelled';
+  /** the day service stops — today, in Asia/Kolkata */
+  endedOn: string;
+  /** days already delivered on this subscription */
+  daysDelivered: number;
+  /** future scheduled days that were removed — the unused, paid-for days a refund
+      would be calculated against, once the refund policy is set */
+  daysRemaining: number;
+}
+
+/**
+ * Cancel a subscription: stop all future deliveries and mark it terminal.
+ *
+ * Every still-`scheduled` delivery from today onward is removed (so nothing else
+ * goes out), any future paused dates are cleared (moot once cancelled), the status
+ * becomes `cancelled` and the end date is brought to today. Delivered rows are left
+ * untouched — they are the history a refund is reckoned from.
+ *
+ * This does NOT compute or issue a refund: the refund amount is a policy the client
+ * has not published yet, and inventing one is worse than none. The result carries
+ * `daysRemaining` (the unused paid days) so a refund can be reckoned once that
+ * policy exists. Idempotent: cancelling an already-cancelled subscription is a
+ * no-op that returns the same shape.
+ */
+export async function cancelSubscription(id: ObjectId): Promise<CancelResult> {
+  const db = await getDb();
+  const sub = await col.subscriptions(db).findOne({ _id: id });
+  if (!sub) throw new Error(`cancel: subscription ${id.toHexString()} not found`);
+  if (sub.status === 'completed') throw new Error('cancel: subscription is already completed');
+
+  if (sub.status === 'cancelled') {
+    return { status: 'cancelled', endedOn: sub.endDate, daysDelivered: sub.daysDelivered, daysRemaining: 0 };
+  }
+
+  const today = todayKolkata();
+
+  // Stop future deliveries. Only `scheduled` rows from today onward — a day already
+  // delivered stays as history.
+  const del = await col.deliveries(db).deleteMany({
+    subscriptionId: id,
+    status: 'scheduled',
+    date: { $gte: today },
+  });
+  const daysRemaining = del.deletedCount ?? 0;
+
+  // Future pause selections no longer mean anything.
+  await col.pausedDates(db).deleteMany({ subscriptionId: id, date: { $gte: today } });
+
+  const res = await col.subscriptions(db).findOneAndUpdate(
+    { _id: id },
+    { $set: { status: 'cancelled', endDate: today, cancelledAt: new Date() } },
+    { returnDocument: 'after' },
+  );
+  if (!res) throw new Error(`cancel: subscription ${id.toHexString()} vanished`);
+
+  return { status: 'cancelled', endedOn: today, daysDelivered: res.daysDelivered, daysRemaining };
+}
+
 /* -------------------------------------------------------------- upcoming -- */
 
 export interface UpcomingDelivery {

@@ -171,6 +171,8 @@ export interface Subscription {
    */
   location?: { lat: number; lng: number; note?: string };
   createdAt: Date;
+  /** when the customer (or an admin) cancelled — set only for status 'cancelled' */
+  cancelledAt?: Date;
 }
 
 export type DeliveryStatus = 'scheduled' | 'delivered' | 'skipped' | 'failed';

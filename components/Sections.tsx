@@ -228,6 +228,9 @@ export function Footer() {
         {CONTACT.fssaiLicence
           ? <p>FSSAI Licence {CONTACT.fssaiLicence}</p>
           : <p><span className="pending">FSSAI licence number pending</span></p>}
+        {CONTACT.gstin
+          ? <p>GSTIN {CONTACT.gstin}</p>
+          : <p><span className="pending">GST number pending</span></p>}
         <p>© {new Date().getFullYear()} {BRAND.fullName}</p>
       </div>
       </div>

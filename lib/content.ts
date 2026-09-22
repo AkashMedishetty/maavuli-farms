@@ -32,6 +32,8 @@ export const CONTACT = {
   phones: ['+91 70752 02177'],
   /** Legally required on a dairy site. NOT SUPPLIED — renders as pending. */
   fssaiLicence: null as string | null,
+  /** GST identification number. NOT SUPPLIED — renders as pending until provided. */
+  gstin: null as string | null,
   instagram: null as string | null,
   invite: "Have questions or feedback? We'd love to hear from you.",
   inviteCta: "Hey, let's talk!",

@@ -16,6 +16,7 @@ import {
   VerifyError,
 } from '@/lib/auth';
 import { PauseCalendar } from '@/components/PauseCalendar';
+import { CancelSubscription } from '@/components/CancelSubscription';
 
 export const metadata = { title: 'My Deliveries' };
 // This page reads the session cookie and live data — never prerender or cache it.
@@ -331,6 +332,7 @@ async function SignedIn({ mobile, name }: { mobile: string; name: string | null 
                       </span>
                     </h3>
                     <PauseCalendar subscriptionId={String(sub._id)} />
+                    <CancelSubscription subscriptionId={String(sub._id)} />
                   </div>
                 ))}
               </section>
