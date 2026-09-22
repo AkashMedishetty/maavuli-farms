@@ -9,6 +9,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:pricing": "node --experimental-strip-types scripts/verify-pricing.ts",
+    "test:routing": "node --experimental-strip-types scripts/verify-routing.ts",
     "db:roll": "node --env-file-if-exists=.env.local scripts/roll-deliveries.mjs",
     "db:init": "node --env-file-if-exists=.env.local scripts/init-db.mjs",
     "db:seed-pincodes": "node --env-file-if-exists=.env.local scripts/seed-pincodes.mjs",

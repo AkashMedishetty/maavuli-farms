@@ -15,6 +15,7 @@ import {
   SmsNotConfiguredError,
   VerifyError,
 } from '@/lib/auth';
+import { PauseCalendar } from '@/components/PauseCalendar';
 
 export const metadata = { title: 'My Deliveries' };
 // This page reads the session cookie and live data — never prerender or cache it.
@@ -243,6 +244,8 @@ async function SignedIn({ mobile, name }: { mobile: string; name: string | null 
     else throw err;
   }
 
+  const activeSubs = data?.subscriptions.filter(s => s.status === 'active') ?? [];
+
   return (
     <>
       <NavPanel />
@@ -312,8 +315,29 @@ async function SignedIn({ mobile, name }: { mobile: string; name: string | null 
               </div>
             </section>
 
+            {activeSubs.length > 0 && (
+              <section className="pause-section">
+                <h2>Manage Pause Days</h2>
+                <p className="pause-intro">
+                  Select dates when you don't want delivery. Each paused date extends your
+                  subscription by 1 day, so you receive every litre you paid for.
+                </p>
+                {activeSubs.map((sub) => (
+                  <div key={String(sub._id)} className="sub-pause-card">
+                    <h3>
+                      {sub.kind === 'cow' ? 'Cow' : 'Buffalo'} Milk Subscription
+                      <span className="sub-range">
+                        {sub.startDate} → {sub.endDate}
+                      </span>
+                    </h3>
+                    <PauseCalendar subscriptionId={String(sub._id)} />
+                  </div>
+                ))}
+              </section>
+            )}
+
             <p className="sub-help">
-              To change or pause a delivery, call{' '}
+              Need help? Call{' '}
               <a href={`tel:${CONTACT.phones[0]?.replace(/\s/g, '')}`}>{CONTACT.phones[0]}</a> or
               email <a href={`mailto:${CONTACT.email}`}>{CONTACT.email}</a>.
             </p>

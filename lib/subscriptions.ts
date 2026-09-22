@@ -88,6 +88,17 @@ export function dateRange(start: string, count: number): string[] {
 /* --------------------------------------------------------------- activate -- */
 
 /**
+ * Calculate pause allowance based on subscription tenure.
+ * 1 month (30d) = 3 days, 3 months (90d) = 20 days, 6 months (180d) = 25 days, 1 year (360d) = 30 days.
+ */
+function calculatePauseAllowance(daysTotal: number): number {
+  if (daysTotal <= 30) return 3;
+  if (daysTotal <= 90) return 20;
+  if (daysTotal <= 180) return 25;
+  return 30; // 1 year+
+}
+
+/**
  * Turn a PAID order into a live subscription plus one delivery row per day.
  *
  * Imported by the Razorpay webhook agent with EXACTLY this signature — do not
@@ -141,6 +152,8 @@ export async function activateSubscriptionForOrder(orderId: ObjectId): Promise<v
     daysTotal,
     daysDelivered: 0,
     daysPaused: 0,
+    pauseAllowanceDays: calculatePauseAllowance(daysTotal),
+    pauseUsedDays: 0,
     status: 'active',
     pincode: order.pincode,
     // Delivery details travel with the subscription, not just the order: the
@@ -166,7 +179,18 @@ export async function activateSubscriptionForOrder(orderId: ObjectId): Promise<v
   // Rely on the unique index rather than reading first. On a retry every insert
   // collides and is skipped; the first run inserts them all. `ordered: false`
   // lets a partially-completed first run be finished by the retry.
-  const rows: Omit<Delivery, '_id'>[] = dateRange(startDate, daysTotal).map(date => ({
+  //
+  // Check for paused dates and exclude them from delivery generation
+  const pausedDates = await col
+    .pausedDates(db)
+    .find({ subscriptionId })
+    .toArray();
+  const pausedDateSet = new Set(pausedDates.map(p => p.date));
+
+  const allDates = dateRange(startDate, daysTotal);
+  const deliveryDates = allDates.filter(d => !pausedDateSet.has(d));
+
+  const rows: Omit<Delivery, '_id'>[] = deliveryDates.map(date => ({
     subscriptionId,
     mobile,
     date,
@@ -178,7 +202,9 @@ export async function activateSubscriptionForOrder(orderId: ObjectId): Promise<v
   }));
 
   try {
-    await col.deliveries(db).insertMany(rows, { ordered: false });
+    if (rows.length > 0) {
+      await col.deliveries(db).insertMany(rows, { ordered: false });
+    }
   } catch (err) {
     if (!isDuplicateKeyError(err)) throw err;
     // Every duplicate is an already-created delivery from a prior attempt — the
@@ -187,137 +213,20 @@ export async function activateSubscriptionForOrder(orderId: ObjectId): Promise<v
 }
 
 /* ------------------------------------------------------------------ pause -- */
-
-/**
- * Pause a subscription from `fromDate` onward.
+/*
+ * Pause/resume/skip USED to live here as three separate operations: an indefinite
+ * whole-subscription pause (status → 'paused'), its resume, and a single-day skip.
+ * They have been retired in favour of ONE customer-facing mechanism — the
+ * calendar, allowance-limited, per-date pause in lib/pause.ts — which the account
+ * page and the /pause, /unpause and /calendar routes use. That module is now the
+ * only writer of pause state: it removes each paused day's delivery, appends a
+ * make-up day, tracks the allowance in `pauseUsedDays`, and keeps the subscription
+ * ACTIVE. The old status='paused' path had no HTTP route left and its resume could
+ * never fire, so keeping it was two mechanisms disagreeing about the same field.
  *
- * ASSUMPTION — NEEDS CLIENT CONFIRMATION: a pause does NOT shorten the term. Every
- * still-`scheduled` delivery on/after `fromDate` is cancelled and the same number
- * of days is appended to the end, so the customer receives every day they paid
- * for, just later. `daysPaused` accumulates. The alternative (pause forfeits those
- * days, no refund) is more favourable to the farm but is a policy call the client
- * has not made.
+ * (SubStatus still lists 'paused' so legacy rows and the roll job's status filter
+ * keep parsing; nothing sets it any more.)
  */
-export async function pauseSubscription(id: ObjectId, fromDate: string): Promise<Subscription> {
-  const db = await getDb();
-  const sub = await col.subscriptions(db).findOne({ _id: id });
-  if (!sub) throw new Error(`pause: subscription ${id.toHexString()} not found`);
-  if (sub.status === 'completed' || sub.status === 'cancelled') {
-    throw new Error(`pause: subscription is ${sub.status}`);
-  }
-
-  const effectiveFrom = maxYMD(fromDate, todayKolkata()); // never pause the past
-
-  // Cancel the scheduled deliveries from effectiveFrom onward. Count them: that is
-  // exactly how many days the term must be extended by.
-  const del = await col.deliveries(db).deleteMany({
-    subscriptionId: id,
-    status: 'scheduled',
-    date: { $gte: effectiveFrom },
-  });
-  const paused = del.deletedCount ?? 0;
-
-  const newEnd = addDays(sub.endDate, paused);
-
-  const res = await col.subscriptions(db).findOneAndUpdate(
-    { _id: id },
-    { $set: { status: 'paused', endDate: newEnd }, $inc: { daysPaused: paused } },
-    { returnDocument: 'after' },
-  );
-  if (!res) throw new Error(`pause: subscription ${id.toHexString()} vanished`);
-  return res;
-}
-
-/* ----------------------------------------------------------------- resume -- */
-
-/**
- * Resume a paused subscription. Re-generates `scheduled` deliveries from tomorrow
- * (or the original start, whichever is later) up to the extended end date, filling
- * only the gap the pause created. Idempotent via the unique delivery index, so a
- * double-resume does not duplicate rows.
- */
-export async function resumeSubscription(id: ObjectId): Promise<Subscription> {
-  const db = await getDb();
-  const sub = await col.subscriptions(db).findOne({ _id: id });
-  if (!sub) throw new Error(`resume: subscription ${id.toHexString()} not found`);
-  if (sub.status !== 'paused') throw new Error(`resume: subscription is ${sub.status}, not paused`);
-
-  const perDayLitres = sub.qtyNum / sub.qtyDen;
-  const resumeFrom = maxYMD(addDays(todayKolkata(), 1), sub.startDate);
-  const now = new Date();
-
-  // Rebuild every day from resumeFrom..endDate. Days that still have a row (rare
-  // edge: a delivered/skipped day inside the window) collide on the unique index
-  // and are skipped, so we only ever fill the blanks the pause left.
-  const span = daysInclusive(resumeFrom, sub.endDate);
-  if (span > 0) {
-    const rows: Omit<Delivery, '_id'>[] = dateRange(resumeFrom, span).map(date => ({
-      subscriptionId: id,
-      mobile: sub.mobile,
-      date,
-      kind: sub.kind,
-      litres: perDayLitres,
-      pincode: sub.pincode,
-      status: 'scheduled' as const,
-      updatedAt: now,
-    }));
-    try {
-      await col.deliveries(db).insertMany(rows, { ordered: false });
-    } catch (err) {
-      if (!isDuplicateKeyError(err)) throw err;
-    }
-  }
-
-  const res = await col.subscriptions(db).findOneAndUpdate(
-    { _id: id },
-    { $set: { status: 'active' } },
-    { returnDocument: 'after' },
-  );
-  if (!res) throw new Error(`resume: subscription ${id.toHexString()} vanished`);
-  return res;
-}
-
-/* ------------------------------------------------------------------- skip -- */
-
-/**
- * Skip a single day's delivery.
- *
- * ASSUMPTION — NEEDS CLIENT CONFIRMATION: like a pause, a skip does NOT forfeit the
- * day. The skipped day is marked `skipped` and one day is appended to the end so
- * the paid-for litres are still delivered. `daysPaused` accrues by one (it is the
- * single "days owed back" counter). If the client wants a skip to simply drop the
- * day with no make-up, remove the endDate/`$inc` here.
- */
-export async function skipDelivery(id: ObjectId, date: string): Promise<Subscription> {
-  const db = await getDb();
-  const sub = await col.subscriptions(db).findOne({ _id: id });
-  if (!sub) throw new Error(`skip: subscription ${id.toHexString()} not found`);
-  if (sub.status === 'completed' || sub.status === 'cancelled') {
-    throw new Error(`skip: subscription is ${sub.status}`);
-  }
-  if (date < todayKolkata()) throw new Error('skip: cannot skip a past day');
-
-  // Only a still-scheduled day can be skipped. If the row is already delivered or
-  // already skipped, this is a no-op and the term is NOT extended twice.
-  const upd = await col.deliveries(db).updateOne(
-    { subscriptionId: id, date, status: 'scheduled' },
-    { $set: { status: 'skipped', updatedAt: new Date() } },
-  );
-  if (upd.modifiedCount === 0) {
-    // Nothing changed — either no such scheduled day, or already handled. Return
-    // the subscription unchanged rather than extending the term on a repeat click.
-    return sub;
-  }
-
-  const newEnd = addDays(sub.endDate, 1);
-  const res = await col.subscriptions(db).findOneAndUpdate(
-    { _id: id },
-    { $set: { endDate: newEnd }, $inc: { daysPaused: 1 } },
-    { returnDocument: 'after' },
-  );
-  if (!res) throw new Error(`skip: subscription ${id.toHexString()} vanished`);
-  return res;
-}
 
 /* -------------------------------------------------------------- upcoming -- */
 
@@ -369,11 +278,6 @@ function gcd(a: number, b: number): number {
     [x, y] = [y, x % y];
   }
   return x || 1;
-}
-
-/** Lexicographic max works for zero-padded YYYY-MM-DD, and needs no parsing. */
-function maxYMD(a: string, b: string): string {
-  return a >= b ? a : b;
 }
 
 function isDuplicateKeyError(err: unknown): boolean {

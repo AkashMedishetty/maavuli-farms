@@ -1,4 +1,5 @@
 import ZoneMap from '@/components/ZoneMap';
+import RidersPanel from '@/components/RidersPanel';
 import Link from 'next/link';
 import { NotConfiguredError } from '@/lib/db';
 import { formatINR } from '@/lib/pricing';
@@ -9,9 +10,11 @@ import {
   todaysRound,
   activeSubscriptions,
   revenueSummary,
+  planRoutes,
   type TodaysRound,
   type ActiveSubscriptionRow,
   type RevenueSummary,
+  type RoutePlan,
 } from '@/lib/admin';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +43,11 @@ function kindLabel(kind: 'buffalo' | 'cow'): string {
 function litres(n: number): string {
   // 0.5 stays "0.5 L", 2 stays "2 L"
   return `${Number.isInteger(n) ? n : n.toFixed(1)} L`;
+}
+
+/** Metres → a short human distance: "820 m", "3.4 km". */
+function dist(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
 }
 
 export default async function AdminPage({
@@ -97,13 +105,15 @@ export default async function AdminPage({
   let round: TodaysRound | null = null;
   let subs: ActiveSubscriptionRow[] = [];
   let revenue: RevenueSummary | null = null;
+  let routePlan: RoutePlan | null = null;
   let dbError: string | null = null;
 
   try {
-    [round, subs, revenue] = await Promise.all([
+    [round, subs, revenue, routePlan] = await Promise.all([
       todaysRound(date),
       activeSubscriptions(),
       revenueSummary(),
+      planRoutes(date),
     ]);
   } catch (err) {
     if (err instanceof NotConfiguredError) {
@@ -140,6 +150,9 @@ export default async function AdminPage({
 
       {/* ---- primary view: the round, pincode-grouped, litres totalled ---- */}
       {!dbError && <ZoneMap />}
+
+      {/* riders + which zone each one runs */}
+      {!dbError && <RidersPanel />}
 
       {!dbError && round && (
         <section className="admin-round">
@@ -193,6 +206,126 @@ export default async function AdminPage({
             Deliveries are marked delivered / skipped / failed by{' '}
             <code>POST /api/admin/delivery</code>. Inline actions are a follow-up —
             the client has not confirmed a mark-off flow yet.
+          </p>
+        </section>
+      )}
+
+      {/* ---- optimised delivery routes, per rider ---- */}
+      {!dbError && routePlan && (
+        <section className="admin-section admin-routes">
+          <h2>Delivery routes for {date}</h2>
+
+          {routePlan.routes.length === 0 && routePlan.noLocation.length === 0 ? (
+            <p className="pending">No scheduled stops to route for {date}.</p>
+          ) : (
+            <>
+              {routePlan.routes.map((r, i) => (
+                <div key={r.riderId ?? `unassigned-${i}`} className="panel admin-route">
+                  <div className="admin-route-head">
+                    <div>
+                      <h3>
+                        {r.riderName}
+                        {r.riderId === null && (
+                          <span className="admin-route-flag"> · no rider on these zones</span>
+                        )}
+                      </h3>
+                      <p className="admin-route-meta">
+                        {r.stops.length} stop{r.stops.length === 1 ? '' : 's'} · {dist(r.totalM)} total ·
+                        from {r.originLabel}
+                      </p>
+                    </div>
+                    {r.directionsUrl && (
+                      <a className="cta" href={r.directionsUrl} target="_blank" rel="noopener noreferrer">
+                        Open route in Maps
+                      </a>
+                    )}
+                  </div>
+                  <div className="plan-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">#</th>
+                          <th scope="col">Mobile</th>
+                          <th scope="col">Name</th>
+                          <th scope="col">Litres</th>
+                          <th scope="col">Address</th>
+                          <th scope="col">Leg</th>
+                          <th scope="col">Map</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {r.stops.map(s => (
+                          <tr key={s.deliveryId}>
+                            <th scope="row">{s.seq}</th>
+                            <td>{s.mobile}</td>
+                            <td>{s.name ?? '—'}</td>
+                            <td>{litres(s.litres)}</td>
+                            <td className="admin-route-addr">
+                              {s.address ?? '—'}
+                              {s.landmark ? ` (${s.landmark})` : ''}
+                            </td>
+                            <td>{dist(s.legM)}</td>
+                            <td>
+                              <a href={s.mapsUrl} target="_blank" rel="noopener noreferrer">
+                                pin
+                              </a>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+
+              {routePlan.noLocation.length > 0 && (
+                <div className="panel admin-route">
+                  <div className="admin-route-head">
+                    <div>
+                      <h3>
+                        No saved location <span className="admin-route-flag"> · route by hand</span>
+                      </h3>
+                      <p className="admin-route-meta">
+                        {routePlan.noLocation.length} stop
+                        {routePlan.noLocation.length === 1 ? '' : 's'} — a pincode but no pin, so they
+                        can't be sequenced.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="plan-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">Mobile</th>
+                          <th scope="col">Name</th>
+                          <th scope="col">Litres</th>
+                          <th scope="col">Pincode</th>
+                          <th scope="col">Address</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {routePlan.noLocation.map(s => (
+                          <tr key={s.deliveryId}>
+                            <th scope="row">{s.mobile}</th>
+                            <td>{s.name ?? '—'}</td>
+                            <td>{litres(s.litres)}</td>
+                            <td>{s.pincode}</td>
+                            <td>{s.address ?? '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <p className="admin-hint">
+            Stops are grouped by the zone they fall in and that zone's rider, then ordered
+            nearest-first from the rider's start point — or the farm when{' '}
+            <code>FARM_ORIGIN_LAT</code> / <code>FARM_ORIGIN_LNG</code> are set, otherwise the
+            centre of the cluster. Assign riders to zones in the panel above.
           </p>
         </section>
       )}

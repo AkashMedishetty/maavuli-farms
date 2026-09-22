@@ -17,9 +17,11 @@ const COL = {
   orders: 'orders',
   subscriptions: 'subscriptions',
   deliveries: 'deliveries',
+  pausedDates: 'paused_dates',
   pincodes: 'pincodes',
   webhookEvents: 'webhook_events',
   zones: 'zones',
+  riders: 'riders',
 };
 
 // ---- KEEP IN SYNC with INDEXES in lib/models.ts ----
@@ -34,10 +36,14 @@ const INDEXES = [
   { col: COL.subscriptions, spec: { mobile: 1, status: 1 }, options: {} },
   { col: COL.deliveries, spec: { date: 1, pincode: 1 }, options: {} },
   { col: COL.deliveries, spec: { subscriptionId: 1, date: 1 }, options: { unique: true } },
+  { col: COL.pausedDates, spec: { subscriptionId: 1, date: 1 }, options: { unique: true } },
+  { col: COL.pausedDates, spec: { mobile: 1, date: 1 }, options: {} },
   { col: COL.pincodes, spec: { pincode: 1 }, options: { unique: true } },
   { col: COL.webhookEvents, spec: { eventId: 1 }, options: { unique: true } },
   { col: COL.zones, spec: { geometry: '2dsphere' }, options: {} },
   { col: COL.zones, spec: { active: 1 }, options: {} },
+  { col: COL.zones, spec: { riderId: 1 }, options: {} },
+  { col: COL.riders, spec: { active: 1 }, options: {} },
 ];
 
 const uri = (process.env.MONGODB_URI ?? '').trim();

@@ -3,21 +3,20 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { col } from '@/lib/models';
-import { pauseDates } from '@/lib/pause';
+import { unpauseDates } from '@/lib/pause';
 
 /**
- * POST /api/subscriptions/[id]/pause
+ * POST /api/subscriptions/[id]/unpause
  *
- * Pause individual delivery dates. Request body:
+ * Re-enable previously paused dates. Request body:
  * {
  *   "dates": ["2026-09-15", "2026-09-16"]
  * }
  *
- * Each date:
- * - Consumes 1 pause day from allowance
- * - Extends subscription end date by 1 day
- * - Must respect 4 PM cutoff (can't pause tomorrow after 4 PM today)
- * - Must be within subscription date range
+ * Only allowed for dates that:
+ * - Are currently paused
+ * - Haven't passed yet
+ * - Respect 4 PM cutoff (can't unpause tomorrow after 4 PM today)
  */
 export async function POST(
   request: Request,
@@ -57,7 +56,7 @@ export async function POST(
       );
     }
 
-    // Validate date format (YYYY-MM-DD)
+    // Validate date format
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     for (const date of dates) {
       if (typeof date !== 'string' || !dateRegex.test(date)) {
@@ -68,7 +67,7 @@ export async function POST(
       }
     }
 
-    const result = await pauseDates(subscriptionId, dates);
+    const result = await unpauseDates(subscriptionId, dates);
 
     if (!result.success) {
       return NextResponse.json({ error: result.message }, { status: 400 });
@@ -76,7 +75,7 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (err: any) {
-    console.error('POST /api/subscriptions/[id]/pause error:', err);
+    console.error('POST /api/subscriptions/[id]/unpause error:', err);
     return NextResponse.json(
       { error: err.message || 'Server error' },
       { status: 500 }

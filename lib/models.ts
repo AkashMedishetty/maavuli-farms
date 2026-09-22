@@ -34,9 +34,11 @@ export const COL = {
   orders: 'orders',
   subscriptions: 'subscriptions',
   deliveries: 'deliveries',
+  pausedDates: 'paused_dates',
   pincodes: 'pincodes',
   webhookEvents: 'webhook_events',
   zones: 'zones',
+  riders: 'riders',
 } as const;
 
 /** The only accepted mobile form. Returns null when it is not a valid Indian mobile. */
@@ -143,6 +145,16 @@ export interface Subscription {
   daysPaused: number;
   status: SubStatus;
   /**
+   * Total pause days allowed for this subscription, based on plan duration.
+   * 1mo=3d, 3mo=20d, 6mo=25d, 1yr=30d. Set at activation, immutable.
+   */
+  pauseAllowanceDays: number;
+  /**
+   * Pause days used so far. Increments when customer pauses individual dates.
+   * Cannot exceed pauseAllowanceDays.
+   */
+  pauseUsedDays: number;
+  /**
    * Kept for the existing pincode flow. Becomes optional once every subscription
    * carries a `location`; not loosened yet because other backend modules read it
    * unconditionally and a silent empty string is worse than a required field.
@@ -175,6 +187,19 @@ export interface Delivery {
   status: DeliveryStatus;
   note?: string;
   updatedAt?: Date;
+}
+
+/**
+ * Individual dates paused by the customer. Each date consumes 1 pause day from
+ * the subscription's allowance. Deliveries are NOT created for paused dates.
+ */
+export interface PausedDate {
+  _id?: ObjectId;
+  subscriptionId: ObjectId;
+  mobile: string;
+  date: string;                // YYYY-MM-DD, Asia/Kolkata
+  /** when the customer selected this pause date */
+  pausedAt: Date;
 }
 
 /**
@@ -222,6 +247,32 @@ export interface Zone {
   geometry: { type: 'Polygon'; coordinates: [number, number][][] };
   /** free text for the rider — landmark, gate code, "ring the bell twice" */
   note?: string;
+  /**
+   * The rider who runs this zone. Every stop that falls inside the zone is that
+   * rider's, which is how the morning round is split without hand-assigning each
+   * customer. Optional: an unassigned zone's stops fall to the "unassigned" bucket
+   * in the route planner rather than silently vanishing.
+   */
+  riderId?: ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * A delivery rider. Zones are assigned to riders (Zone.riderId), so a rider owns
+ * every stop inside their zones. `startLocation` is where their run begins — the
+ * farm by default (see FARM_ORIGIN), or their own start point when set — and is the
+ * origin the route optimiser sequences stops from.
+ */
+export interface Rider {
+  _id?: ObjectId;
+  name: string;
+  /** 10-digit normalised mobile, optional — not every rider is a login */
+  phone?: string;
+  active: boolean;
+  /** where this rider's run starts; falls back to the farm origin when absent */
+  startLocation?: { lat: number; lng: number };
+  note?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -233,9 +284,11 @@ export const col = {
   orders: (db: Db) => db.collection<Order>(COL.orders),
   subscriptions: (db: Db) => db.collection<Subscription>(COL.subscriptions),
   deliveries: (db: Db) => db.collection<Delivery>(COL.deliveries),
+  pausedDates: (db: Db) => db.collection<PausedDate>(COL.pausedDates),
   pincodes: (db: Db) => db.collection<Pincode>(COL.pincodes),
   webhookEvents: (db: Db) => db.collection<WebhookEvent>(COL.webhookEvents),
   zones: (db: Db) => db.collection<Zone>(COL.zones),
+  riders: (db: Db) => db.collection<Rider>(COL.riders),
 };
 
 /**
@@ -255,10 +308,14 @@ export const INDEXES = [
   { col: COL.subscriptions, spec: { mobile: 1, status: 1 }, options: {} },
   { col: COL.deliveries, spec: { date: 1, pincode: 1 }, options: {} },
   { col: COL.deliveries, spec: { subscriptionId: 1, date: 1 }, options: { unique: true } },
+  { col: COL.pausedDates, spec: { subscriptionId: 1, date: 1 }, options: { unique: true } },
+  { col: COL.pausedDates, spec: { mobile: 1, date: 1 }, options: {} },
   { col: COL.pincodes, spec: { pincode: 1 }, options: { unique: true } },
   { col: COL.webhookEvents, spec: { eventId: 1 }, options: { unique: true } },
   // 2dsphere is what makes $geoIntersects usable; without it the point-in-zone
   // query is a collection scan and errors on anything but tiny data.
   { col: COL.zones, spec: { geometry: '2dsphere' }, options: {} },
   { col: COL.zones, spec: { active: 1 }, options: {} },
+  { col: COL.zones, spec: { riderId: 1 }, options: {} },
+  { col: COL.riders, spec: { active: 1 }, options: {} },
 ] as const;

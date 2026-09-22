@@ -17,9 +17,10 @@
 import { getSession } from '@/lib/auth';
 import { adminMobiles } from '@/lib/env';
 import { getDb } from '@/lib/db';
-import { col, type DeliveryStatus } from '@/lib/models';
+import { col, type DeliveryStatus, type Rider, type Zone } from '@/lib/models';
 import type { MilkKind } from '@/lib/pricing';
-import { mapsUrl } from './geo';
+import { mapsUrl, pointInPolygon, normalizePoint, type GeoPoint, type GeoPolygon } from './geo';
+import { optimizeRoute, directionsUrl, centroid } from './routing';
 import { ObjectId } from 'mongodb';
 
 /** A session the caller can trust is an allowlisted admin. */
@@ -222,4 +223,204 @@ export type SettableDeliveryStatus = (typeof SETTABLE_DELIVERY_STATUSES)[number]
 
 export function isSettableDeliveryStatus(v: unknown): v is SettableDeliveryStatus {
   return typeof v === 'string' && (SETTABLE_DELIVERY_STATUSES as readonly string[]).includes(v);
+}
+
+// ------------------------------------------------------------ route plan ----
+/**
+ * Delivery route optimisation for a day.
+ *
+ * The morning round grouped by pincode (todaysRound) tells you WHAT to load. This
+ * tells a rider the ORDER to drive it in. Zones are assigned to riders
+ * (Zone.riderId), so every scheduled stop is bucketed by the zone it falls inside,
+ * and each rider's stops are sequenced from an origin — the rider's own start
+ * point, else the farm (FARM_ORIGIN_LAT/LNG), else the centre of their stops — by
+ * lib/routing (nearest-neighbour + 2-opt). Stops with no saved location can't be
+ * placed on a map, so they fall to a separate list the rider still works by hand.
+ *
+ * All geometry is in-memory: active zones and riders are each read once and matched
+ * with the pure `pointInPolygon`, rather than a $geoIntersects per stop, so a round
+ * of any realistic size is one query per collection, not one per customer.
+ */
+
+interface PlannedStop {
+  point: GeoPoint;
+  deliveryId: string;
+  mobile: string;
+  kind: MilkKind;
+  litres: number;
+  name?: string;
+  address?: string;
+  landmark?: string;
+}
+
+export interface RouteStop {
+  deliveryId: string;
+  seq: number; // 1-based visiting order
+  mobile: string;
+  kind: MilkKind;
+  litres: number;
+  name?: string;
+  address?: string;
+  landmark?: string;
+  location: GeoPoint;
+  mapsUrl: string;
+  /** metres from the previous point (origin for the first stop) to this stop */
+  legM: number;
+}
+
+export interface RiderRoute {
+  riderId: string | null; // null = a zone with no rider, or a stop in no zone
+  riderName: string;
+  origin: GeoPoint;
+  originLabel: 'rider start' | 'farm' | 'cluster centre';
+  stops: RouteStop[];
+  totalM: number;
+  /** a maps deep link that chains the whole route in order; null if no stops */
+  directionsUrl: string | null;
+}
+
+export interface UnlocatedStop {
+  deliveryId: string;
+  mobile: string;
+  kind: MilkKind;
+  litres: number;
+  pincode: string;
+  name?: string;
+  address?: string;
+}
+
+export interface RoutePlan {
+  date: string;
+  routes: RiderRoute[];
+  /** scheduled stops with no saved location — can't be sequenced, listed for hand-routing */
+  noLocation: UnlocatedStop[];
+}
+
+/** The farm as a route origin, from env. Optional: absent falls back per rider. */
+function farmOrigin(): GeoPoint | null {
+  return normalizePoint(process.env.FARM_ORIGIN_LAT, process.env.FARM_ORIGIN_LNG);
+}
+
+const UNASSIGNED = '__unassigned__';
+
+export async function planRoutes(date: string): Promise<RoutePlan> {
+  const db = await getDb();
+
+  // 1. the stops still to deliver on this day
+  const rows = await col.deliveries(db).find({ date, status: 'scheduled' }).sort({ mobile: 1 }).toArray();
+
+  // 2. their delivery details (name/address/location) from the subscription
+  const subIds = [...new Set(rows.map(r => String(r.subscriptionId)))]
+    .filter(id => ObjectId.isValid(id))
+    .map(id => new ObjectId(id));
+  const subs = subIds.length
+    ? await col.subscriptions(db).find({ _id: { $in: subIds } }).toArray()
+    : [];
+  const subById = new Map(subs.map(s => [String(s._id), s]));
+
+  // 3. active zones (with their rider) and every rider, each read once
+  const zones = await col.zones(db).find({ active: true }).toArray();
+  const riders = await col.riders(db).find({}).toArray();
+  const riderById = new Map<string, Rider>(riders.map(r => [String(r._id), r]));
+
+  const zoneOf = (p: GeoPoint): Zone | null => {
+    for (const z of zones) {
+      if (pointInPolygon(p, z.geometry as GeoPolygon)) return z;
+    }
+    return null;
+  };
+
+  // 4. bucket the located stops by rider (via zone), collect the rest
+  const buckets = new Map<string, PlannedStop[]>();
+  const noLocation: UnlocatedStop[] = [];
+
+  for (const d of rows) {
+    const sub = subById.get(String(d.subscriptionId));
+    const loc = sub?.location;
+    if (!loc) {
+      noLocation.push({
+        deliveryId: String(d._id),
+        mobile: d.mobile,
+        kind: d.kind,
+        litres: d.litres,
+        pincode: d.pincode,
+        ...(sub?.name ? { name: sub.name } : {}),
+        ...(sub?.address ? { address: sub.address } : {}),
+      });
+      continue;
+    }
+    const point: GeoPoint = { lat: loc.lat, lng: loc.lng };
+    const zone = zoneOf(point);
+    const riderId = zone?.riderId ? String(zone.riderId) : null;
+    const key = riderId ?? UNASSIGNED;
+
+    const stop: PlannedStop = {
+      point,
+      deliveryId: String(d._id),
+      mobile: d.mobile,
+      kind: d.kind,
+      litres: d.litres,
+      ...(sub?.name ? { name: sub.name } : {}),
+      ...(sub?.address ? { address: sub.address } : {}),
+      ...(sub?.landmark ? { landmark: sub.landmark } : {}),
+    };
+    const arr = buckets.get(key);
+    if (arr) arr.push(stop);
+    else buckets.set(key, [stop]);
+  }
+
+  // 5. sequence each bucket from the best available origin
+  const farm = farmOrigin();
+  const routes: RiderRoute[] = [];
+
+  for (const [key, stops] of buckets) {
+    const rider = key === UNASSIGNED ? null : riderById.get(key) ?? null;
+
+    let origin: GeoPoint;
+    let originLabel: RiderRoute['originLabel'];
+    if (rider?.startLocation) {
+      origin = rider.startLocation;
+      originLabel = 'rider start';
+    } else if (farm) {
+      origin = farm;
+      originLabel = 'farm';
+    } else {
+      origin = centroid(stops.map(s => s.point)) ?? stops[0]!.point;
+      originLabel = 'cluster centre';
+    }
+
+    const { order, legsM, totalM } = optimizeRoute(origin, stops);
+    const stopsOut: RouteStop[] = order.map((s, i) => ({
+      deliveryId: s.deliveryId,
+      seq: i + 1,
+      mobile: s.mobile,
+      kind: s.kind,
+      litres: s.litres,
+      ...(s.name ? { name: s.name } : {}),
+      ...(s.address ? { address: s.address } : {}),
+      ...(s.landmark ? { landmark: s.landmark } : {}),
+      location: s.point,
+      mapsUrl: mapsUrl(s.point),
+      legM: legsM[i] ?? 0,
+    }));
+
+    routes.push({
+      riderId: rider ? String(rider._id) : null,
+      riderName: rider?.name ?? 'Unassigned',
+      origin,
+      originLabel,
+      stops: stopsOut,
+      totalM,
+      directionsUrl: order.length > 0 ? directionsUrl(origin, order.map(s => s.point)) : null,
+    });
+  }
+
+  // assigned riders first (alphabetical), the unassigned bucket last
+  routes.sort((a, b) => {
+    if (a.riderId === null) return 1;
+    if (b.riderId === null) return -1;
+    return a.riderName.localeCompare(b.riderName);
+  });
+
+  return { date, routes, noLocation };
 }

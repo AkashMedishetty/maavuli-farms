@@ -65,6 +65,7 @@ export async function GET(): Promise<NextResponse> {
         active: z.active,
         shape: z.shape,
         note: z.note ?? null,
+        riderId: z.riderId ? z.riderId.toHexString() : null,
       })),
     });
   } catch (err) {
@@ -79,6 +80,7 @@ interface PostBody {
   radiusM?: unknown;
   points?: unknown;
   note?: unknown;
+  riderId?: unknown;
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -95,6 +97,8 @@ export async function POST(req: Request): Promise<NextResponse> {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   if (!name) return NextResponse.json({ error: 'A zone name is required.' }, { status: 400 });
   const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim() : undefined;
+  const riderId =
+    typeof body.riderId === 'string' && ObjectId.isValid(body.riderId) ? new ObjectId(body.riderId) : undefined;
 
   let shape: Zone['shape'];
   let geometry: Zone['geometry'];
@@ -140,6 +144,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       shape,
       geometry,
       ...(note ? { note } : {}),
+      ...(riderId ? { riderId } : {}),
       createdAt: now,
       updatedAt: now,
     } as Zone);
@@ -153,26 +158,47 @@ export async function PATCH(req: Request): Promise<NextResponse> {
   const denied = await gate();
   if (denied) return denied;
 
-  let body: { id?: unknown; active?: unknown };
+  let body: { id?: unknown; active?: unknown; riderId?: unknown };
   try {
-    body = (await req.json()) as { id?: unknown; active?: unknown };
+    body = (await req.json()) as { id?: unknown; active?: unknown; riderId?: unknown };
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
   }
   const id = typeof body.id === 'string' && ObjectId.isValid(body.id) ? new ObjectId(body.id) : null;
   if (!id) return NextResponse.json({ error: 'A valid zone id is required.' }, { status: 400 });
-  if (typeof body.active !== 'boolean') {
-    return NextResponse.json({ error: 'active must be true or false.' }, { status: 400 });
+
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  const unset: Record<string, ''> = {};
+
+  if (body.active !== undefined) {
+    if (typeof body.active !== 'boolean') {
+      return NextResponse.json({ error: 'active must be true or false.' }, { status: 400 });
+    }
+    set.active = body.active;
   }
+  // riderId: a valid id assigns the zone to a rider; null or '' clears it.
+  if (body.riderId !== undefined) {
+    if (body.riderId === null || body.riderId === '') {
+      unset.riderId = '';
+    } else if (typeof body.riderId === 'string' && ObjectId.isValid(body.riderId)) {
+      set.riderId = new ObjectId(body.riderId);
+    } else {
+      return NextResponse.json({ error: 'riderId must be a valid id, or null to clear.' }, { status: 400 });
+    }
+  }
+
+  if (body.active === undefined && body.riderId === undefined) {
+    return NextResponse.json({ error: 'Nothing to update: send active and/or riderId.' }, { status: 400 });
+  }
+
+  const update: Record<string, unknown> = { $set: set };
+  if (Object.keys(unset).length > 0) update.$unset = unset;
 
   try {
     const db = await getDb();
-    const res = await col.zones(db).updateOne(
-      { _id: id },
-      { $set: { active: body.active, updatedAt: new Date() } },
-    );
+    const res = await col.zones(db).updateOne({ _id: id }, update);
     if (res.matchedCount === 0) return NextResponse.json({ error: 'Unknown zone.' }, { status: 404 });
-    return NextResponse.json({ id: body.id, active: body.active });
+    return NextResponse.json({ id: body.id });
   } catch (err) {
     return notConfigured(err) ?? NextResponse.json({ error: 'Could not update the zone.' }, { status: 503 });
   }

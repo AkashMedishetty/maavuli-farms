@@ -1586,3 +1586,162 @@ body {
   .cta-band-photo { order: -1; width: 100%; }
   .cta-band-photo img { aspect-ratio: 4 / 5; max-height: 72vh; }
 }
+
+/* Pause section styles */
+.pause-section {
+  max-width: 800px;
+  margin: 3rem auto;
+  padding: 0 1rem;
+}
+
+.pause-section h2 {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.pause-intro {
+  color: #6b7280;
+  margin-bottom: 2rem;
+  line-height: 1.6;
+}
+
+.sub-pause-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.sub-pause-card h3 {
+  margin: 0 0 1.5rem 0;
+  font-size: 1.125rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sub-range {
+  font-size: 0.875rem;
+  font-weight: normal;
+  color: #6b7280;
+}
+
+@media (max-width: 640px) {
+  .sub-pause-card {
+    padding: 1rem;
+  }
+
+  .sub-pause-card h3 {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* ---------------------------------------------------- admin: routes ---- */
+/* Each rider's optimised run is an inset red panel, like .admin-pincode. */
+.admin-route { padding: clamp(1.2rem, 3vw, 2rem); margin-bottom: 1rem; }
+.admin-route-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.admin-route-head h3 { font-family: var(--serif); font-size: var(--step-1); }
+.admin-route-meta { color: var(--milk-dim); font-size: var(--step--1); margin-top: 0.25rem; }
+.admin-route-flag { color: var(--milk-dim); font-style: italic; font-family: var(--sans); font-size: var(--step--1); }
+.admin-route-head .cta { padding: 0.6em 1.2em; }
+.admin-route .plan-table th,
+.admin-route .plan-table td { border-bottom-color: var(--milk-faint); }
+.admin-route .plan-table thead th { opacity: 0.7; }
+.admin-route .plan-table a { text-decoration: underline; text-underline-offset: 2px; }
+.admin-route-addr { max-width: 22rem; }
+
+/* ---------------------------------------------------- admin: riders ---- */
+.riders-panel { margin-bottom: clamp(3rem, 8vh, 5rem); }
+.riders-lead { color: var(--red-dim); font-size: var(--step--1); max-width: 64ch; margin-bottom: 1.25rem; }
+.riders-error {
+  color: var(--red);
+  border: 1px solid var(--red-faint);
+  background: rgba(140, 23, 14, 0.05);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  font-size: var(--step--1);
+  margin-bottom: 1rem;
+  max-width: 64ch;
+}
+.riders-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1.75rem;
+}
+.riders-form input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.7em 0.9em;
+  border: 1px solid var(--red-faint);
+  border-radius: 8px;
+  background: var(--milk);
+  color: var(--red);
+  font: inherit;
+  font-size: var(--step--1);
+}
+.riders-form input:focus-visible { outline: none; border-color: var(--red); }
+.riders-form .cta { flex: 0 0 auto; }
+
+.riders-list { margin-bottom: 1.5rem; }
+.riders-actions { display: flex; gap: 0.5rem; white-space: nowrap; }
+.riders-actions button {
+  font: inherit;
+  font-size: var(--step--1);
+  padding: 0.35em 0.8em;
+  border: 1px solid var(--red-faint);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--red);
+  cursor: pointer;
+  transition: border-color 0.3s, background 0.3s;
+}
+.riders-actions button:hover:not(:disabled) { border-color: var(--red); }
+.riders-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.riders-actions .riders-danger:hover:not(:disabled) {
+  background: var(--red);
+  color: var(--milk);
+  border-color: var(--red);
+}
+
+.riders-subhead { font-family: var(--serif); font-size: var(--step-1); margin: 1.5rem 0 0.9rem; }
+.riders-zones { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; max-width: 40rem; }
+.riders-zones li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--red-faint);
+}
+.riders-zone-name { font-size: var(--step-0); }
+.riders-zone-name em { color: var(--red-dim); font-style: italic; }
+.riders-zones select {
+  flex: 0 0 auto;
+  padding: 0.5em 0.8em;
+  border: 1px solid var(--red-faint);
+  border-radius: 8px;
+  background: var(--milk);
+  color: var(--red);
+  font: inherit;
+  font-size: var(--step--1);
+  cursor: pointer;
+}
+.riders-zones select:focus-visible { outline: none; border-color: var(--red); }
+
+@media (max-width: 640px) {
+  .riders-zones li { flex-direction: column; align-items: stretch; gap: 0.5rem; }
+  .admin-route-addr { max-width: none; }
+}
