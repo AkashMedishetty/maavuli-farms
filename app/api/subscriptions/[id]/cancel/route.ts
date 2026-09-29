@@ -1,48 +1,51 @@
-import { ObjectId } from 'mongodb';
-import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
-import { getDb, NotConfiguredError } from '@/lib/db';
-import { col } from '@/lib/models';
+import { ok, readJson, handleRouteError } from '@/lib/api';
+import { ctxFor } from '@/lib/clock';
+import { actorFor, requireSignedIn } from '@/lib/roles';
+import { ConflictError, ValidationError } from '@/lib/errors';
+import { firstOpenDateNow } from '@/lib/daylock';
+import { previewCancellationRefund } from '@/lib/refunds';
 import { cancelSubscription } from '@/lib/subscriptions';
+import { ownSubscription } from '../../_lib';
 
 /**
- * POST /api/subscriptions/[id]/cancel
+ * GET  /api/subscriptions/[id]/cancel → { breakdown, effectiveDate } (no writes)
+ * POST /api/subscriptions/[id]/cancel   { confirm: true, reason? } → CancelResult
  *
- * Cancels the caller's own subscription (or any, for an admin): future deliveries
- * stop, the subscription is marked cancelled and ends today. Irreversible — the
- * client shows a confirmation before calling this. No refund is computed here; the
- * refund follows the published cancellation policy (/legal/refunds), and the
- * response carries `daysRemaining` (unused paid days) for reckoning it.
+ * Own plan only (404 otherwise). Cancellation is effective from the first open date;
+ * the refund follows the published policy (lib/refunds).
  */
-export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
+export const dynamic = 'force-dynamic';
+
+export async function GET(req: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    const p = await requireSignedIn();
+    const sub = await ownSubscription(context.params, p);
+    if (sub.status !== 'scheduled' && sub.status !== 'active' && sub.status !== 'paused') {
+      throw new ConflictError(`This plan is already ${sub.status}.`);
     }
-
-    const { id } = await context.params;
-    if (!ObjectId.isValid(id)) {
-      return NextResponse.json({ error: 'invalid subscription id' }, { status: 400 });
-    }
-    const subscriptionId = new ObjectId(id);
-
-    const db = await getDb();
-    const sub = await col.subscriptions(db).findOne({ _id: subscriptionId }, { projection: { mobile: 1 } });
-    if (!sub) {
-      return NextResponse.json({ error: 'Subscription not found' }, { status: 404 });
-    }
-    if (!session.isAdmin && sub.mobile !== session.mobile) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    const result = await cancelSubscription(subscriptionId);
-    return NextResponse.json(result);
+    const ctx = ctxFor(req, actorFor(p, 'customer'));
+    const [breakdown, effectiveDate] = await Promise.all([
+      previewCancellationRefund(sub._id, ctx),
+      firstOpenDateNow(ctx),
+    ]);
+    return ok({ breakdown, effectiveDate });
   } catch (err) {
-    if (err instanceof NotConfiguredError) {
-      return NextResponse.json({ error: 'service unavailable', missing: err.missing }, { status: 503 });
-    }
-    const message = err instanceof Error ? err.message : 'Server error';
-    return NextResponse.json({ error: message }, { status: 400 });
+    return handleRouteError(err);
+  }
+}
+
+export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
+  try {
+    const p = await requireSignedIn();
+    const sub = await ownSubscription(context.params, p);
+    const body = await readJson<{ confirm?: unknown; reason?: unknown }>(req);
+    if (body.confirm !== true) throw new ValidationError('Send { "confirm": true } to cancel this plan.');
+    if (body.reason !== undefined && typeof body.reason !== 'string') throw new ValidationError('reason must be text');
+    const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 500) : '';
+    if (sub.status === 'completed') throw new ConflictError('This plan has already ended.');
+    const result = await cancelSubscription(sub._id, ctxFor(req, actorFor(p, 'customer')), reason ? { reason } : undefined);
+    return ok({ ...result });
+  } catch (err) {
+    return handleRouteError(err);
   }
 }

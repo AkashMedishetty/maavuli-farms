@@ -173,7 +173,7 @@ await col.subscriptions(db).insertOne(late);
 await col.deliveries(db).insertOne(row(late, D));
 await ensureLocked(D, at('2026-10-09', '16:05'));
 const lateRow = await col.deliveries(db).findOne({ subscriptionId: late._id!, date: D });
-t('late row locked into rider 1 run', lateRow?.status === 'locked' && lateRow.runId?.equals(run1._id!));
+t('late row locked into rider 1 run', lateRow?.status === 'locked' && lateRow.runId?.equals(run1._id!) === true);
 const bRows = await col.deliveries(db).find({ date: D, mobile: B.mobile }).toArray();
 t('late row shares B stop seq', new Set(bRows.map(r => r.seq)).size === 1);
 t('relock event recorded', (await col.events(db).countDocuments({ type: 'day.relocked', entityId: D })) === 1);

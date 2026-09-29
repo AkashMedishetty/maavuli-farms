@@ -34,7 +34,7 @@ never invent business facts, secrets only in env).
 - Integration tests (real Mongo, isolated per agent): write
   `scripts/it/<agent>-<topic>.ts` (may import `@/lib/...`), then
   `MONGODB_DB=maavuli_it_<agent> pnpm db:init` once, then
-  `MONGODB_DB=maavuli_it_<agent> pnpm it scripts/it/<agent>-<topic>.ts`.
+  `MONGODB_DB=maavuli_it_<agent> pnpm run it scripts/it/<agent>-<topic>.ts` (NOT `pnpm it` — that is pnpm's built-in install-test alias).
   Build every lib call's `ctx` with an explicit `now` to exercise cutoffs. Clean up
   your own test data or use fresh mobiles (e.g. `9<agent digit>xxxxxxxx`).
 - Do NOT start a dev server (`next dev`) or run `next build`: the host is memory-tight
@@ -281,3 +281,33 @@ only inside functions (never at module scope), via `process.env` with trimming, 
 `group()` from lib/env. Missing config → ServiceNotConfiguredError naming the vars,
 except where a documented local fallback exists (routing → local solver, storage →
 local driver outside production, WhatsApp → log driver outside production).
+
+## 9. UI rules (wave 2)
+
+- Mobile first: design at 360 px, no horizontal overflow, tap targets >= 44 px,
+  body text >= 15 px. Ops use the admin on a phone at 5 AM; riders only use phones.
+- Server components load data and check access (`requireStaff([...])` /
+  `getPrincipal()`); client components only for interaction. A client component
+  must NEVER import `lib/db`, `lib/models` runtime values, `mongodb` or any module
+  that does — pass plain JSON props, or fetch the API. Types-only imports are fine
+  (`import type`).
+- Mutations call the documented API with `fetch` (same origin, JSON). While pending:
+  disable the control and say what is happening. On error: show the API's `error`
+  string (and `issues[]` when present) next to the control, keep the user's input.
+  On success: `router.refresh()` (or update local state) — never a silent no-op.
+- Every data view has the loading → error → empty → data ladder. An empty state on a
+  failed fetch is a bug (it reads as "nothing to do" during an outage).
+- Formatting: money `formatINR(paise)` (lib/pricing), litres `1.5 L`, dates
+  "Thu 2 Oct" in Asia/Kolkata (`dateLabel` in lib/manifest is server-side; client
+  code formats with `Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', ... })`).
+- Styling: brand tokens from app/globals.css (`--red`, `--red-deep`, `--milk`,
+  `--serif`, `--sans`) in YOUR OWN css file, imported by your layout/page. Never edit
+  app/globals.css. Admin is a dense, light, high-contrast work tool (white ground,
+  dark text, red accents) — not the red marketing pages.
+- Access in UI mirrors §7 exactly: support sees ops screens read-only (hide or
+  disable actions, and the API refuses anyway).
+- No new dependencies. Maps: the Leaflet CDN pattern in components/ZoneMap.tsx
+  (pinned version + SRI) is the only map library.
+- Verification for UI agents: `pnpm typecheck` plus reading your own components for
+  server/client-boundary mistakes. No dev server, no build, no screenshots — the
+  orchestrator builds and the e2e lane walks every page.
