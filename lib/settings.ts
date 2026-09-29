@@ -62,6 +62,18 @@ export async function dayRulesForDisplay(): Promise<DayRules> {
   }
 }
 
+/**
+ * Every live ops setting for display on public pages (photo retention, unpaid-order
+ * expiry, ...), with the same fallback to the defaults on a database outage.
+ */
+export async function opsForDisplay(): Promise<OpsSettingsValues> {
+  try {
+    return await getOpsSettings();
+  } catch {
+    return DEFAULT_OPS;
+  }
+}
+
 export function validateOpsSettings(s: OpsSettingsValues): string[] {
   const errs = validateDayRules(dayRulesOf(s));
   const int = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;

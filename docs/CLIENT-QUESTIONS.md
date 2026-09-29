@@ -6,8 +6,13 @@ today; each answer either confirms the default or is a small change. Items marke
 
 ## A. Needed before launch (accounts, documents, data)
 
-1. **FSSAI licence number and GSTIN** — shown in the footer and needed for Meta's
-   business verification (WhatsApp).
+1. **FSSAI licence validity and GSTIN** — the licence you sent (No. 13621034000380,
+   State licence, Telangana) is now shown in the footer and on the policy pages, but
+   that copy is valid only to 06-08-2022. Send the current one (the FoSCoS download
+   lists every renewal); it is also used for Meta's business verification
+   (WhatsApp). GSTIN: send it, or tell us the firm is not GST-registered (fresh milk
+   is GST-exempt, so a dairy selling only milk may not be) and the GSTIN line comes
+   off the site instead of showing "pending". **Needed before launch.**
 2. **WhatsApp on the existing farm number** — choose a WhatsApp provider that
    supports "coexistence" (keeps the WhatsApp Business app on the phone), complete
    Meta business verification, and get the message templates approved.
@@ -107,3 +112,20 @@ today; each answer either confirms the default or is a small change. Items marke
     console. Confirm.
 35. **Delivery photo links in WhatsApp** — the link in the "delivered" message works
     for 24 hours; the photo stays in the customer's account for 60 days. Confirm.
+
+## G. From your documents (firm registration, FSSAI licence, PAN)
+
+The policy pages now name the seller: Maavuli Farm Milk, a partnership firm
+(Registrar of Firms, Medchal-Malkajgiri, No. 2308 of 2021). The PAN is used only for
+Razorpay's KYC and invoices and is never shown on the site.
+
+36. **Which address to publish** — your three documents give three addresses: the
+    firm register (Plot No. 7, Industrial Estate, Moula Ali, Malkajgiri), the FSSAI
+    licence (H.No. 2-109, Cheeryal, Keesara, Medchal-Malkajgiri 501301) and the
+    site's contact address (BN 447, Balram Nagar, Safilguda). The pages show only the
+    contact address today. Tell us the registered-office address to add; Razorpay's
+    KYC checks it against the documents. **Needed before launch.**
+37. **Grievance officer** — the Privacy Policy needs a named person and email who
+    answers privacy requests, as India's IT Rules expect. Drafted default: requests
+    acknowledged within 48 hours and resolved within 30 days. **Needed before
+    launch.**

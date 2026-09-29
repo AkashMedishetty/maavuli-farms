@@ -1,13 +1,14 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
-import { dayRulesForDisplay } from '@/lib/settings';
+import { dayRulesOf, opsForDisplay } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Shipping & Delivery Policy' };
 
 export default async function ShippingPage() {
-  const rules = await dayRulesForDisplay();
+  const ops = await opsForDisplay();
+  const rules = dayRulesOf(ops);
   return (
     <LegalPage
       title="Shipping & Delivery Policy"
@@ -43,7 +44,7 @@ export default async function ShippingPage() {
         {
           heading: 'Proof of delivery',
           body: [
-            'The delivery partner photographs the milk at your door and the phone records its location when the delivery is marked done. You can see the photo in your account; it is deleted after 60 days.',
+            `The delivery partner photographs the milk at your door and the phone records its location when the delivery is marked done. You can see the photo in your account; it is deleted after ${ops.photoRetentionDays} days.`,
           ],
         },
         {
@@ -59,7 +60,7 @@ export default async function ShippingPage() {
           ],
         },
       ]}
-      toConfirm={assumptionsFor('shipping', rules)}
+      toConfirm={assumptionsFor('shipping', rules, { photoRetentionDays: ops.photoRetentionDays })}
       note="Draft prepared for Razorpay activation in test mode. The delivery window, cut-off, first-delivery timing and serviceable area are proposed defaults pending Maavuli’s confirmation and legal review; they are not executed terms."
     />
   );

@@ -1,7 +1,7 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
 import { dayRulesForDisplay } from '@/lib/settings';
-import { TENURES, PRODUCTS, formatINR } from '@/lib/pricing';
+import { TENURES, PRODUCTS, formatINR, pauseDaysSummary } from '@/lib/pricing';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +22,7 @@ export default async function RefundsPage() {
             'Maavuli sells prepaid subscriptions: you pay once, up front, for a fixed term of daily deliveries. A longer term carries a larger discount off the standard per-litre rate, so the discount is earned by completing the term.',
           ],
           facts: [
-            `Terms and their discounts are set in code, not typed by hand: ${TENURES.map(t => `${t.label} (${t.discountPct === 0 ? 'standard rate' : `−${t.discountPct}%`})`).join(', ')}.`,
+            `Terms and their discounts: ${TENURES.map(t => `${t.label} (${t.discountPct === 0 ? 'standard rate' : `−${t.discountPct}%`})`).join(', ')}.`,
             `The standard (1-month, no discount) rates used to settle a cancellation: ${rates}.`,
             'Payments are processed by Razorpay. Card and UPI credentials are never held by this site.',
           ],
@@ -30,7 +30,10 @@ export default async function RefundsPage() {
         {
           heading: 'Pausing or skipping deliveries',
           body: [
-            'You can pause single days within your plan’s pause allowance. Doing so never forfeits the days you paid for: each paused day is added back to the end of your term. Your subscription runs later — it is not shortened.',
+            'You can pause single days within your plan’s pause allowance. Doing so never forfeits the days you paid for: each paused day is added back to the end of your term. Your subscription runs later — it is not shortened. Once the pause days are used up, further days cannot be paused.',
+          ],
+          facts: [
+            `Pause days included with each plan — ${pauseDaysSummary()}.`,
           ],
         },
         {
@@ -48,6 +51,7 @@ export default async function RefundsPage() {
           body: [
             'If we miss a delivery for a reason on our side — including weather, animal illness or a supply gap — one day is added to the end of your plan. If you prefer, you can choose in your account to receive that day’s value as Maavuli credit instead, at the price you paid. Credit from missed days that you have not spent is refunded when you cancel.',
             'Milk that arrives spoiled should be reported the same day so we can verify it; it is then treated as a day we missed.',
+            'A delivery that cannot be made for a reason on your side (no access to your door, the milk refused, a same-day skip after the cut-off) is not added back; see “A delivery missed for a reason on your side” below.',
           ],
         },
         {

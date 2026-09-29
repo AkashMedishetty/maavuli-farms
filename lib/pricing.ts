@@ -55,6 +55,22 @@ export const TENURES: readonly Tenure[] = [
   { id: '1y', label: '1 Year',   days: 360, discountPct: 15 },
 ] as const;
 
+/**
+ * Pause days included with a plan of `days` delivery days. One source for the
+ * subscription engine (stored on each plan when it starts) and the policy pages.
+ */
+export function pauseDaysFor(days: number): number {
+  if (days <= 30) return 3;
+  if (days <= 90) return 20;
+  if (days <= 180) return 25;
+  return 30;
+}
+
+/** "1 Month: 3 days, 3 Months: 20 days, …" — the policy pages' statement of pauseDaysFor. */
+export function pauseDaysSummary(): string {
+  return TENURES.map(t => `${t.label}: ${pauseDaysFor(t.days)} days`).join(', ');
+}
+
 export const QUANTITIES: readonly Quantity[] = [
   { id: 'half', label: '½ Litre / day', num: 1, den: 2 },
   { id: 'one',  label: '1 Litre / day', num: 1, den: 1 },

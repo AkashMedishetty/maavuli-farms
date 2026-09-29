@@ -17,7 +17,7 @@ import { zoneForPoint } from './serviceability';
 import { markRouteDirty } from './route-plan';
 import { createCancellationRefund } from './refunds';
 import { enqueueMessage } from './notify';
-import { formatINR } from './pricing';
+import { formatINR, pauseDaysFor } from './pricing';
 
 /**
  * Subscription lifecycle: turning a paid order into a term of daily deliveries,
@@ -98,15 +98,9 @@ function maxYMD(a: string, b: string): string {
 
 /* --------------------------------------------------------------- helpers -- */
 
-/**
- * Calculate pause allowance based on subscription tenure.
- * 1mo(30d)=3, 3mo(90d)=20, 6mo(180d)=25, 1yr(360d)+=30.
- */
+/** Pause allowance for a term (lib/pricing — the policy pages show the same numbers). */
 function calculatePauseAllowance(daysTotal: number): number {
-  if (daysTotal <= 30) return 3;
-  if (daysTotal <= 90) return 20;
-  if (daysTotal <= 180) return 25;
-  return 30;
+  return pauseDaysFor(daysTotal);
 }
 
 function gcd(a: number, b: number): number {

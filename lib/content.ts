@@ -30,13 +30,30 @@ export const CONTACT = {
   address: 'BN 447, Balram Nagar, Safilguda, Hyderabad, Telangana',
   email: 'info@maavulifarmmilk.com',
   phones: ['+91 70752 02177'],
-  /** Legally required on a dairy site. NOT SUPPLIED — renders as pending. */
-  fssaiLicence: null as string | null,
+  /**
+   * FSSAI State Licence (Form C, Telangana), from the licence certificate. The copy
+   * supplied shows validity to 06-08-2022 only — renewal to be confirmed by the
+   * client (docs/CLIENT-QUESTIONS.md). Legally required on a dairy site.
+   */
+  fssaiLicence: '13621034000380' as string | null,
   /** GST identification number. NOT SUPPLIED — renders as pending until provided. */
   gstin: null as string | null,
   instagram: null as string | null,
   invite: "Have questions or feedback? We'd love to hear from you.",
   inviteCta: "Hey, let's talk!",
+} as const;
+
+/**
+ * The business that sells the subscriptions, from its certificates: the Registrar
+ * of Firms acknowledgement (23 Jul 2021), the FSSAI licence and the firm's PAN
+ * (the PAN is for payment-gateway KYC and invoices, never shown on the site).
+ * The registered address is NOT stated here: the firm register, the FSSAI licence
+ * and the contact address above each give a different one (client question).
+ */
+export const LEGAL_ENTITY = {
+  name: 'Maavuli Farm Milk',
+  description:
+    'a partnership firm registered under the Indian Partnership Act, 1932 (Registrar of Firms, Medchal-Malkajgiri, No. 2308 of 2021)',
 } as const;
 
 /**
@@ -105,7 +122,6 @@ export const PILLARS: readonly Pillar[] = [
 
 /** Still to be confirmed by the client — each blocks a real surface. */
 export const PENDING = [
-  'FSSAI licence number (legally required to display)',
   'Serviceable pincode list',
   'Whether the cow milk is A2 / desi breed',
   'Delivery window and daily order cutoff',
