@@ -12,10 +12,11 @@
  *     chip and collected in the "To confirm before we go live" block on every
  *     legal page.
  *   - Anything the business has actually confirmed lives in lib/content.ts
- *     (BRAND, CONTACT). It is never restated here as if it were our decision.
- *   - Facts we do NOT have (FSSAI licence number, serviceable pincode list) are
- *     absent here on purpose and continue to render as their existing pending
- *     states. They are never given a placeholder value.
+ *     (BRAND, CONTACT, LEGAL_ENTITY — the firm registration and FSSAI licence come
+ *     from its certificates). It is never restated here as if it were our decision.
+ *   - Facts we do NOT have (the serviceable pincode list, the grievance officer's
+ *     name) are absent here on purpose and render as pending states. They are
+ *     never given a placeholder value.
  *
  * When the client confirms a value, move it out of here into a plain statement and
  * drop it from the "To confirm" block.
@@ -90,7 +91,7 @@ export const DRAFT_ASSUMPTIONS: readonly DraftAssumption[] = [
     page: 'refunds',
     label: 'What a pause or skip does to the term',
     value:
-      'A pause or skip does NOT forfeit the paid days. Each paused or skipped day is added back to the end of the term, so the customer still receives every day they paid for — the subscription runs later, it is not shortened.',
+      'Each plan includes a set number of pause days. A pause or skip within them does NOT forfeit the paid days: each paused or skipped day is added back to the end of the term, so the customer still receives every day they paid for — the subscription runs later, it is not shortened. Once the pause days are used up, further days cannot be paused.',
   },
   {
     id: 'cancel-midterm',
@@ -141,6 +142,13 @@ export const DRAFT_ASSUMPTIONS: readonly DraftAssumption[] = [
     value:
       'If Maavuli cannot deliver for reasons on our side (weather, animal illness, a supply gap), each affected day is treated as a day we missed: a day added to your plan, or credit at your choice.',
   },
+  {
+    id: 'customer-miss',
+    page: 'refunds',
+    label: 'A delivery missed for a reason on your side',
+    value:
+      'If a delivery cannot be made for a reason on your side — the delivery partner cannot get to your door, the milk is refused, or you ask on the day for it to be skipped after the cut-off — the day counts as delivered: it is not added back, and it counts as charged if you later cancel.',
+  },
 
   // ---- privacy ---------------------------------------------------------------
   {
@@ -148,21 +156,44 @@ export const DRAFT_ASSUMPTIONS: readonly DraftAssumption[] = [
     page: 'privacy',
     label: 'WhatsApp messages',
     value:
-      'Order, delivery and refund updates are sent on WhatsApp only if you opt in. The messages are carried by Meta (WhatsApp), which processes them under its own terms. You can opt out at any time.',
+      'Sign-in codes are sent to your mobile on WhatsApp when you ask for one. Updates about your orders, deliveries, pauses and refunds are sent only if you opt in, and the daily delivery photo only if you also turn it on. The messages are carried by Meta (WhatsApp), which processes them under its own terms. You can turn updates off in your account, or reply STOP, at any time.',
   },
   {
     id: 'location-pin',
     page: 'privacy',
     label: 'Your exact location pin',
     value:
-      'We store the exact map pin of your door to route deliveries. The delivery partner assigned to your area sees it, with your name and address, on the days they deliver to you.',
+      'We store the exact map pin of your door to route deliveries. The delivery partner assigned to your area sees it, with your name, address, delivery notes and phone number (so they can call you at the door), on the days they deliver to you.',
   },
   {
     id: 'doorstep-photos',
     page: 'privacy',
     label: 'Doorstep photos',
     value:
-      'Each delivery is photographed at your door as proof. The photo is private: it is visible to you, to Maavuli staff, and to the delivery partner who took it on that day. Photos are deleted after 60 days.',
+      'Each delivery is photographed at your door as proof. The photo is private: it is visible to you, to Maavuli staff, and to the delivery partner who took it on that day. Photos are deleted after {photoDays} days.',
+  },
+
+  // ---- the agreement -------------------------------------------------------
+  {
+    id: 'account',
+    page: 'terms',
+    label: 'Your account',
+    value:
+      'You sign in with a one-time code sent to your mobile number, so anyone who can read your messages can sign in as you. Keep your phone secure, and keep your address, pin and delivery notes accurate: deliveries follow them.',
+  },
+  {
+    id: 'credit',
+    page: 'terms',
+    label: 'Maavuli credit',
+    value:
+      'Credit in your account comes from days we missed, from extra milk we could not deliver, from the balance of a cancelled plan that was paid with credit, or as goodwill from our team. It is used towards a new plan, a renewal or extra milk, and cannot otherwise be withdrawn as money — except that unspent credit from days we missed on a plan is refunded when you cancel it, as the Refund & Cancellation Policy sets out.',
+  },
+  {
+    id: 'extra-milk',
+    page: 'terms',
+    label: 'Extra milk',
+    value:
+      'Extra milk can be booked for any day still open for changes, up to 30 days ahead, and is paid in advance. If the payment reaches us after that day’s {cutoff} cut-off, or the day can no longer be delivered, its price comes back to you as Maavuli credit.',
   },
 
   // ---- jurisdiction --------------------------------------------------------
@@ -187,20 +218,29 @@ export const DRAFT_ASSUMPTIONS: readonly DraftAssumption[] = [
   },
 ] as const;
 
+/** Photo retention when no live setting is passed (lib/settings DEFAULT_OPS). */
+const DEFAULT_PHOTO_DAYS = 60;
+
 /**
  * The assumptions surfaced on a given policy page, plus the "all" pages.
  *
  * Times in the texts are TOKENS ({cutoff}, {windowStart}, {windowEnd}) filled from
  * the live ops settings, because ops can change the cut-off and the delivery window
  * in admin — a policy page that kept saying "4:00 PM" after the cut-off moved would
- * promise customers something the platform no longer does.
+ * promise customers something the platform no longer does. {photoDays} is the live
+ * photo-retention setting, for the same reason.
  */
-export function assumptionsFor(page: DraftAssumption['page'], rules: DayRules = DEFAULT_DAY_RULES): DraftAssumption[] {
+export function assumptionsFor(
+  page: DraftAssumption['page'],
+  rules: DayRules = DEFAULT_DAY_RULES,
+  opts: { photoRetentionDays?: number } = {},
+): DraftAssumption[] {
   const fill = (s: string) =>
     s
       .replaceAll('{cutoff}', hmLabel(rules.cutoffTime))
       .replaceAll('{windowStart}', hmLabel(rules.windowStart))
-      .replaceAll('{windowEnd}', hmLabel(rules.windowEnd));
+      .replaceAll('{windowEnd}', hmLabel(rules.windowEnd))
+      .replaceAll('{photoDays}', String(opts.photoRetentionDays ?? DEFAULT_PHOTO_DAYS));
   return DRAFT_ASSUMPTIONS.filter(a => a.page === page || a.page === 'all').map(a => ({
     ...a,
     label: fill(a.label),

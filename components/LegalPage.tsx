@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Footer } from './Sections';
-import { CONTACT, BRAND } from '@/lib/content';
+import { CONTACT, BRAND, LEGAL_ENTITY } from '@/lib/content';
 import { type DraftAssumption, LEGAL_DRAFT_DATE } from '@/lib/legal';
 import NavPanel from './NavPanel';
 import '@/app/legal/legal.css';
@@ -130,6 +130,7 @@ export default function LegalPage({
         <section className="legal-block">
           <h2>Contact</h2>
           <p>
+            {LEGAL_ENTITY.name}, {LEGAL_ENTITY.description}<br />
             {CONTACT.address}<br />
             <a href={`mailto:${CONTACT.email}`}>{CONTACT.email}</a><br />
             {CONTACT.phones.map(t => (

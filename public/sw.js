@@ -8,10 +8,12 @@
  *
  * So this one is narrow ON PURPOSE. It intercepts exactly two things:
  *
- *   1. Page navigations — network FIRST, falling back to the last good copy only
- *      when the network fails. A returning visitor therefore always gets current
- *      HTML; the cache exists solely so a delivery customer on a patchy morning
- *      connection sees something rather than the browser error page.
+ *   1. Page navigations — network FIRST, falling back to the last good copy of
+ *      that page (else the home page) only when the network fails. A returning
+ *      visitor therefore always gets current HTML; the cache exists solely so a
+ *      delivery customer on a patchy morning connection sees something rather
+ *      than the browser error page. Personal pages (account, admin, subscribe)
+ *      are never stored.
  *
  *   2. Immutable brand assets (the product renders and icons) — cache first,
  *      because they are content-addressed by name and never change in place.
@@ -22,11 +24,25 @@
  * against a dev server, and what stops a stale bundle ever being served.
  */
 
-const VERSION = 'mv-v1';
+// v2: v1 stored the LAST page visited as the offline copy of '/', so an account
+// page (name, address, phone, deliveries) stayed in the browser after sign-out and
+// was shown offline in place of any page. Bumping the version makes `activate`
+// delete every v1 cache.
+const VERSION = 'mv-v2';
 const SHELL = `${VERSION}-shell`;
 const ASSETS = `${VERSION}-assets`;
 
 const OFFLINE_URL = '/';
+
+/**
+ * Pages rendered for the signed-in person — their account, the staff console, a
+ * renewal pre-filled from their plan. Their HTML is never stored.
+ */
+function isPersonalPage(url) {
+  return ['/account', '/admin', '/subscribe'].some(
+    p => url.pathname === p || url.pathname.startsWith(`${p}/`),
+  );
+}
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -82,15 +98,20 @@ self.addEventListener('fetch', event => {
       (async () => {
         try {
           const fresh = await fetch(req);
-          // Keep the latest good HTML as the offline fallback.
-          if (fresh.ok) {
+          // Keep each page's latest good HTML under its OWN path, so an offline
+          // reload shows that page (the rider app relies on this for its saved
+          // round). Never a personal page, and never a URL with a query: sign-in
+          // steps carry the mobile number there.
+          if (fresh.ok && !url.search && !isPersonalPage(url)) {
             const cache = await caches.open(SHELL);
-            cache.put(OFFLINE_URL, fresh.clone()).catch(() => {});
+            cache.put(url.pathname, fresh.clone()).catch(() => {});
           }
           return fresh;
         } catch {
           const cache = await caches.open(SHELL);
-          const cached = (await cache.match(req)) ?? (await cache.match(OFFLINE_URL));
+          const cached =
+            (await cache.match(url.pathname, { ignoreVary: true })) ??
+            (await cache.match(OFFLINE_URL, { ignoreVary: true }));
           if (cached) return cached;
           return new Response(
             '<!doctype html><meta charset="utf-8"><title>Offline</title>' +
