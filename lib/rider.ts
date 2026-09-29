@@ -323,8 +323,8 @@ export function sanitizeAction(raw: unknown): { ok: true; action: RiderActionInp
  * the offline queue can retry safely. Actions are independent — one failing does
  * not fail the batch.
  *
- * A rider may only act on TODAY's stops in a run that is not closed. Past days —
- * and any day once it has closed — are corrected by ops in the admin console, never
+ * A rider may only act on TODAY's stops (of their own run, open or closed). Past days —
+ * are corrected by ops in the admin console, never
  * from the phone: otherwise a rider could flip an old delivery to "not delivered,
  * our fault" and mint compensation for it, or strip a customer's make-up day.
  */
@@ -370,8 +370,12 @@ export async function applyActions(
       continue;
     }
 
+    // Same day only. The run's status does NOT matter: a phone that was offline syncs
+    // its queue after the rider pressed Close, or after the 10:00 day close marked the
+    // stop unconfirmed — that is the rider's own evidence for today and must land,
+    // or delivered milk turns into "our miss" and is compensated.
     const run = owned.runId ? await col.riderRuns(db).findOne({ _id: owned.runId, riderId }) : null;
-    if (owned.date !== today || !run || run.status === 'closed') {
+    if (owned.date !== today || !run) {
       const error = 'Only today’s stops can be changed from the app. Ask ops to correct an earlier day.';
       await recordAction(db, riderId, a, 'rejected', error, ctx, deliveryId);
       results.push({ actionId: a.actionId, ok: false, error });

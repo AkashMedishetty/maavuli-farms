@@ -198,6 +198,26 @@ try {
   notVerified.push(`closeRun threw: ${e instanceof Error ? e.message : e}`);
 }
 
+// ---- an offline queue that syncs after the run (or the day) closed still lands today ----
+const late1 = new ObjectId();
+const late2 = new ObjectId();
+await col.deliveries(db).insertMany([
+  { ...baseDelivery(late1, 'cow'), subscriptionId: new ObjectId(), status: 'out_for_delivery' },
+  { ...baseDelivery(late2, 'cow'), subscriptionId: new ObjectId(), status: 'unconfirmed' },
+]);
+const late = await applyActions(
+  rid,
+  [
+    { actionId: 'it-b5-late-out', type: 'delivered', deliveryId: String(late1), note: 'left with the watchman' },
+    { actionId: 'it-b5-late-unconf', type: 'delivered', deliveryId: String(late2), note: 'left with the watchman' },
+  ],
+  ctx,
+);
+t('queued delivery after the rider closed the run is accepted', late[0]!.ok === true);
+t('queued delivery after the day closed (unconfirmed) is accepted', late[1]!.ok === true);
+t('late rows are delivered', (await col.deliveries(db).countDocuments({ _id: { $in: [late1, late2] }, status: 'delivered' })) === 2);
+await col.deliveries(db).deleteMany({ _id: { $in: [late1, late2] } });
+
 // ---- a rider cannot change a past day's delivery (it would mint compensation) ----
 const pastId = (
   await col.deliveries(db).insertOne({
