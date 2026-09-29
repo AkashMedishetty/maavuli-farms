@@ -312,6 +312,20 @@ await caseRun('unpaid order expiry reverses the credit spend', async () => {
   ok('reversal idempotent', (await creditBalance(m)).balancePaise === 50_000);
 });
 
+// ---- WhatsApp consent: only an explicit choice at checkout changes it ----------
+await caseRun('whatsapp consent is tri-state', async () => {
+  const m = freshMobile();
+  await createCheckoutOrder(input(m, { whatsappOptIn: true }), at(BEFORE, m));
+  ok('opt-in recorded', (await col.users(db).findOne({ mobile: m }))?.whatsappOptIn === true);
+  const { whatsappOptIn: _omit, ...noChoice } = input(m);
+  void _omit;
+  await createCheckoutOrder(noChoice, at(BEFORE, m));
+  ok('checkbox untouched → preference kept', (await col.users(db).findOne({ mobile: m }))?.whatsappOptIn === true);
+  await createCheckoutOrder(input(m, { whatsappOptIn: false }), at(BEFORE, m));
+  ok('explicit untick → opted out', (await col.users(db).findOne({ mobile: m }))?.whatsappOptIn === false);
+  ok('consent changes audited', (await col.events(db).countDocuments({ mobile: m, type: { $in: ['customer.whatsapp_opt_in', 'customer.whatsapp_opt_out'] } })) === 2);
+});
+
 __setRazorpayCreateOrderForTests(undefined);
 console.log(results.join('\n'));
 console.log(`\nb1-lifecycle: ${pass} passed, ${fail} failed, ${nv} not verified · db=${db.databaseName}`);

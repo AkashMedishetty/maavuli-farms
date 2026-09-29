@@ -33,7 +33,7 @@ export async function POST(req: Request) {
         ...plan,
         mobile: p.mobile,
         details,
-        whatsappOptIn: body.whatsappOptIn === true,
+        ...(typeof body.whatsappOptIn === 'boolean' ? { whatsappOptIn: body.whatsappOptIn } : {}),
         idempotencyKey: body.idempotencyKey,
       },
       ctxFor(req, actorFor(p, 'customer')),

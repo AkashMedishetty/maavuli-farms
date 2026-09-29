@@ -29,6 +29,7 @@ import { razorpayConfig } from './env';
 import { activateSubscriptionForOrder, renewalTarget } from './subscriptions';
 import { activateExtraOrder } from './extras';
 import { enqueueMessage } from './notify';
+import { setWhatsappOptIn } from './notify/optin';
 import { getOpsSettings } from './settings';
 
 export interface CheckoutInput {
@@ -45,7 +46,13 @@ export interface CheckoutInput {
   /** location REQUIRED */
   details: DeliveryDetails;
   useCredit: boolean;
-  whatsappOptIn: boolean;
+  /**
+   * The checkout's WhatsApp checkbox. undefined = the form did not show it / the
+   * customer did not touch it → the stored preference is left as it is. Only an
+   * explicit true/false changes it (an unticked box must never silently opt a
+   * returning customer out).
+   */
+  whatsappOptIn?: boolean;
   /** client UUID per checkout attempt — a retry with the same key returns the same order */
   idempotencyKey: string;
 }
@@ -349,7 +356,7 @@ export async function createCheckoutOrder(input: CheckoutInput, ctx: OpCtx): Pro
     ...(landmark ? { landmark } : {}),
     ...(instructions ? { instructions } : {}),
     ...(addressParts ? { addressParts } : {}),
-    whatsappOptIn: input.whatsappOptIn === true,
+    ...(input.whatsappOptIn !== undefined ? { whatsappOptIn: input.whatsappOptIn } : {}),
     status: 'created',
     createdAt: ctx.now,
   };
@@ -386,18 +393,21 @@ export async function createCheckoutOrder(input: CheckoutInput, ctx: OpCtx): Pro
     address: det.address,
     location: det.location,
     lastSeenAt: ctx.now,
-    whatsappOptIn: input.whatsappOptIn === true,
     ...(addressParts ? { addressParts } : {}),
     ...(landmark ? { landmark } : {}),
     ...(instructions ? { instructions } : {}),
     ...(pincode ? { pincode } : {}),
-    ...(input.whatsappOptIn === true ? { whatsappOptInAt: ctx.now } : {}),
   };
   await col.users(db).updateOne(
     { mobile },
     { $set: userSet, $setOnInsert: { mobile, createdAt: ctx.now } },
     { upsert: true },
   );
+  // Consent goes through the one audited writer, and only when the customer
+  // actually expressed a choice at this checkout.
+  if (input.whatsappOptIn !== undefined) {
+    await setWhatsappOptIn(mobile, input.whatsappOptIn, 'checkout', ctx);
+  }
 
   const preview: CheckoutPreview = {
     amountPaise: q.finalPaise,
