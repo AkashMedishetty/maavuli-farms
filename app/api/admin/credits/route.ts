@@ -1,6 +1,6 @@
 import { getDb } from '@/lib/db';
-import { col, normalizeMobile, type StaffRole } from '@/lib/models';
-import { addCredit } from '@/lib/credits';
+import { col, normalizeMobile } from '@/lib/models';
+import { addCredit, GOODWILL_CAP_PAISE } from '@/lib/credits';
 import { actorFor, requireStaff } from '@/lib/roles';
 import { ctxFor } from '@/lib/clock';
 import { handleRouteError, ok, readJson } from '@/lib/api';
@@ -8,13 +8,6 @@ import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/errors';
 import { formatINR } from '@/lib/pricing';
 
 export const dynamic = 'force-dynamic';
-
-/** Per-entry goodwill caps (PLATFORM-CONTRACT §4). */
-const GOODWILL_CAP_PAISE: Readonly<Record<StaffRole, number>> = {
-  support: 20_000,
-  ops: 100_000,
-  owner: 1_000_000,
-};
 
 /** POST /api/admin/credits {mobile, amountPaise, note} — goodwill credit, not refundable. */
 export async function POST(req: Request) {

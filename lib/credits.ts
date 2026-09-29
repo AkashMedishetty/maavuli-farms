@@ -26,7 +26,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Db, Filter, ObjectId, UpdateFilter } from 'mongodb';
 import { getDb } from './db';
-import { col, normalizeMobile, type CreditEntry, type User } from './models';
+import { col, normalizeMobile, type CreditEntry, type StaffRole, type User } from './models';
 import { recordEvent } from './events';
 import { ConflictError, ValidationError } from './errors';
 import type { OpCtx } from './clock';
@@ -38,6 +38,17 @@ export interface CreditBalance {
 }
 
 export type SpendKind = 'makeup_spend' | 'extra_spend' | 'order_spend' | 'refund_payout' | 'adjustment';
+
+/**
+ * Per-entry goodwill caps by staff role (PLATFORM-CONTRACT §4): support ₹200,
+ * ops ₹1,000, owner ₹10,000. The ONE definition — the admin API enforces it and
+ * the admin UI shows it.
+ */
+export const GOODWILL_CAP_PAISE: Readonly<Record<StaffRole, number>> = {
+  support: 20_000,
+  ops: 100_000,
+  owner: 1_000_000,
+};
 
 const LEASE_MS = 15_000;
 const WAIT_STEP_MS = 40;

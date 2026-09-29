@@ -79,6 +79,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: '/admin/settings', label: 'Settings', group: 'ops' },
     { href: '/admin/customers', label: 'Customers', group: 'crm' },
     { href: '/admin/orders', label: 'Orders', group: 'crm' },
+    { href: '/admin/subscriptions', label: 'Plans', group: 'crm' },
     { href: '/admin/refunds', label: 'Refunds', group: 'crm' },
     { href: '/admin/messages', label: 'Messages', group: 'crm' },
     ...(p.staffRole === 'owner' ? [{ href: '/admin/staff', label: 'Staff', group: 'crm' as const }] : []),

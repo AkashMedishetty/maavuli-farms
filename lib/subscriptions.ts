@@ -11,7 +11,7 @@ import { systemCtx, type OpCtx } from './clock';
 import { assertTransition, SUB_TRANSITIONS } from './transitions';
 import { recordEvent } from './events';
 import { firstOpenDateNow } from './daylock';
-import { DateLockedError } from './errors';
+import { ConflictError, DateLockedError, NotFoundError } from './errors';
 import { zoneForPoint } from './serviceability';
 import { markRouteDirty } from './route-plan';
 import { createCancellationRefund } from './refunds';
@@ -581,8 +581,8 @@ export interface CancelResult {
 export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: CancelOptions): Promise<CancelResult> {
   const db = await getDb();
   const sub = await col.subscriptions(db).findOne({ _id: id });
-  if (!sub) throw new Error(`cancel: subscription ${id.toHexString()} not found`);
-  if (sub.status === 'completed') throw new Error('cancel: subscription is already completed');
+  if (!sub) throw new NotFoundError('Plan not found');
+  if (sub.status === 'completed') throw new ConflictError('This plan has already finished, so there is nothing to cancel.');
 
   if (sub.status === 'cancelled') {
     const existingRefund = await col.refunds(db).findOne({ subscriptionId: id });

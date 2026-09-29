@@ -53,12 +53,8 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Per-entry goodwill caps. MIRRORS app/api/admin/credits (the API enforces them). */
-export const GOODWILL_CAP_PAISE: Readonly<Record<StaffRole, number>> = {
-  support: 20_000,
-  ops: 100_000,
-  owner: 1_000_000,
-};
+/** Per-entry goodwill caps — the one definition (lib/credits); the API enforces it. */
+export { GOODWILL_CAP_PAISE } from './credits';
 
 function milkName(kind: string): string {
   return kind === 'cow' ? 'Cow' : kind === 'buffalo' ? 'Buffalo' : kind;
