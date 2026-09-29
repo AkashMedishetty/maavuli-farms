@@ -121,7 +121,25 @@ async function resolveRows(db: Db, date: string, statuses: readonly string[]): P
   const zones = await col.zones(db).find({ active: true }).sort({ name: 1 }).toArray();
   const zoneById = new Map(zones.map(z => [z._id!.toHexString(), z]));
 
-  return rows.map(row => {
+  // Never lock a plan or make-up delivery that falls on or after a cancellation's
+  // effective date. Cancel deletes those rows, but anything that slips one back in
+  // (a pause or make-up racing the cancel, a replayed payment) must not go out for
+  // free. Extras are separately paid one-offs and still go.
+  const live = rows.filter(row => {
+    const sub = subById.get(row.subscriptionId.toHexString());
+    const phantom =
+      sub?.status === 'cancelled' &&
+      row.source !== 'extra' &&
+      !!sub.cancelEffectiveDate &&
+      row.date >= sub.cancelEffectiveDate;
+    return !phantom;
+  });
+  if (live.length < rows.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[lock] ${date}: skipped ${rows.length - live.length} row(s) of cancelled plans dated on/after their cancellation`);
+  }
+
+  return live.map(row => {
     const sub = subById.get(row.subscriptionId.toHexString());
     const zone = zoneFor(sub, zones, zoneById);
     return {

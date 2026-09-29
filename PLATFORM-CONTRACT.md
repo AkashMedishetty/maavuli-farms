@@ -204,7 +204,8 @@ outbox 'suppressed'). Language from `user.lang`. Who enqueues what (dedupe key):
 1 `expireUnpaidOrders` (B1) · 2 `activateDueSubscriptions` (B1) · 3 `lockDueDays` (B2) ·
 4 `closeDueDays` (B2) · 5 `autoResolveStaleUnconfirmed` (B2) · 6 `compensatePendingMisses`
 (B3 — retries any fault-'ours' miss whose compensation failed) · 7
-`completeEndedSubscriptions` (B1) · 8 `enqueueRenewalReminders` (B6) · 9 `drainOutbox`
+`completeEndedSubscriptions` (B1) · 7a `settleCancellations` (retries the refund/credit
+side of any cancellation still marked `refundPending`) · 8 `enqueueRenewalReminders` (B6) · 9 `drainOutbox`
 (B6) · 10 `refreshStaleRoutes` (B4) · 11 `purgeOldPhotos` (B5).
 
 **Status after wave 1 (commit f7cbff1):** B4 routing, B5 rider app and B6 notifications

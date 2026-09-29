@@ -499,7 +499,10 @@ export async function markOrderPaid(
     }
   }
 
-  await activateOrder(orderId, ctx);
+  // Only a PAID order activates. A (partially) refunded one is settled history: a
+  // redelivered webhook for it must acknowledge, not throw "not paid" and loop on 500.
+  const current = await col.orders(db).findOne({ _id: orderId }, { projection: { status: 1 } });
+  if (current?.status === 'paid') await activateOrder(orderId, ctx);
 
   const paid = await col.orders(db).findOne({ _id: orderId });
   if (!paid) throw new NotFoundError('Order not found');

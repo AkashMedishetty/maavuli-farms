@@ -15,7 +15,7 @@
 import { getDb } from './db';
 import { col } from './models';
 import type { OpCtx } from './clock';
-import { activateDueSubscriptions, completeEndedSubscriptions } from './subscriptions';
+import { activateDueSubscriptions, completeEndedSubscriptions, settleCancellations } from './subscriptions';
 import { expireUnpaidOrders } from './orders';
 import { autoResolveStaleUnconfirmed, closeDueDays, lockDueDays } from './manifest';
 import { compensatePendingMisses } from './compensation';
@@ -43,6 +43,7 @@ export const TICK_STEPS: readonly TickStep[] = [
   { name: 'autoResolveStaleUnconfirmed', leaseMs: 4 * MIN, run: autoResolveStaleUnconfirmed },
   { name: 'compensatePendingMisses', leaseMs: 3 * MIN, run: compensatePendingMisses },
   { name: 'completeEndedSubscriptions', leaseMs: 2 * MIN, run: completeEndedSubscriptions },
+  { name: 'settleCancellations', leaseMs: 3 * MIN, run: settleCancellations },
   { name: 'enqueueRenewalReminders', leaseMs: 3 * MIN, minIntervalMs: 60 * MIN, run: enqueueRenewalReminders },
   { name: 'drainOutbox', leaseMs: 3 * MIN, run: drainOutbox },
   { name: 'refreshStaleRoutes', leaseMs: 4 * MIN, minIntervalMs: 60 * MIN, run: refreshStaleRoutes },

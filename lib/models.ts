@@ -321,6 +321,13 @@ export interface Subscription {
   cancelledBy?: Actor;
   cancelReason?: string;
   refundId?: ObjectId;
+  /**
+   * Set in the SAME write that cancels the plan and cleared once the refund and
+   * credit side has been settled. A crash or error in between leaves it set, and
+   * the tick's settleCancellations step retries it (the refund path is idempotent).
+   */
+  refundPending?: boolean;
+  refundSettledAt?: Date;
 }
 
 /* ------------------------------------------------------------- deliveries -- */

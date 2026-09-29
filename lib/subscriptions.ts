@@ -1,10 +1,11 @@
-import { MongoServerError, ObjectId } from 'mongodb';
+import { MongoServerError, ObjectId, type Db } from 'mongodb';
 import { getDb } from './db';
 import {
   col,
   normalizeMobile,
   stopKeyOf,
   type Delivery,
+  type Refund,
   type Subscription,
 } from './models';
 import { systemCtx, type OpCtx } from './clock';
@@ -154,49 +155,69 @@ export async function extendSubscription(
 ): Promise<{ newEndDate: string; appended: string[] }> {
   if (!Number.isInteger(days) || days <= 0) throw new Error('extendSubscription: days must be a positive integer');
   const db = await getDb();
-  const sub = await col.subscriptions(db).findOne({ _id: subscriptionId });
-  if (!sub) throw new Error(`extendSubscription: subscription ${subscriptionId.toHexString()} not found`);
 
-  const firstOpen = await firstOpenDateNow(ctx, db);
-  const firstDate = maxYMD(addDays(sub.endDate, 1), firstOpen);
-  const perDayLitres = sub.qtyNum / sub.qtyDen;
-  const appended = dateRange(firstDate, days);
-  const rows: Omit<Delivery, '_id'>[] = appended.map(date => ({
-    subscriptionId,
-    mobile: sub.mobile,
-    date,
-    kind: sub.kind,
-    litres: perDayLitres,
-    pincode: sub.pincode,
-    status: 'planned',
-    source,
-    updatedAt: ctx.now,
-    ...(sub.stopKey ? { stopKey: sub.stopKey } : {}),
-  }));
-  const newEndDate = appended[appended.length - 1]!;
+  // Claim the new endDate with a compare-and-set on the endDate we read, retrying
+  // on a mismatch: two extends at once (a pause and a make-up day, two misses
+  // compensated together) would otherwise both append onto the same date — one of
+  // the two days lost to the unique index — and both shift the renewal.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const sub = await col.subscriptions(db).findOne({ _id: subscriptionId });
+    if (!sub) throw new Error(`extendSubscription: subscription ${subscriptionId.toHexString()} not found`);
+    // A cancelled or finished plan gets nothing appended: its new rows would lock and
+    // be delivered for free. (Compensation falls back to credit when this refuses.)
+    if (sub.status !== 'scheduled' && sub.status !== 'active') {
+      throw new ConflictError('This plan is no longer running, so days cannot be added to it.');
+    }
 
-  // Shift the renewal BEFORE inserting our rows: its planned rows may sit on the
-  // very dates we are about to append.
-  const moved = daysInclusive(sub.endDate, newEndDate) - 1;
-  await shiftQueuedRenewal(sub, moved, ctx);
+    const firstOpen = await firstOpenDateNow(ctx, db);
+    const firstDate = maxYMD(addDays(sub.endDate, 1), firstOpen);
+    const perDayLitres = sub.qtyNum / sub.qtyDen;
+    const appended = dateRange(firstDate, days);
+    const newEndDate = appended[appended.length - 1]!;
 
-  try {
-    await col.deliveries(db).insertMany(rows, { ordered: false });
-  } catch (err) {
-    if (!isDuplicateKeyError(err)) throw err;
+    const claimed = await col
+      .subscriptions(db)
+      .updateOne(
+        { _id: subscriptionId, endDate: sub.endDate, status: { $in: ['scheduled', 'active'] } },
+        { $set: { endDate: newEndDate } },
+      );
+    if (claimed.matchedCount !== 1) continue; // someone else moved endDate (or cancelled): re-read
+
+    const rows: Omit<Delivery, '_id'>[] = appended.map(date => ({
+      subscriptionId,
+      mobile: sub.mobile,
+      date,
+      kind: sub.kind,
+      litres: perDayLitres,
+      pincode: sub.pincode,
+      status: 'planned',
+      source,
+      updatedAt: ctx.now,
+      ...(sub.stopKey ? { stopKey: sub.stopKey } : {}),
+    }));
+
+    // Shift the renewal BEFORE inserting our rows: its planned rows may sit on the
+    // very dates we are about to append.
+    const moved = daysInclusive(sub.endDate, newEndDate) - 1;
+    await shiftQueuedRenewal(sub, moved, ctx);
+
+    try {
+      await col.deliveries(db).insertMany(rows, { ordered: false });
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+    }
+
+    await recordEvent(ctx, {
+      entity: 'subscription',
+      entityId: subscriptionId.toHexString(),
+      type: 'subscription.extended',
+      mobile: sub.mobile,
+      data: { days, source, fromEndDate: sub.endDate, newEndDate, appended },
+    }, db);
+
+    return { newEndDate, appended };
   }
-
-  await col.subscriptions(db).updateOne({ _id: subscriptionId }, { $set: { endDate: newEndDate } });
-
-  await recordEvent(ctx, {
-    entity: 'subscription',
-    entityId: subscriptionId.toHexString(),
-    type: 'subscription.extended',
-    mobile: sub.mobile,
-    data: { days, source, fromEndDate: sub.endDate, newEndDate, appended },
-  }, db);
-
-  return { newEndDate, appended };
+  throw new ConflictError('This plan is being changed right now. Please try again.');
 }
 
 /**
@@ -225,7 +246,9 @@ export async function shortenSubscription(
     .toArray();
   if (tail.length < days) throw new DateLockedError(sub.endDate, firstOpen);
 
-  await col.deliveries(db).deleteMany({ _id: { $in: tail.map(r => r._id!) } });
+  // Only rows this call really removed count: a concurrent shorten may have taken
+  // the same tail (deleteMany is by id, so the rows go once either way).
+  const del = await col.deliveries(db).deleteMany({ _id: { $in: tail.map(r => r._id!) }, status: 'planned' });
   const removed = tail.map(r => r.date);
 
   const last = await col
@@ -237,10 +260,14 @@ export async function shortenSubscription(
   // No remaining row at all: the term is the start date minus one day's worth — keep
   // endDate at the day before the earliest removed date so the arithmetic stays sane.
   const newEndDate = last[0]?.date ?? addDays(removed[removed.length - 1]!, -1);
-  await col.subscriptions(db).updateOne({ _id: subscriptionId }, { $set: { endDate: newEndDate } });
+  // Compare-and-set on the endDate we read: when two shortens race, only the one
+  // that moves endDate pulls the renewal back — never both.
+  const cas = await col
+    .subscriptions(db)
+    .updateOne({ _id: subscriptionId, endDate: sub.endDate }, { $set: { endDate: newEndDate } });
 
   const moved = daysInclusive(newEndDate, sub.endDate) - 1;
-  if (moved > 0) await shiftQueuedRenewal(sub, -moved, ctx);
+  if (cas.matchedCount === 1 && moved > 0 && (del.deletedCount ?? 0) > 0) await shiftQueuedRenewal(sub, -moved, ctx);
 
   await recordEvent(ctx, {
     entity: 'subscription',
@@ -257,7 +284,7 @@ export async function shortenSubscription(
  * Move a queued, not-yet-started renewal by `shift` calendar days (negative = earlier).
  * A backward shift is clamped so the renewal never starts before the first open date.
  */
-async function shiftQueuedRenewal(sub: Subscription, shift: number, ctx: OpCtx): Promise<void> {
+async function shiftQueuedRenewal(sub: Subscription, shift: number, ctx: OpCtx, depth = 0): Promise<void> {
   if (!sub.renewedBy || shift === 0) return;
   const db = await getDb();
   const renewal = await col.subscriptions(db).findOne({ _id: sub.renewedBy });
@@ -270,18 +297,33 @@ async function shiftQueuedRenewal(sub: Subscription, shift: number, ctx: OpCtx):
     n = -Math.min(-n, Math.max(0, room));
     if (n === 0) return;
   }
-  // Unique {subscriptionId,date,source}: forward shifts move latest-first, backward
-  // shifts earliest-first, so no row ever lands on a date still occupied.
-  const rowsToMove = await col
+  const startDate = addDays(renewal.startDate, n);
+
+  // The renewal's pauses are CALENDAR days the customer is away, so they stay where
+  // they are: its planned rows move onto the first un-paused dates from the new start
+  // (a uniform +n would land a row on a paused day and leave a hole after it).
+  const paused = new Set((await col.pausedDates(db).find({ subscriptionId: renewal._id }).toArray()).map(p => p.date));
+  const rowsAsc = await col
     .deliveries(db)
     .find({ subscriptionId: renewal._id, status: 'planned' })
-    .sort({ date: n > 0 ? -1 : 1 })
+    .sort({ date: 1 })
     .toArray();
-  for (const r of rowsToMove) {
-    await col.deliveries(db).updateOne({ _id: r._id }, { $set: { date: addDays(r.date, n), updatedAt: ctx.now } });
+  const targets: string[] = [];
+  for (let d = startDate; targets.length < rowsAsc.length; d = addDays(d, 1)) {
+    if (!paused.has(d)) targets.push(d);
   }
-  const startDate = addDays(renewal.startDate, n);
-  const endDate = addDays(renewal.endDate, n);
+  // Unique {subscriptionId,date,source}: row i's target is never earlier than its
+  // old date on a forward shift (never later on a backward one), so moving
+  // latest-first (earliest-first) never lands a row on a date still occupied.
+  const moves = rowsAsc.map((r, i) => ({ id: r._id!, from: r.date, to: targets[i]! })).filter(m => m.from !== m.to);
+  if (n > 0) moves.reverse();
+  if (moves.length) {
+    await col.deliveries(db).bulkWrite(
+      moves.map(m => ({ updateOne: { filter: { _id: m.id, status: 'planned' as const }, update: { $set: { date: m.to, updatedAt: ctx.now } } } })),
+      { ordered: true },
+    );
+  }
+  const endDate = targets[targets.length - 1] ?? addDays(renewal.endDate, n);
   await col.subscriptions(db).updateOne({ _id: renewal._id }, { $set: { startDate, endDate } });
   await recordEvent(ctx, {
     entity: 'subscription',
@@ -290,6 +332,12 @@ async function shiftQueuedRenewal(sub: Subscription, shift: number, ctx: OpCtx):
     mobile: renewal.mobile,
     data: { days: n, startDate, endDate },
   }, db);
+  // A renewal queued after THIS renewal (two renewals paid back to back) moves by as
+  // much as this one's end did, so the chain never overlaps or leaves a gap.
+  if (renewal.renewedBy && depth < 10) {
+    const endMoved = daysInclusive(renewal.endDate, endDate) - 1; // negative when it moved back
+    await shiftQueuedRenewal(renewal, endMoved, ctx, depth + 1);
+  }
 }
 
 /** Tick step: scheduled → active on startDate. */
@@ -388,11 +436,34 @@ export async function renewalTarget(
   const sub = await col.subscriptions(db).findOne({ _id: subscriptionId });
   if (!sub || sub.mobile !== m) return null;
   if (sub.status !== 'scheduled' && sub.status !== 'active') return null;
-  if (sub.renewedBy) return null;
+  if (sub.renewedBy) {
+    // a link to a renewal that was cancelled is stale: that plan will never run
+    const queued = await col.subscriptions(db).findOne({ _id: sub.renewedBy }, { projection: { status: 1 } });
+    if (queued && queued.status !== 'cancelled') return null;
+  }
   const firstOpen = await firstOpenDateNow(ctx ?? systemCtx(new Date()), db);
   const dayAfterEnd = addDays(sub.endDate, 1);
   const renewStartDate = maxYMD(dayAfterEnd, firstOpen);
   return { subscription: sub, renewStartDate };
+}
+
+/**
+ * The plan a renewal continues after: follow renewedBy links from `startId` past
+ * every renewal that is running (or will run) and stop at the last one. A link to a
+ * cancelled renewal is stale — that plan will never run — so the walk stops before
+ * it. `selfId` (the renewal being activated) stops the walk where it is already linked.
+ */
+async function chainTail(db: Db, startId: ObjectId, mobile: string, selfId?: ObjectId): Promise<Subscription | null> {
+  const start = await col.subscriptions(db).findOne({ _id: startId });
+  if (!start || start.mobile !== mobile) return null;
+  let cur: Subscription = start;
+  for (let hops = 0; hops < 20 && cur.renewedBy; hops++) {
+    if (selfId && cur.renewedBy.equals(selfId)) break;
+    const next = await col.subscriptions(db).findOne({ _id: cur.renewedBy });
+    if (!next || next.status === 'cancelled' || next.mobile !== mobile) break;
+    cur = next;
+  }
+  return cur;
 }
 
 /* --------------------------------------------------------------- activate -- */
@@ -433,11 +504,14 @@ export async function activateSubscriptionForOrder(orderId: ObjectId, ctx?: OpCt
 
   // Requested start: the order's startDate if set, else the paid day (Kolkata).
   let requested = order.startDate ?? kolkataYMD(order.paidAt ?? opCtx.now);
-  // Renewal chaining: start the day after the renewed plan's CURRENT end — it may
-  // have been extended (pause shift / make-up day) between checkout and payment.
+  // Renewal chaining: start the day after the CURRENT end of the plan this one
+  // continues — it may have been extended (pause shift / make-up day) between checkout
+  // and payment, and a second renewal paid before the first one activated continues
+  // after THAT one rather than overlapping it. A plan cancelled in the meantime has
+  // stopped, so the renewal starts as soon as it can instead of after a gap.
   if (order.purpose === 'renewal' && order.renewsSubscriptionId) {
-    const renewed = await col.subscriptions(db).findOne({ _id: order.renewsSubscriptionId });
-    if (renewed && renewed.mobile === mobile) requested = addDays(renewed.endDate, 1);
+    const after = await chainTail(db, order.renewsSubscriptionId, mobile);
+    if (after) requested = after.status === 'cancelled' ? (after.cancelEffectiveDate ?? firstOpen) : addDays(after.endDate, 1);
   }
   const startDate = maxYMD(requested, firstOpen);
   const endDate = addDays(startDate, daysTotal - 1);
@@ -497,17 +571,24 @@ export async function activateSubscriptionForOrder(orderId: ObjectId, ctx?: OpCt
   if (!sub?._id) throw new Error(`activate: could not upsert subscription for order ${orderId.toHexString()}`);
   const subscriptionId = sub._id;
 
-  // Renewal linking: this order continues renewsSubscriptionId. Link both sides,
-  // guarded so a retry does not clobber an already-set renewedBy.
+  // A replay (verify re-POSTed, webhook redelivered, a repair sweep) after the plan was
+  // cancelled or has finished must NOT plan its term again: cancel deleted the future
+  // rows, and re-inserting them would deliver the rest of the term for free.
+  if (sub.status !== 'scheduled' && sub.status !== 'active') return;
+
+  // Renewal linking: this plan continues the last live plan of the chain that starts
+  // at renewsSubscriptionId. Link both sides; a link to a cancelled renewal is stale
+  // and is replaced, a link to this very plan (a retry) is left alone.
   if (order.purpose === 'renewal' && order.renewsSubscriptionId) {
-    await col.subscriptions(db).updateOne(
-      { _id: subscriptionId },
-      { $set: { renewalOf: order.renewsSubscriptionId } },
-    );
-    await col.subscriptions(db).updateOne(
-      { _id: order.renewsSubscriptionId, renewedBy: { $exists: false } },
-      { $set: { renewedBy: subscriptionId } },
-    );
+    const after = await chainTail(db, order.renewsSubscriptionId, mobile, subscriptionId);
+    if (after?._id && !after._id.equals(subscriptionId)) {
+      await col.subscriptions(db).updateOne({ _id: subscriptionId }, { $set: { renewalOf: after._id } });
+      const stale = after.renewedBy && !after.renewedBy.equals(subscriptionId) ? after.renewedBy : null;
+      await col.subscriptions(db).updateOne(
+        { _id: after._id, ...(stale ? { renewedBy: stale } : { renewedBy: { $exists: false } }) },
+        { $set: { renewedBy: subscriptionId } },
+      );
+    }
   }
 
   // One delivery per day, skipping already-paused dates, idempotent on the unique
@@ -585,34 +666,36 @@ export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: Cancel
   if (sub.status === 'completed') throw new ConflictError('This plan has already finished, so there is nothing to cancel.');
 
   if (sub.status === 'cancelled') {
-    const existingRefund = await col.refunds(db).findOne({ subscriptionId: id });
+    // Idempotent — and the repair path: finish whatever a crashed or failed first
+    // attempt left behind (future rows, the refund). Both steps are idempotent.
+    if (sub.cancelEffectiveDate) await clearFutureRows(db, id, sub.cancelEffectiveDate);
+    let refundId = sub.refundId?.toHexString() ?? null;
+    if (sub.refundPending) {
+      try {
+        refundId = (await settleCancellation(db, id, ctx))?._id?.toHexString() ?? refundId;
+      } catch (err) {
+        logSettleFailure(id, err);
+      }
+    }
+    const existingRefund = refundId ? null : await col.refunds(db).findOne({ subscriptionId: id });
     return {
       status: 'cancelled',
       cancelEffectiveDate: sub.cancelEffectiveDate ?? sub.endDate,
       daysDelivered: sub.daysDelivered,
       daysRemaining: 0,
-      refundId: existingRefund?._id?.toHexString() ?? sub.refundId?.toHexString() ?? null,
+      refundId: refundId ?? existingRefund?._id?.toHexString() ?? null,
     };
   }
 
   assertTransition('subscription', SUB_TRANSITIONS, sub.status, 'cancelled');
 
-  const effective = await firstOpenDateNow(ctx, db);
+  let effective = await firstOpenDateNow(ctx, db);
 
-  // Remove future plan/makeup deliveries from the effective date onward. Extras
-  // (source 'extra') are paid-for one-offs and are kept. Locked/out/delivered/
-  // unconfirmed rows are history and count as charged, so we only touch 'planned'.
-  const del = await col.deliveries(db).deleteMany({
-    subscriptionId: id,
-    status: 'planned',
-    source: { $in: ['plan', 'makeup'] },
-    date: { $gte: effective },
-  });
-  const daysRemaining = del.deletedCount ?? 0;
-
-  // Future pause selections no longer mean anything.
-  await col.pausedDates(db).deleteMany({ subscriptionId: id, date: { $gte: effective } });
-
+  // Status FIRST, rows second. Once the plan says cancelled nothing can add to it
+  // (extendSubscription refuses, the lock skips its rows from the effective date,
+  // activation replays stop), so a pause or make-up running alongside cannot slip a
+  // new delivery in after our delete. refundPending rides in the same write, so a
+  // crash anywhere after this point is finished by the tick (settleCancellations).
   const res = await col.subscriptions(db).findOneAndUpdate(
     { _id: id, status: sub.status },
     {
@@ -621,6 +704,7 @@ export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: Cancel
         cancelledAt: ctx.now,
         cancelEffectiveDate: effective,
         cancelledBy: ctx.actor,
+        refundPending: true,
         ...(opts?.reason ? { cancelReason: opts.reason } : {}),
       },
     },
@@ -628,15 +712,27 @@ export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: Cancel
   );
   if (!res) {
     // Lost the race — someone else cancelled first. Return the settled shape.
-    const now = await col.subscriptions(db).findOne({ _id: id });
-    const existingRefund = await col.refunds(db).findOne({ subscriptionId: id });
-    return {
-      status: 'cancelled',
-      cancelEffectiveDate: now?.cancelEffectiveDate ?? effective,
-      daysDelivered: now?.daysDelivered ?? sub.daysDelivered,
-      daysRemaining,
-      refundId: existingRefund?._id?.toHexString() ?? null,
-    };
+    return cancelSubscription(id, ctx, opts);
+  }
+
+  const daysRemaining = await clearFutureRows(db, id, effective);
+
+  // A day whose cutoff passed while we were cancelling was locked before our status
+  // write and will go out (and is charged): the plan really ends after it.
+  const stillGoing = await col
+    .deliveries(db)
+    .find({
+      subscriptionId: id,
+      source: { $in: ['plan', 'makeup'] },
+      date: { $gte: effective },
+      status: { $in: ['locked', 'out_for_delivery', 'delivered', 'unconfirmed'] },
+    })
+    .sort({ date: -1 })
+    .limit(1)
+    .toArray();
+  if (stillGoing[0]) {
+    effective = addDays(stillGoing[0].date, 1);
+    await col.subscriptions(db).updateOne({ _id: id }, { $set: { cancelEffectiveDate: effective } });
   }
 
   await recordEvent(ctx, {
@@ -650,20 +746,74 @@ export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: Cancel
     data: { cancelEffectiveDate: effective, daysRemaining },
   }, db);
 
-  // Refund per policy (B3). Idempotent per subscription; may be null when nothing owed.
-  let refund: Awaited<ReturnType<typeof createCancellationRefund>> = null;
+  await reconnectRenewals(db, sub, effective, ctx);
+
+  // Refund per policy. Idempotent per subscription; null when nothing goes back to
+  // the payment. A failure here does not undo the cancellation: refundPending stays
+  // set and the tick retries it, and the confirmation message waits for the result
+  // (so it never says "Refund: ₹0" for money that is still owed).
+  let refund: Refund | null = null;
   try {
-    refund = await createCancellationRefund(id, ctx);
+    refund = await settleCancellation(db, id, ctx);
   } catch (err) {
-    // B3's stub throws 'not implemented' until built — do not fail the cancellation
-    // that already happened. Log and carry on; the refund is reconcilable later.
-    // eslint-disable-next-line no-console
-    console.error('[cancel] createCancellationRefund failed', id.toHexString(), err instanceof Error ? err.message : err);
+    logSettleFailure(id, err);
   }
 
-  if (refund?._id) {
-    await col.subscriptions(db).updateOne({ _id: id }, { $set: { refundId: refund._id } });
+  return {
+    status: 'cancelled',
+    cancelEffectiveDate: effective,
+    daysDelivered: res.daysDelivered,
+    daysRemaining,
+    refundId: refund?._id?.toHexString() ?? null,
+  };
+}
+
+/** Delete the plan's still-planned plan/make-up rows from `from` on, and its future pauses. Idempotent. */
+async function clearFutureRows(db: Db, id: ObjectId, from: string): Promise<number> {
+  // Extras (source 'extra') are paid-for one-offs and are kept. Locked/out/delivered/
+  // unconfirmed rows are history and count as charged, so only 'planned' goes.
+  const del = await col.deliveries(db).deleteMany({
+    subscriptionId: id,
+    status: 'planned',
+    source: { $in: ['plan', 'makeup'] },
+    date: { $gte: from },
+  });
+  // Future pause selections no longer mean anything.
+  await col.pausedDates(db).deleteMany({ subscriptionId: id, date: { $gte: from } });
+  return del.deletedCount ?? 0;
+}
+
+/**
+ * Keep the renewal chain honest after a cancellation:
+ *  · a cancelled RENEWAL frees the plan it was renewing, so that plan can be renewed again;
+ *  · a cancelled plan with a renewal already paid and queued pulls that renewal
+ *    forward to start where this plan now stops — the customer paid for it, and
+ *    months without milk until the old end date helps nobody. (Client question:
+ *    should the queued renewal be cancelled and refunded instead?)
+ */
+async function reconnectRenewals(db: Db, sub: Subscription, effective: string, ctx: OpCtx): Promise<void> {
+  if (!sub._id) return;
+  if (sub.renewalOf) {
+    await col.subscriptions(db).updateOne({ _id: sub.renewalOf, renewedBy: sub._id }, { $unset: { renewedBy: '' } });
   }
+  if (sub.renewedBy) {
+    const queued = await col.subscriptions(db).findOne({ _id: sub.renewedBy });
+    if (queued?.status === 'scheduled' && queued.startDate > effective) {
+      const back = daysInclusive(effective, queued.startDate) - 1;
+      await shiftQueuedRenewal(sub, -back, ctx);
+    }
+  }
+}
+
+/**
+ * Settle a cancelled plan's money: create the refund and credit side (idempotent),
+ * send the confirmation with the real amounts, then clear refundPending. Throws when
+ * the refund could not be created — the caller logs it and the tick retries.
+ */
+async function settleCancellation(db: Db, id: ObjectId, ctx: OpCtx): Promise<Refund | null> {
+  const refund = await createCancellationRefund(id, ctx);
+  const sub = await col.subscriptions(db).findOne({ _id: id });
+  if (!sub) return refund;
 
   // What comes back: to the original payment (the refund row) and/or to credit.
   // A plan paid from credit has no refund row but DOES get its balance back as
@@ -678,28 +828,52 @@ export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: Cancel
         ? `${formatINR(toSourcePaise)} to your payment method and ${formatINR(toCreditPaise)} to your Maavuli credit`
         : `${formatINR(toCreditPaise)} to your Maavuli credit`
       : formatINR(toSourcePaise);
+  const effective = sub.cancelEffectiveDate ?? addDays(sub.endDate, 1);
 
-  // cancellation_confirmed (never throws).
+  // cancellation_confirmed (never throws; the dedupe key sends it once however many
+  // times settling runs).
   await enqueueMessage(
     {
       mobile: sub.mobile,
       template: 'cancellation_confirmed',
-      params: {
-        lastDate: addDays(effective, -1),
-        refund: refundText,
-      },
+      params: { lastDate: addDays(effective, -1), refund: refundText },
       dedupeKey: `cancel:${id.toHexString()}`,
     },
     ctx,
   );
 
-  return {
-    status: 'cancelled',
-    cancelEffectiveDate: effective,
-    daysDelivered: res.daysDelivered,
-    daysRemaining,
-    refundId: refund?._id?.toHexString() ?? null,
-  };
+  await col.subscriptions(db).updateOne(
+    { _id: id },
+    { $unset: { refundPending: '' }, $set: { refundSettledAt: ctx.now, ...(refund?._id ? { refundId: refund._id } : {}) } },
+  );
+  return refund;
+}
+
+function logSettleFailure(id: ObjectId, err: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error('[cancel] refund not settled yet — the tick will retry', id.toHexString(), err instanceof Error ? err.message : err);
+}
+
+/** Tick step: finish the refund side of cancellations that failed or crashed part-way. */
+export async function settleCancellations(ctx: OpCtx): Promise<{ settled: number; failed: number }> {
+  const db = await getDb();
+  const pending = await col
+    .subscriptions(db)
+    .find({ status: 'cancelled', refundPending: true }, { projection: { _id: 1 } })
+    .limit(50)
+    .toArray();
+  let settled = 0;
+  let failed = 0;
+  for (const s of pending) {
+    try {
+      await settleCancellation(db, s._id!, ctx);
+      settled++;
+    } catch (err) {
+      failed++;
+      logSettleFailure(s._id!, err);
+    }
+  }
+  return { settled, failed };
 }
 
 /* -------------------------------------------------------------- upcoming -- */

@@ -16,7 +16,7 @@ import {
   lockDueDays,
   reassignRun,
 } from '@/lib/manifest';
-import { runTick, withLease } from '@/lib/jobs';
+import { runTick, TICK_STEPS, withLease } from '@/lib/jobs';
 import { createDisruption } from '@/lib/disruptions';
 import { startRun } from '@/lib/rider';
 
@@ -244,14 +244,14 @@ t('disruption: a past date is refused', pastRejected);
 
 // ---- a full tick keeps going past a failing step ----
 const tick = await runTick(at('2026-10-12', '10:30'), { force: true });
-t('tick ran every step', tick.length === 11, tick.map(s => s.step));
+t('tick ran every step', tick.length === TICK_STEPS.length, tick.map(s => s.step));
 const failedSteps = tick.filter(s => !s.ok);
 t('tick: day-engine steps ok', ['lockDueDays', 'closeDueDays', 'autoResolveStaleUnconfirmed'].every(n => tick.find(s => s.step === n)?.ok));
 if (failedSteps.length) {
   notVerified.push(`tick steps still stubbed by other lanes: ${failedSteps.map(s => s.step).join(', ')} (isolated — the tick continued)`);
 }
 const status = await col.jobRuns(db).find({}).toArray();
-t('tick recorded lastRunAt for every step', status.length === 11 && status.every(s => s.lastRunAt));
+t('tick recorded lastRunAt for every step', status.length === TICK_STEPS.length && status.every(s => s.lastRunAt));
 
 console.log(`b2-dayengine: ${passed} passed, ${failed} failed · db=${db.databaseName}`);
 if (notVerified.length) console.log(`NOT VERIFIED:\n  - ${notVerified.join('\n  - ')}`);
