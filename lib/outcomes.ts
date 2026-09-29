@@ -5,7 +5,7 @@
  * OWNER: B5 (rider app). Keep the signatures; replace the bodies.
  */
 
-import type { Db, ObjectId } from 'mongodb';
+import type { Db, Filter, ObjectId } from 'mongodb';
 import {
   col,
   REASON_FAULT,
@@ -25,6 +25,17 @@ import { enqueueMessage } from './notify';
 import { signedPhotoUrl } from './storage';
 import { deliveredProofOk, distanceFromPinM, isDeliveryFlagged, resolveFault } from './rider-pure';
 import { NotFoundError, ValidationError, ConflictError } from './errors';
+
+/** Longest stored outcome note (SEC-8: it is shown to ops and can reach message templates). */
+export const NOTE_MAX = 500;
+
+/**
+ * Filter part: no compensation claim is live on the row (lib/compensation's
+ * `compensatingUntil`, a wall-clock lease like the credit lock).
+ */
+function notCompensating(): Filter<Delivery> {
+  return { $or: [{ compensatingUntil: { $exists: false } }, { compensatingUntil: { $lt: new Date() } }] };
+}
 
 /** States a delivery may be in when it is marked. */
 const DELIVERABLE_FROM: readonly DeliveryStatus[] = ['locked', 'out_for_delivery', 'unconfirmed', 'not_delivered'];
@@ -127,8 +138,10 @@ export async function markDelivered(
   };
 
   // Conditional update matching the FROM state — two concurrent writers cannot both win.
+  // Not while a compensation for this row is being written: it would land its
+  // make-up day / credit on a row that is now delivered, after we looked for one.
   const res = await col.deliveries(db).updateOne(
-    { _id: deliveryId, status: delivery.status },
+    { _id: deliveryId, status: delivery.status, ...notCompensating() },
     {
       $set: {
         status: 'delivered',
@@ -161,11 +174,14 @@ export async function markDelivered(
     db,
   );
 
-  const updated = await loadDelivery(db, deliveryId);
+  let updated = await loadDelivery(db, deliveryId);
 
-  // A "not delivered" corrected to delivered: undo its make-up day / credit.
-  if (delivery.status === 'not_delivered' && delivery.resolution && delivery.resolution !== 'none') {
+  // A "not delivered" corrected to delivered: undo its make-up day / credit. Read the
+  // resolution AFTER our write — a compensation that finished between our first read
+  // and the write is visible only now.
+  if (delivery.status === 'not_delivered' && updated.resolution && updated.resolution !== 'none') {
     await reverseSafely(deliveryId, ctx);
+    updated = await loadDelivery(db, deliveryId);
   }
 
   // delivered_today notice, only for customers who opted into the daily photo.
@@ -235,7 +251,7 @@ export async function markNotDelivered(
         reason: input.reason,
         fault,
         updatedAt: ctx.now,
-        ...(input.note ? { reasonNote: input.note } : {}),
+        ...(input.note?.trim() ? { reasonNote: input.note.trim().slice(0, NOTE_MAX) } : {}),
       },
     },
   );
@@ -296,8 +312,15 @@ export async function setFault(deliveryId: ObjectId, fault: Exclude<Fault, 'unkn
   // Idempotent no-op.
   if (delivery.fault === fault) return delivery;
 
+  // CAS on the fault we read too: two staff deciding at once must not both win (A
+  // compensates for 'ours' while B, who read 'unknown', skips the reversal).
   const res = await col.deliveries(db).updateOne(
-    { _id: deliveryId, status: 'not_delivered' },
+    {
+      _id: deliveryId,
+      status: 'not_delivered',
+      ...(delivery.fault === undefined ? { fault: { $exists: false } } : { fault: delivery.fault }),
+      ...notCompensating(),
+    },
     { $set: { fault, updatedAt: ctx.now } },
   );
   if (res.matchedCount === 0) {
@@ -320,8 +343,9 @@ export async function setFault(deliveryId: ObjectId, fault: Exclude<Fault, 'unkn
   if (fault === 'ours') {
     await compensateSafely(deliveryId, ctx);
   } else {
-    // ours → customer: a compensation already given is undone first.
-    if (delivery.fault === 'ours' && delivery.resolution && delivery.resolution !== 'none') {
+    // ours → customer: a compensation already given is undone first (read after our write).
+    const now = await loadDelivery(db, deliveryId);
+    if (delivery.fault === 'ours' && now.resolution && now.resolution !== 'none') {
       await reverseSafely(deliveryId, ctx);
     }
     await enqueueMessage(

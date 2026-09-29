@@ -3,7 +3,7 @@ import { actorFor, requireStaff } from '@/lib/roles';
 import { handleRouteError, ok, readJson } from '@/lib/api';
 import { ValidationError } from '@/lib/errors';
 import { REASON_FAULT, type Fault, type NotDeliveredReason } from '@/lib/models';
-import { clearProofFlag, markDelivered, markNotDelivered, setFault } from '@/lib/outcomes';
+import { NOTE_MAX, clearProofFlag, markDelivered, markNotDelivered, setFault } from '@/lib/outcomes';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,6 +31,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const action = body.action;
     const note = typeof body.note === 'string' ? body.note : undefined;
+    if (body.note !== undefined && body.note !== null && typeof body.note !== 'string') throw new ValidationError('note must be text');
+    if (note && note.length > NOTE_MAX) throw new ValidationError(`The note can be at most ${NOTE_MAX} characters.`);
 
     if (action === 'delivered') {
       // A desk correction has no doorstep photo, so a note is required; markDelivered

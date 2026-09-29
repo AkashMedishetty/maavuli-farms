@@ -91,6 +91,37 @@ export interface RazorpayRefund {
   amount: number; // paise
   payment_id: string;
   status: 'pending' | 'processed' | 'failed';
+  receipt?: string | null;
+  notes?: Record<string, string> | unknown[];
+}
+
+type CreateRefundFn = (input: CreateRefundInput) => Promise<RazorpayRefund>;
+type ListRefundsFn = (paymentId: string) => Promise<RazorpayRefund[]>;
+let createRefundOverride: CreateRefundFn | null = null;
+let listRefundsOverride: ListRefundsFn | null = null;
+
+/** Tests only: stand in for the Razorpay refunds API (pass null to restore). */
+export function __setRazorpayRefundsForTests(fns: { create: CreateRefundFn; list: ListRefundsFn } | null): void {
+  createRefundOverride = fns?.create ?? null;
+  listRefundsOverride = fns?.list ?? null;
+}
+
+/**
+ * GET /v1/payments/{paymentId}/refunds — every refund Razorpay holds for a payment.
+ * Used before RETRYING a refund whose first attempt lost its response: Razorpay may
+ * have created it anyway, and a blind retry would pay the customer twice.
+ */
+export async function listPaymentRefunds(paymentId: string): Promise<RazorpayRefund[]> {
+  if (listRefundsOverride) return listRefundsOverride(paymentId);
+  if (!/^pay_[A-Za-z0-9]+$/.test(paymentId)) throw new Error('not a Razorpay payment id');
+  const cfg = razorpayConfig();
+  if (!cfg.ok) throw new Error(`Razorpay not configured — missing: ${cfg.missing.join(', ')}`);
+  const res = await fetch(`${API_BASE}/payments/${encodeURIComponent(paymentId)}/refunds?count=100`, {
+    headers: { authorization: authHeader(cfg.value.RAZORPAY_KEY_ID, cfg.value.RAZORPAY_KEY_SECRET) },
+  });
+  if (!res.ok) throw new RazorpayRefundError(res.status, '', false);
+  const body = (await res.json()) as { items?: RazorpayRefund[] };
+  return Array.isArray(body.items) ? body.items : [];
 }
 
 /**
@@ -122,6 +153,7 @@ export interface CreateRefundInput {
  * and are not part of the published policy). Callers must pre-check razorpayConfig().
  */
 export async function createRefund({ paymentId, amountPaise, receipt, notes }: CreateRefundInput): Promise<RazorpayRefund> {
+  if (createRefundOverride) return createRefundOverride({ paymentId, amountPaise, receipt, ...(notes ? { notes } : {}) });
   if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
     throw new Error('amountPaise must be a positive integer (paise)');
   }

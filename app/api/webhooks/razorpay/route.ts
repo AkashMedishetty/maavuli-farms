@@ -29,7 +29,7 @@ interface RazorpayWebhook {
   payload?: {
     payment?: { entity?: { id?: string; order_id?: string } };
     order?: { entity?: { id?: string } };
-    refund?: { entity?: { id?: string; payment_id?: string; amount?: number; status?: string } };
+    refund?: { entity?: { id?: string; payment_id?: string; amount?: number; status?: string; receipt?: string | null; notes?: unknown } };
   };
 }
 
@@ -94,7 +94,14 @@ export async function POST(req: Request) {
           if (r?.id && r.payment_id && typeof r.amount === 'number') {
             await handleRazorpayRefundEvent(
               event as 'refund.created' | 'refund.processed' | 'refund.failed',
-              { id: r.id, payment_id: r.payment_id, amount: r.amount, ...(r.status ? { status: r.status } : {}) },
+              {
+                id: r.id,
+                payment_id: r.payment_id,
+                amount: r.amount,
+                ...(r.status ? { status: r.status } : {}),
+                ...(typeof r.receipt === 'string' ? { receipt: r.receipt } : {}),
+                ...(r.notes ? { notes: r.notes } : {}),
+              },
               ctx,
             );
           }

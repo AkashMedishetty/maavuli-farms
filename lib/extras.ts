@@ -126,7 +126,13 @@ export async function createExtraOrder(input: ExtraInput, ctx: OpCtx): Promise<C
   const replay = await col.orders(db).findOne({ idempotencyKey: key });
   if (replay?._id) {
     if (replay.mobile !== input.mobile || replay.purpose !== 'extra') throw new ConflictError('That checkout key was already used.');
-    const o = replay as Order & { _id: ObjectId };
+    let o = replay as Order & { _id: ObjectId };
+    // A paid order whose activation failed (credit-only checkouts have no verify or
+    // webhook to retry it): the replay finishes it. Activation is idempotent.
+    if (o.status === 'paid') {
+      await activateExtraOrder(o._id, ctx);
+      o = ((await col.orders(db).findOne({ _id: o._id })) as (Order & { _id: ObjectId }) | null) ?? o;
+    }
     return { order: o, razorpay: checkoutFor(o) };
   }
 
@@ -136,20 +142,29 @@ export async function createExtraOrder(input: ExtraInput, ctx: OpCtx): Promise<C
   if (input.date > addDaysYMD(firstOpen, EXTRA_MAX_DAYS_AHEAD)) {
     throw new ValidationError(`Extra milk can be booked up to ${EXTRA_MAX_DAYS_AHEAD} days ahead.`);
   }
-  const clash =
-    (await col.deliveries(db).countDocuments({ subscriptionId: sub._id, date: input.date, source: 'extra' }, { limit: 1 })) > 0 ||
-    (await col.orders(db).countDocuments(
-      { purpose: 'extra', 'extra.subscriptionId': sub._id, 'extra.date': input.date, status: { $in: ['created', 'paid'] } },
-      { limit: 1 },
-    )) > 0;
-  if (clash) throw new ConflictError('There is already extra milk booked for that day.', { date: input.date });
-
   const pricePaise = extraPricePaise(input.kind, input.litres);
   const cfg = razorpayConfig();
 
   // Decide the credit share, write the order and debit the credit under ONE lease so
   // a concurrent spend cannot leave this order claiming credit that was used elsewhere.
+  // The one-extra-per-day check runs under the same lease: two tabs (or a retry with
+  // a fresh key) serialise here, so the second sees the first order and is refused
+  // BEFORE anyone pays for it.
+  let reused = false;
   const order = await withCreditLock(input.mobile, async ldb => {
+    const won = await col.orders(ldb).findOne({ idempotencyKey: key });
+    if (won?._id) {
+      if (won.mobile !== input.mobile || won.purpose !== 'extra') throw new ConflictError('That checkout key was already used.');
+      reused = true;
+      return won as Order & { _id: ObjectId };
+    }
+    const clash =
+      (await col.deliveries(ldb).countDocuments({ subscriptionId: sub._id, date: input.date, source: 'extra' }, { limit: 1 })) > 0 ||
+      (await col.orders(ldb).countDocuments(
+        { purpose: 'extra', 'extra.subscriptionId': sub._id, 'extra.date': input.date, status: { $in: ['created', 'paid'] } },
+        { limit: 1 },
+      )) > 0;
+    if (clash) throw new ConflictError('There is already extra milk booked for that day.', { date: input.date });
     const { balancePaise } = foldBalance(await col.credits(ldb).find({ mobile: input.mobile }).toArray());
     const creditAppliedPaise = input.useCredit ? Math.min(balancePaise, pricePaise) : 0;
     const payablePaise = pricePaise - creditAppliedPaise;
@@ -187,8 +202,11 @@ export async function createExtraOrder(input: ExtraInput, ctx: OpCtx): Promise<C
       id = (await col.orders(ldb).insertOne(doc)).insertedId;
     } catch (err) {
       if (err && typeof err === 'object' && (err as { code?: number }).code === 11000) {
-        const won = await col.orders(ldb).findOne({ idempotencyKey: key });
-        if (won?._id) return won as Order & { _id: ObjectId };
+        const w = await col.orders(ldb).findOne({ idempotencyKey: key });
+        if (w?._id) {
+          reused = true;
+          return w as Order & { _id: ObjectId };
+        }
       }
       throw err;
     }
@@ -205,6 +223,10 @@ export async function createExtraOrder(input: ExtraInput, ctx: OpCtx): Promise<C
     }, ldb);
     return { ...doc, _id: id };
   });
+
+  // A concurrent submit with the same key won: answer with its order, never start a
+  // second payment for it.
+  if (reused) return { order, razorpay: checkoutFor(order) };
 
   if ((order.payablePaise ?? 0) === 0) {
     try {
@@ -239,22 +261,39 @@ export async function createExtraOrder(input: ExtraInput, ctx: OpCtx): Promise<C
   }
 }
 
-/** Refundable credit of the extra's full price when it can no longer be delivered. Idempotent. */
+/**
+ * Credit the extra's price back when it can no longer be delivered. Idempotent per
+ * share. Only the share paid with MONEY becomes refundable credit; the share paid
+ * from credit comes back as the non-refundable credit it was.
+ */
 async function creditLateExtra(db: Db, order: Order & { _id: ObjectId }, why: string, ctx: OpCtx): Promise<void> {
-  const have = await col.credits(db).countDocuments({ orderId: order._id, kind: 'adjustment', amountPaise: { $gt: 0 } }, { limit: 1 });
-  if (have) return;
-  await addCredit(
-    {
-      mobile: order.mobile,
-      amountPaise: order.amountPaise,
-      kind: 'adjustment',
-      refundable: true,
-      orderId: order._id,
-      ...(order.extra ? { subscriptionId: order.extra.subscriptionId } : {}),
-      note: `Extra milk for ${order.extra?.date ?? '?'} could not be scheduled (${why}) — full price credited`,
-    },
-    ctx,
-  );
+  const payable = Math.max(0, Math.min(order.amountPaise, order.payablePaise ?? order.amountPaise - (order.creditAppliedPaise ?? 0)));
+  const shares: { amountPaise: number; refundable: boolean }[] = [
+    { amountPaise: payable, refundable: true },
+    { amountPaise: order.amountPaise - payable, refundable: false },
+  ];
+  let added = false;
+  for (const sh of shares) {
+    if (sh.amountPaise <= 0) continue;
+    const have = await col
+      .credits(db)
+      .countDocuments({ orderId: order._id, kind: 'adjustment', amountPaise: { $gt: 0 }, refundable: sh.refundable }, { limit: 1 });
+    if (have) continue;
+    await addCredit(
+      {
+        mobile: order.mobile,
+        amountPaise: sh.amountPaise,
+        kind: 'adjustment',
+        refundable: sh.refundable,
+        orderId: order._id,
+        ...(order.extra ? { subscriptionId: order.extra.subscriptionId } : {}),
+        note: `Extra milk for ${order.extra?.date ?? '?'} could not be scheduled (${why}) — ${sh.refundable ? 'price' : 'credit used'} returned`,
+      },
+      ctx,
+    );
+    added = true;
+  }
+  if (!added) return;
   await recordEvent(ctx, { entity: 'order', entityId: order._id.toHexString(), type: 'order.extra_credited', mobile: order.mobile, reason: why }, db);
   await enqueueMessage(
     {
@@ -277,7 +316,12 @@ export async function activateExtraOrder(orderId: ObjectId, ctx: OpCtx): Promise
   const { date, kind, litres, subscriptionId } = order.extra;
 
   const existing = await col.deliveries(db).findOne({ subscriptionId, date, source: 'extra' });
-  if (existing) return;
+  if (existing) {
+    // Another paid extra already holds this day (one extra per plan per date): this
+    // one can never be delivered, so its money comes back instead of vanishing.
+    if (!existing.orderId?.equals(orderId)) return creditLateExtra(db, order, 'another extra is already booked for that day', ctx);
+    return;
+  }
   if ((await col.credits(db).countDocuments({ orderId, kind: 'adjustment', amountPaise: { $gt: 0 } }, { limit: 1 })) > 0) return;
 
   const sub = await col.subscriptions(db).findOne({ _id: subscriptionId });
@@ -307,7 +351,11 @@ export async function activateExtraOrder(orderId: ObjectId, ctx: OpCtx): Promise
       })
     ).insertedId;
   } catch (err) {
-    if (err && typeof err === 'object' && (err as { code?: number }).code === 11000) return;
+    if (err && typeof err === 'object' && (err as { code?: number }).code === 11000) {
+      const holder = await col.deliveries(db).findOne({ subscriptionId, date, source: 'extra' });
+      if (holder && !holder.orderId?.equals(orderId)) return creditLateExtra(db, order, 'another extra is already booked for that day', ctx);
+      return;
+    }
     throw err;
   }
   // The lock could have run between the check and the insert.

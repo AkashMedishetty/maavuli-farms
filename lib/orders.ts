@@ -10,7 +10,7 @@
  * A failure after the spend reverses it, so a crashed checkout never eats credit.
  */
 
-import { MongoServerError, ObjectId } from 'mongodb';
+import { MongoServerError, ObjectId, type Db } from 'mongodb';
 import { randomBytes } from 'node:crypto';
 import { getDb } from './db';
 import { col, normalizeMobile, type DeliveryDetails, type MilkKind, type Order, type User } from './models';
@@ -23,7 +23,7 @@ import { firstOpenDateNow } from './daylock';
 import { addDaysYMD, isYMD, istYMD } from './cutoff';
 import { normalizePoint } from './geo';
 import { zoneForPoint } from './serviceability';
-import { creditBalance, reverseOrderSpend, spendCredit } from './credits';
+import { addCredit, creditBalance, reverseOrderSpend, spendCredit, spendLocked, withCreditLock } from './credits';
 import { createOrder as razorpayCreateOrder, type CreateOrderInput, type RazorpayOrder } from './razorpay';
 import { razorpayConfig } from './env';
 import { activateSubscriptionForOrder, renewalTarget } from './subscriptions';
@@ -240,6 +240,13 @@ function previewFromOrder(o: Order, firstOpenDate: string): CheckoutPreview {
 }
 
 async function existingResult(o: Order & { _id: ObjectId }, ctx: OpCtx): Promise<CheckoutResult> {
+  // A paid order whose activation threw (a credit-only checkout has no verify or
+  // webhook to retry it): the replay finishes it. Activation is idempotent.
+  if (o.status === 'paid') {
+    await activateOrder(o._id, ctx);
+    const db = await getDb();
+    o = ((await col.orders(db).findOne({ _id: o._id })) as (Order & { _id: ObjectId }) | null) ?? o;
+  }
   const firstOpen = await firstOpenDateNow(ctx);
   const payable = o.payablePaise ?? o.amountPaise - (o.creditAppliedPaise ?? 0);
   const razorpay =
@@ -477,10 +484,18 @@ export async function markOrderPaid(
       // A late payment on an EXPIRED order: its credit spend was reversed at expiry.
       // Re-debit it; if the balance no longer covers it, record the shortfall for ops
       // (money received always wins — the plan still activates).
+      // Net-based under the lease: expiry may have marked the order expired but not yet
+      // (or never, after a crash) returned the credit — then nothing is re-debited, and
+      // expiry's own reversal re-checks the status under the same lease and skips.
       const applied = order.creditAppliedPaise ?? 0;
       if (from === 'expired' && applied > 0) {
         try {
-          await spendCredit(order.mobile, applied, 'order_spend', { orderId, note: 'late payment re-debit' }, ctx);
+          await withCreditLock(order.mobile, async d => {
+            const need = applied + (await orderSpendNet(d, orderId));
+            if (need > 0) {
+              await spendLocked(d, order.mobile, need, order.purpose === 'extra' ? 'extra_spend' : 'order_spend', { orderId, note: 'late payment re-debit' }, ctx);
+            }
+          });
         } catch (err) {
           await recordEvent(ctx, {
             entity: 'order',
@@ -569,7 +584,7 @@ export async function activateOrder(orderId: ObjectId, ctx: OpCtx): Promise<void
 }
 
 /** Tick step: created|failed orders older than unpaidOrderExpiryMinutes → expired (credit spends reversed). */
-export async function expireUnpaidOrders(ctx: OpCtx): Promise<{ expired: number }> {
+export async function expireUnpaidOrders(ctx: OpCtx): Promise<{ expired: number; creditReturned: number }> {
   const db = await getDb();
   const settings = await getOpsSettings(db);
   const cutoff = new Date(ctx.now.getTime() - settings.unpaidOrderExpiryMinutes * 60_000);
@@ -588,7 +603,6 @@ export async function expireUnpaidOrders(ctx: OpCtx): Promise<{ expired: number 
       .updateOne({ _id: o._id, status: from }, { $set: { status: 'expired', expiredAt: ctx.now } });
     if (res.matchedCount !== 1) continue;
     expired++;
-    if ((o.creditAppliedPaise ?? 0) > 0) await reverseOrderSpend(o._id, ctx);
     await recordEvent(ctx, {
       entity: 'order',
       entityId: o._id.toHexString(),
@@ -597,6 +611,136 @@ export async function expireUnpaidOrders(ctx: OpCtx): Promise<{ expired: number 
       to: 'expired',
       mobile: o.mobile,
     }, db);
+    if ((o.creditAppliedPaise ?? 0) > 0) {
+      try {
+        await returnExpiredSpend(o._id, o.mobile, ctx);
+      } catch (err) {
+        // the sweep below retries it on the next tick
+        // eslint-disable-next-line no-console
+        console.error('[orders] expiry credit return deferred', o._id.toHexString(), err instanceof Error ? err.message : err);
+      }
+    }
   }
-  return { expired };
+
+  // Sweep 1: expired orders still holding their credit (a crash between the expiry
+  // write and the return above).
+  const since = new Date(ctx.now.getTime() - SWEEP_WINDOW_MS);
+  let creditReturned = 0;
+  const holding = await col
+    .orders(db)
+    .find({ status: 'expired', creditAppliedPaise: { $gt: 0 }, expiredAt: { $gte: since } }, { projection: { _id: 1, mobile: 1 } })
+    .limit(500)
+    .toArray();
+  for (const o of holding) {
+    if (!o._id || (await orderSpendNet(db, o._id)) >= 0) continue;
+    try {
+      if (await returnExpiredSpend(o._id, o.mobile, ctx)) creditReturned++;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[orders] expired credit return failed', o._id.toHexString(), err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Sweep 2: a checkout spends credit against a pre-generated order id BEFORE the
+  // order is inserted. A crash in between leaves a spend with no order — return it
+  // once it is clearly abandoned (older than the unpaid-order expiry).
+  const orphanSpends = await col
+    .credits(db)
+    .find({ kind: 'order_spend', at: { $gte: since, $lt: cutoff } }, { projection: { orderId: 1 } })
+    .limit(500)
+    .toArray();
+  const seen = new Set<string>();
+  for (const c of orphanSpends) {
+    if (!c.orderId || seen.has(c.orderId.toHexString())) continue;
+    seen.add(c.orderId.toHexString());
+    if (await col.orders(db).countDocuments({ _id: c.orderId }, { limit: 1 })) continue;
+    if ((await orderSpendNet(db, c.orderId)) >= 0) continue;
+    try {
+      await reverseOrderSpend(c.orderId, ctx);
+      creditReturned++;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[orders] orphan spend return failed', c.orderId.toHexString(), err instanceof Error ? err.message : err);
+    }
+  }
+  return { expired, creditReturned };
 }
+
+/** How far back the expiry sweeps look (they only repair crashes, which the 5-minute tick catches fast). */
+const SWEEP_WINDOW_MS = 2 * 86_400_000;
+
+/** Net of an order's credit spend rows: −applied while spent, 0 once returned. */
+async function orderSpendNet(db: Db, orderId: ObjectId): Promise<number> {
+  const rows = await col
+    .credits(db)
+    .find({ orderId, kind: { $in: ['order_spend', 'extra_spend', 'order_spend_reversal'] } }, { projection: { amountPaise: 1 } })
+    .toArray();
+  return rows.reduce((s, r) => s + r.amountPaise, 0);
+}
+
+/**
+ * Return an EXPIRED order's credit spend. The status is re-read under the credit
+ * lease, so a late payment that flipped it to paid (and skipped its re-debit because
+ * the spend was still in place) is never undone here. Returns whether it credited.
+ */
+async function returnExpiredSpend(orderId: ObjectId, mobile: string, ctx: OpCtx): Promise<boolean> {
+  return withCreditLock(mobile, async d => {
+    const now = await col.orders(d).findOne({ _id: orderId }, { projection: { status: 1 } });
+    if (now?.status !== 'expired') return false;
+    const net = await orderSpendNet(d, orderId);
+    if (net >= 0) return false;
+    await addCredit({ mobile, amountPaise: -net, kind: 'order_spend_reversal', refundable: false, orderId, note: 'Order not paid — credit returned' }, ctx);
+    return true;
+  });
+}
+
+/**
+ * Tick step: finish paid orders whose activation never completed (it threw after the
+ * order was marked paid, and a credit-only checkout has no verify/webhook to retry
+ * it). Paid new/renewal orders with no subscription → activate; paid extras with
+ * neither a delivery nor a late-extra credit → activate (which delivers or credits).
+ * Orders paid under 2 minutes ago are left to the request still activating them.
+ * Idempotent: activation is.
+ */
+export async function repairPaidOrders(ctx: OpCtx): Promise<{ repaired: number; failed: number }> {
+  const db = await getDb();
+  const settledBefore = new Date(ctx.now.getTime() - 2 * 60_000);
+  const since = new Date(ctx.now.getTime() - REPAIR_WINDOW_MS);
+  const paid = await col
+    .orders(db)
+    .find({ status: 'paid', paidAt: { $lt: settledBefore, $gte: since } }, { projection: { _id: 1, purpose: 1, extra: 1 } })
+    .sort({ paidAt: -1 })
+    .limit(1000)
+    .toArray();
+  let repaired = 0;
+  let failed = 0;
+  for (const o of paid) {
+    if (!o._id) continue;
+    let stuck: boolean;
+    if (o.purpose === 'extra') {
+      if (!o.extra) continue;
+      const delivered = await col
+        .deliveries(db)
+        .countDocuments({ subscriptionId: o.extra.subscriptionId, date: o.extra.date, source: 'extra', orderId: o._id }, { limit: 1 });
+      const credited = await col
+        .credits(db)
+        .countDocuments({ subscriptionId: o.extra.subscriptionId, orderId: o._id, kind: 'adjustment', amountPaise: { $gt: 0 } }, { limit: 1 });
+      stuck = !delivered && !credited;
+    } else {
+      stuck = (await col.subscriptions(db).countDocuments({ orderId: o._id }, { limit: 1 })) === 0;
+    }
+    if (!stuck) continue;
+    try {
+      await activateOrder(o._id, ctx);
+      repaired++;
+    } catch (err) {
+      failed++;
+      // eslint-disable-next-line no-console
+      console.error('[orders] repair activation failed', o._id.toHexString(), err instanceof Error ? err.message : err);
+    }
+  }
+  return { repaired, failed };
+}
+
+/** A paid order still stuck after this has been retried hundreds of times; ops sees it on the order list. */
+const REPAIR_WINDOW_MS = 2 * 86_400_000;
