@@ -465,3 +465,37 @@
 .sb .sub-foot a { color: var(--red-dim); }
 .sb .sub-foot a:hover { color: var(--red); }
 .sb .pending { border-color: var(--red-faint); color: var(--red-dim); }
+
+/* ---- pin-first funnel (B8): review, start date, errors ----------------------
+ * Same rules as above: red ink on white, >= 44 px tap targets, >= 15 px text.
+ */
+.sb-visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap;
+}
+.sb-issues { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: max(15px, 0.95rem); }
+.sb-issues code { font-size: 0.9em; }
+.sb-areastate { margin: 1rem 0 0.4rem; min-height: 2.75rem; }
+
+.sb-review { display: grid; gap: 0.6rem; margin: 1.2rem 0; max-width: 40rem; }
+.sb-review > div { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 0.6rem; align-items: baseline; }
+.sb-review dt { font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-dim); }
+.sb-review dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 40rem) { .sb-review > div { grid-template-columns: 1fr; gap: 0.15rem; } }
+
+.sb-final { margin: 1rem 0; max-width: 32rem; }
+.sb-lines li.sb-total b { font-size: 1.25em; }
+
+.sb-startopts { border: 0; padding: 0; margin: 1.2rem 0; display: grid; gap: 0.6rem; max-width: 34rem; }
+.sb-radio, .sb-check-row {
+  display: flex; gap: 0.7rem; align-items: flex-start;
+  min-height: 44px; padding: 0.5rem 0; cursor: pointer;
+  font-size: max(15px, 1rem); color: var(--red);
+}
+.sb-radio input, .sb-check-row input { width: 22px; height: 22px; margin-top: 0.1rem; flex: none; accent-color: var(--red); }
+.sb-check-row { max-width: 40rem; }
+
+.sb-field input[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+.sb-notice > div { min-width: 0; }

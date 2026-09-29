@@ -6,24 +6,17 @@ import Script from 'next/script';
 /**
  * Razorpay checkout, loaded lazily.
  *
- * IMPORTANT — how payment is CONFIRMED here:
+ * How payment is CONFIRMED: the parent posts the handler's response to
+ * `POST /api/payments/verify` (HMAC re-checked server-side, same guarded
+ * transition as the webhook). The Razorpay webhook is the durable backstop, so a
+ * verify call that fails after money moved is reported as "payment received —
+ * confirming", never as a failure.
  *
- * There is no browser-callable "verify" route in this codebase. Activation is
- * webhook-only: `POST /api/webhooks/razorpay` verifies the HMAC server-to-server
- * and calls `activateSubscriptionForOrder` (see app/api/webhooks/razorpay/route.ts).
- * A browser cannot POST there — it does not hold RAZORPAY_WEBHOOK_SECRET, and it
- * MUST NOT, or the whole signature check is pointless.
+ * `order` is exactly the `razorpay` object `POST /api/checkout` returns:
+ * { orderId, keyId, amountPaise } — amountPaise is what Razorpay charges (the
+ * payable part after any credit), never a client-computed number.
  *
- * So the honest client contract is: create the Order (server recomputes the
- * price), open Razorpay, and on the success handler report "payment received — we
- * are confirming it" and send the user to /account, where the webhook-activated
- * subscription appears. We do NOT claim the subscription is live from the browser
- * response alone; the webhook is the source of truth. This gap is flagged in the
- * agent's report.
- *
- * Test mode: if keyId starts with "rzp_test_", the parent shows a test-mode banner.
- * If no order/keyId is available (payments unconfigured -> 503), the parent renders
- * a visibly DISABLED pay button with a plain explanation instead of this component.
+ * Test mode: keyId starting with "rzp_test_" shows a test-mode note.
  */
 
 interface RazorpayResponse {
@@ -58,10 +51,14 @@ declare global {
 }
 
 export interface CheckoutOrder {
-  razorpayOrderId: string;
-  amountPaise: number;
+  /** Razorpay order id */
+  orderId: string;
   keyId: string;
+  /** payable amount in paise, as created server-side */
+  amountPaise: number;
 }
+
+export type { RazorpayResponse };
 
 export default function RazorpayCheckout({
   order,
@@ -73,8 +70,7 @@ export default function RazorpayCheckout({
   order: CheckoutOrder;
   mobile: string;
   planLabel: string;
-  /** Called when Razorpay reports a successful payment. The subscription is
-   *  activated by the webhook, not here — treat this as "payment received". */
+  /** Razorpay reported success. The parent confirms via /api/payments/verify. */
   onPaid: (r: RazorpayResponse) => void;
   onError: (message: string) => void;
 }) {
@@ -98,7 +94,7 @@ export default function RazorpayCheckout({
         currency: 'INR',
         name: 'Maavuli Farm Milk',
         description: planLabel,
-        order_id: order.razorpayOrderId,
+        order_id: order.orderId,
         prefill: { contact: mobile },
         theme: { color: '#8c170e' },
         handler: (r) => {
