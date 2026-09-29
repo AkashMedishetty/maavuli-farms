@@ -1,9 +1,23 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { callApi, dayLabel, ErrorNote, useAction, type ApiFailure } from './account/api';
 
-interface SubscriptionCalendarData {
+/**
+ * Pause individual delivery dates for one plan.
+ *
+ * Reads GET /api/subscriptions/[id]/calendar; toggles with POST .../pause or
+ * .../unpause { dates: [date] }. A date is tappable when it is on or after the first
+ * open date (the server's `earliestPausableDate`) and either has a planned plan
+ * delivery (pause) or is already paused (unpause). A `date_locked` answer moves the
+ * first open date forward to the server's `firstOpen`, so the grid never offers a
+ * closed day twice.
+ */
+
+interface CalendarData {
   subscriptionId: string;
+  status: string;
   startDate: string;
   endDate: string;
   pauseAllowanceDays: number;
@@ -11,473 +25,175 @@ interface SubscriptionCalendarData {
   pauseRemainingDays: number;
   earliestPausableDate: string;
   pausedDates: string[];
+  deliveries: { date: string; status: string; source: string }[];
 }
 
-interface PauseCalendarProps {
-  subscriptionId: string;
-  onUpdate?: () => void;
+type Load = { kind: 'loading' } | { kind: 'error'; fail: ApiFailure } | { kind: 'ready'; data: CalendarData };
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function ymd(y: number, m: number, d: number): string {
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-/**
- * Calendar component for pausing delivery dates.
- *
- * Features:
- * - Monthly calendar view
- * - Click dates to toggle pause
- * - Shows pause balance
- * - Enforces 4 PM cutoff
- * - Disables dates outside subscription range
- */
-export function PauseCalendar({ subscriptionId, onUpdate }: PauseCalendarProps) {
-  const [calendar, setCalendar] = useState<SubscriptionCalendarData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
-  const [saving, setSaving] = useState(false);
-  const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
+function monthOf(date: string): { y: number; m: number } {
+  return { y: Number(date.slice(0, 4)), m: Number(date.slice(5, 7)) };
+}
 
-  useEffect(() => {
-    loadCalendar();
+const monthFmt = new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+export function PauseCalendar({ subscriptionId, cutoffLabel }: { subscriptionId: string; cutoffLabel: string }) {
+  const router = useRouter();
+  const [load, setLoad] = useState<Load>({ kind: 'loading' });
+  const [month, setMonth] = useState<{ y: number; m: number } | null>(null);
+  const [busyDate, setBusyDate] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [floor, setFloor] = useState<string | null>(null);
+  const action = useAction();
+
+  const refresh = useCallback(async () => {
+    const r = await callApi<CalendarData>(`/api/subscriptions/${subscriptionId}/calendar`);
+    if (r.ok) {
+      setLoad({ kind: 'ready', data: r.data });
+      setMonth((cur) => cur ?? monthOf(r.data.earliestPausableDate > r.data.startDate ? r.data.earliestPausableDate : r.data.startDate));
+    } else {
+      setLoad({ kind: 'error', fail: r.fail });
+    }
   }, [subscriptionId]);
 
-  const loadCalendar = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await fetch(`/api/subscriptions/${subscriptionId}/calendar`);
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to load calendar');
-      }
-      const data = await res.json();
-      setCalendar(data);
-      setSelectedDates(new Set(data.pausedDates));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
-  const toggleDate = async (date: string) => {
-    if (!calendar) return;
+  const data = load.kind === 'ready' ? load.data : null;
+  const earliest = data ? (floor && floor > data.earliestPausableDate ? floor : data.earliestPausableDate) : '';
+  const paused = useMemo(() => new Set(data?.pausedDates ?? []), [data]);
+  const planned = useMemo(
+    () => new Set((data?.deliveries ?? []).filter((d) => d.source === 'plan' && d.status === 'planned').map((d) => d.date)),
+    [data],
+  );
 
-    const isPaused = selectedDates.has(date);
-    const newSelected = new Set(selectedDates);
-
-    if (isPaused) {
-      newSelected.delete(date);
-    } else {
-      // Check if we have pause days remaining
-      if (calendar.pauseRemainingDays <= 0) {
-        setError('You have used all your available pause days for this subscription.');
-        return;
-      }
-      newSelected.add(date);
-    }
-
-    // Calculate which dates changed
-    const changedDates = [date];
-
-    try {
-      setSaving(true);
-      setError(null);
-
-      const endpoint = isPaused ? 'unpause' : 'pause';
-      const res = await fetch(`/api/subscriptions/${subscriptionId}/${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dates: changedDates }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || `Failed to ${endpoint} date`);
-      }
-
-      setSelectedDates(newSelected);
-      await loadCalendar(); // Refresh to get updated balance
-      onUpdate?.();
-    } catch (err: any) {
-      setError(err.message);
-      // Revert optimistic update
-      await loadCalendar();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const isDatePausable = (date: string): boolean => {
-    if (!calendar) return false;
+  if (load.kind === 'loading') return <p className="acct-muted" aria-live="polite">Loading your calendar…</p>;
+  if (load.kind === 'error') {
     return (
-      date >= calendar.earliestPausableDate &&
-      date >= calendar.startDate &&
-      date <= calendar.endDate
-    );
-  };
-
-  const isDateInRange = (date: string): boolean => {
-    if (!calendar) return false;
-    return date >= calendar.startDate && date <= calendar.endDate;
-  };
-
-  const renderCalendar = () => {
-    if (!calendar) return null;
-
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-
-    // Get first day of month and number of days
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startingDayOfWeek = firstDay.getDay(); // 0 = Sunday
-
-    const monthName = currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-
-    const days: React.ReactNode[] = [];
-
-    // Empty cells for days before month starts
-    for (let i = 0; i < startingDayOfWeek; i++) {
-      days.push(<div key={`empty-${i}`} className="calendar-day empty" />);
-    }
-
-    // Days of the month
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const isPaused = selectedDates.has(date);
-      const pausable = isDatePausable(date);
-      const inRange = isDateInRange(date);
-
-      const classes = [
-        'calendar-day',
-        isPaused && 'paused',
-        !pausable && inRange && 'too-soon',
-        !inRange && 'out-of-range',
-        pausable && 'pausable',
-      ]
-        .filter(Boolean)
-        .join(' ');
-
-      days.push(
-        <button
-          key={date}
-          className={classes}
-          onClick={() => pausable && toggleDate(date)}
-          disabled={!pausable || saving}
-          title={
-            isPaused
-              ? 'Click to unpause'
-              : !pausable && inRange
-              ? 'Cannot pause (4 PM cutoff)'
-              : !inRange
-              ? 'Outside subscription range'
-              : 'Click to pause delivery'
-          }
-        >
-          <span className="day-number">{day}</span>
-          {isPaused && <span className="pause-indicator">⏸</span>}
+      <div>
+        <ErrorNote fail={load.fail} />
+        <button type="button" className="acct-btn acct-btn-ghost" onClick={() => { setLoad({ kind: 'loading' }); void refresh(); }}>
+          Try again
         </button>
-      );
-    }
-
-    return (
-      <div className="pause-calendar">
-        <div className="calendar-header">
-          <button
-            onClick={() => setCurrentMonth(new Date(year, month - 1))}
-            className="nav-btn"
-            disabled={saving}
-          >
-            ‹
-          </button>
-          <h3>{monthName}</h3>
-          <button
-            onClick={() => setCurrentMonth(new Date(year, month + 1))}
-            className="nav-btn"
-            disabled={saving}
-          >
-            ›
-          </button>
-        </div>
-
-        <div className="calendar-weekdays">
-          <div className="weekday">Sun</div>
-          <div className="weekday">Mon</div>
-          <div className="weekday">Tue</div>
-          <div className="weekday">Wed</div>
-          <div className="weekday">Thu</div>
-          <div className="weekday">Fri</div>
-          <div className="weekday">Sat</div>
-        </div>
-
-        <div className="calendar-grid">{days}</div>
       </div>
     );
+  }
+  if (!data || !month) return null;
+
+  const toggle = async (date: string) => {
+    const unpause = paused.has(date);
+    setBusyDate(date);
+    setNotice(null);
+    let lockedFrom: string | undefined;
+    const res = await action.run(async () => {
+      const r = await callApi<{ message?: string }>(`/api/subscriptions/${subscriptionId}/${unpause ? 'unpause' : 'pause'}`, {
+        body: { dates: [date] },
+      });
+      // a date_locked answer tells us where "open" really starts now
+      if (!r.ok && r.fail.code === 'date_locked' && r.fail.firstOpen) lockedFrom = r.fail.firstOpen;
+      return r;
+    });
+    setBusyDate(null);
+    if (lockedFrom) setFloor(lockedFrom);
+    if (res) {
+      setNotice(res.message ?? (unpause ? `${dayLabel(date)} restored.` : `${dayLabel(date)} paused.`));
+      router.refresh();
+    }
+    await refresh();
   };
 
-  if (loading) {
-    return <div className="pause-calendar-loading">Loading calendar...</div>;
+  const { y, m } = month;
+  const daysIn = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const lead = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  const cells: React.ReactNode[] = [];
+  for (let i = 0; i < lead; i++) cells.push(<span key={`e${i}`} className="pc-day pc-empty" aria-hidden="true" />);
+  for (let d = 1; d <= daysIn; d++) {
+    const date = ymd(y, m, d);
+    const inTerm = date >= data.startDate && date <= data.endDate;
+    const isPaused = paused.has(date);
+    const open = date >= earliest;
+    const canPause = open && inTerm && planned.has(date) && data.pauseRemainingDays > 0;
+    const canUnpause = open && isPaused;
+    const tappable = (canPause || canUnpause) && !action.pending;
+    const cls = ['pc-day', isPaused && 'pc-paused', inTerm && !open && 'pc-closed', !inTerm && 'pc-out', tappable && 'pc-open']
+      .filter(Boolean)
+      .join(' ');
+    const what = isPaused
+      ? open
+        ? 'paused — tap to restore'
+        : 'paused — closed for changes'
+      : !inTerm
+        ? 'not in this plan'
+        : !open
+          ? 'closed for changes'
+          : !planned.has(date)
+            ? 'no delivery to pause'
+            : data.pauseRemainingDays <= 0
+              ? 'no pause days left'
+              : 'tap to pause';
+    cells.push(
+      <button
+        key={date}
+        type="button"
+        className={cls}
+        disabled={!tappable}
+        onClick={() => void toggle(date)}
+        aria-label={`${dayLabel(date)}: ${what}`}
+        aria-pressed={isPaused}
+      >
+        <span>{busyDate === date ? '…' : d}</span>
+      </button>,
+    );
   }
 
-  if (!calendar) {
-    return <div className="pause-calendar-error">Could not load calendar</div>;
-  }
+  const first = monthOf(data.startDate < earliest ? earliest : data.startDate);
+  const last = monthOf(data.endDate);
+  const atFirst = y < first.y || (y === first.y && m <= first.m);
+  const atLast = y > last.y || (y === last.y && m >= last.m);
+  const step = (n: number) => {
+    const t = new Date(Date.UTC(y, m - 1 + n, 1));
+    setMonth({ y: t.getUTCFullYear(), m: t.getUTCMonth() + 1 });
+  };
 
   return (
-    <div className="pause-calendar-container">
-      <div className="pause-balance">
-        <h3>Pause Days</h3>
-        <div className="balance-display">
-          <span className="remaining">{calendar.pauseRemainingDays}</span>
-          <span className="separator">/</span>
-          <span className="total">{calendar.pauseAllowanceDays}</span>
-        </div>
-        <p className="balance-label">
-          {calendar.pauseRemainingDays === 0
-            ? 'You have used all your available pause days'
-            : `${calendar.pauseRemainingDays} day${calendar.pauseRemainingDays === 1 ? '' : 's'} remaining`}
-        </p>
+    <div className="pc">
+      <p className="pc-balance">
+        <strong>{data.pauseRemainingDays}</strong> of {data.pauseAllowanceDays} pause days left
+        {data.pauseRemainingDays === 0 ? ' — you can still restore a paused day.' : '.'}
+      </p>
+      <div className="pc-head">
+        <button type="button" className="acct-btn acct-btn-ghost pc-nav" onClick={() => step(-1)} disabled={atFirst} aria-label="Previous month">
+          ‹
+        </button>
+        <h4>{monthFmt.format(new Date(Date.UTC(y, m - 1, 1)))}</h4>
+        <button type="button" className="acct-btn acct-btn-ghost pc-nav" onClick={() => step(1)} disabled={atLast} aria-label="Next month">
+          ›
+        </button>
       </div>
-
-      {error && <div className="pause-error">{error}</div>}
-
-      {renderCalendar()}
-
-      <div className="pause-info">
-        <p className="cutoff-notice">
-          ⏰ You must select dates before <strong>4:00 PM</strong> to pause the next day's delivery.
-        </p>
-        <p className="usage-note">
-          Each paused date extends your subscription by 1 day. No delivery or charge on paused dates.
-        </p>
+      <div className="pc-grid" role="group" aria-label="Delivery dates">
+        {WEEKDAYS.map((w) => (
+          <span key={w} className="pc-wd" aria-hidden="true">
+            {w}
+          </span>
+        ))}
+        {cells}
       </div>
-
-      <style jsx>{`
-        .pause-calendar-container {
-          max-width: 600px;
-          margin: 0 auto;
-        }
-
-        .pause-balance {
-          background: linear-gradient(135deg, var(--red-lift, #a81d12) 0%, var(--red-deep, #650f08) 100%);
-          color: white;
-          padding: 1.5rem;
-          border-radius: 12px;
-          text-align: center;
-          margin-bottom: 1.5rem;
-        }
-
-        .pause-balance h3 {
-          margin: 0 0 0.5rem 0;
-          font-size: 1rem;
-          opacity: 0.9;
-        }
-
-        .balance-display {
-          font-size: 3rem;
-          font-weight: bold;
-          line-height: 1;
-          margin: 0.5rem 0;
-        }
-
-        .balance-display .separator {
-          opacity: 0.5;
-          margin: 0 0.25rem;
-        }
-
-        .balance-label {
-          margin: 0.5rem 0 0 0;
-          opacity: 0.9;
-        }
-
-        .pause-error {
-          background: #fee;
-          color: #c33;
-          padding: 0.75rem 1rem;
-          border-radius: 8px;
-          margin-bottom: 1rem;
-          font-size: 0.9rem;
-        }
-
-        .pause-calendar {
-          background: white;
-          border: 1px solid #e5e7eb;
-          border-radius: 12px;
-          padding: 1rem;
-          margin-bottom: 1rem;
-        }
-
-        .calendar-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 1rem;
-        }
-
-        .calendar-header h3 {
-          margin: 0;
-          font-size: 1.125rem;
-        }
-
-        .nav-btn {
-          background: none;
-          border: 1px solid #e5e7eb;
-          width: 32px;
-          height: 32px;
-          border-radius: 6px;
-          cursor: pointer;
-          font-size: 1.25rem;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #6b7280;
-          transition: all 0.2s;
-        }
-
-        .nav-btn:hover:not(:disabled) {
-          background: #f3f4f6;
-          border-color: #d1d5db;
-        }
-
-        .nav-btn:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-        }
-
-        .calendar-weekdays {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 0.25rem;
-          margin-bottom: 0.5rem;
-        }
-
-        .weekday {
-          text-align: center;
-          font-size: 0.75rem;
-          font-weight: 600;
-          color: #6b7280;
-          padding: 0.5rem 0;
-        }
-
-        .calendar-grid {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 0.25rem;
-        }
-
-        .calendar-day {
-          aspect-ratio: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          border: 1px solid #e5e7eb;
-          border-radius: 8px;
-          background: white;
-          cursor: pointer;
-          position: relative;
-          transition: all 0.2s;
-          font-size: 0.9rem;
-        }
-
-        .calendar-day.empty {
-          border: none;
-          cursor: default;
-        }
-
-        .calendar-day.out-of-range {
-          background: #f9fafb;
-          color: #d1d5db;
-          cursor: not-allowed;
-          border-color: #f3f4f6;
-        }
-
-        .calendar-day.too-soon {
-          background: #fef3c7;
-          border-color: #fbbf24;
-          cursor: not-allowed;
-        }
-
-        .calendar-day.pausable:hover:not(:disabled) {
-          background: rgba(140, 23, 14, 0.06);
-          border-color: var(--red, #8c170e);
-          transform: scale(1.05);
-        }
-
-        .calendar-day.paused {
-          background: var(--red, #8c170e);
-          color: white;
-          border-color: var(--red-deep, #650f08);
-          font-weight: 600;
-        }
-
-        .calendar-day.paused:hover:not(:disabled) {
-          background: var(--red-lift, #a81d12);
-        }
-
-        .calendar-day:disabled {
-          cursor: not-allowed;
-          opacity: 0.6;
-        }
-
-        .day-number {
-          display: block;
-        }
-
-        .pause-indicator {
-          position: absolute;
-          top: 2px;
-          right: 2px;
-          font-size: 0.6rem;
-        }
-
-        .pause-info {
-          background: #f9fafb;
-          border: 1px solid #e5e7eb;
-          border-radius: 8px;
-          padding: 1rem;
-        }
-
-        .pause-info p {
-          margin: 0.5rem 0;
-          font-size: 0.875rem;
-          color: #4b5563;
-        }
-
-        .pause-info p:first-child {
-          margin-top: 0;
-        }
-
-        .pause-info p:last-child {
-          margin-bottom: 0;
-        }
-
-        .cutoff-notice {
-          color: #b45309 !important;
-        }
-
-        .pause-calendar-loading,
-        .pause-calendar-error {
-          text-align: center;
-          padding: 2rem;
-          color: #6b7280;
-        }
-
-        @media (max-width: 640px) {
-          .pause-calendar {
-            padding: 0.75rem;
-          }
-
-          .calendar-day {
-            font-size: 0.8rem;
-          }
-
-          .balance-display {
-            font-size: 2.5rem;
-          }
-        }
-      `}</style>
+      <p className="pc-legend">
+        <span className="pc-key pc-key-paused" /> paused <span className="pc-key pc-key-closed" /> closed for changes
+      </p>
+      {action.pending && <p className="acct-muted" aria-live="polite">Saving…</p>}
+      {notice && !action.fail && <p className="acct-ok" role="status">{notice}</p>}
+      <ErrorNote fail={action.fail} />
+      <p className="acct-muted">
+        Changes for a day close at {cutoffLabel} the day before. The first day you can change now is{' '}
+        <strong>{dayLabel(earliest)}</strong>. Each paused day adds one day at the end of your plan.
+      </p>
     </div>
   );
 }
