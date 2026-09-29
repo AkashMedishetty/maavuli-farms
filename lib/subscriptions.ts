@@ -1,6 +1,56 @@
 import { MongoServerError, type ObjectId } from 'mongodb';
 import { getDb } from './db';
 import { col, normalizeMobile, type Delivery, type Subscription } from './models';
+import type { ObjectId as ObjectIdType } from 'mongodb';
+import type { OpCtx } from './clock';
+
+/* ================================================================ PLATFORM ==
+ * OWNER: B1 (subscriptions & orders). The four functions below are the contract
+ * other agents code against — keep their signatures and replace the stub bodies.
+ * cancelSubscription (further down) also changes to (id, ctx, opts) per the
+ * contract; B1 updates its only caller, app/api/subscriptions/[id]/cancel.
+ * ========================================================================== */
+
+/**
+ * Append `days` delivery days after the subscription's current endDate (source
+ * 'plan' for pause shifts, 'makeup' for our-fault compensation) and move endDate.
+ * If a renewal is queued (renewedBy) and has not started, shift it by the same
+ * number of days so the two never overlap. Returns the new endDate and dates added.
+ */
+export async function extendSubscription(
+  subscriptionId: ObjectIdType,
+  days: number,
+  source: 'plan' | 'makeup',
+  ctx: OpCtx,
+): Promise<{ newEndDate: string; appended: string[] }> {
+  void subscriptionId;
+  void days;
+  void source;
+  void ctx;
+  throw new Error('not implemented: extendSubscription (owner B1)');
+}
+
+/** Tick step: scheduled → active on startDate. */
+export async function activateDueSubscriptions(ctx: OpCtx): Promise<{ activated: number }> {
+  void ctx;
+  throw new Error('not implemented: activateDueSubscriptions (owner B1)');
+}
+
+/** Tick step: active → completed once endDate has passed and nothing is left to deliver. */
+export async function completeEndedSubscriptions(ctx: OpCtx): Promise<{ completed: number }> {
+  void ctx;
+  throw new Error('not implemented: completeEndedSubscriptions (owner B1)');
+}
+
+/** The customer's current plan chain for a kind: what a renewal would continue after. */
+export async function renewalTarget(
+  mobile: string,
+  subscriptionId: ObjectIdType,
+): Promise<{ subscription: Subscription; renewStartDate: string } | null> {
+  void mobile;
+  void subscriptionId;
+  throw new Error('not implemented: renewalTarget (owner B1)');
+}
 
 /**
  * Subscription lifecycle: turning a paid order into a term of daily deliveries,

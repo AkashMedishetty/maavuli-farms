@@ -57,7 +57,11 @@ const SW_REGISTER =
   `if('serviceWorker' in navigator){addEventListener('load',function(){` +
   `navigator.serviceWorker.register('/sw.js').catch(function(){})})}`;
 
-const NO_FLASH = `try{if(sessionStorage.getItem('mv-skip-loader'))document.documentElement.classList.add('loaded')}catch(e){}`;
+// Staff and delivery-partner screens are work tools used many times a morning: the
+// brand loader is skipped there so a reload is instant.
+const NO_FLASH =
+  `try{if(sessionStorage.getItem('mv-skip-loader')||/^\\/(rider|admin)(\\/|$)/.test(location.pathname))` +
+  `document.documentElement.classList.add('loaded')}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -28,3 +28,9 @@ pnpm-debug.log*
 
 # verification screenshots — regenerate with scripts/shoot*.mjs, not source
 ss/
+
+# local photo storage (STORAGE_DRIVER=local) and other dev data
+.data/
+
+# orchestration scratch: agent reports, commit messages
+.agents/

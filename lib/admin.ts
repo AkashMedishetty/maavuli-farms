@@ -16,6 +16,7 @@
 
 import { getSession } from '@/lib/auth';
 import { adminMobiles } from '@/lib/env';
+import { principalFor } from '@/lib/roles';
 import { getDb } from '@/lib/db';
 import { col, type DeliveryStatus, type Rider, type Zone } from '@/lib/models';
 import type { MilkKind } from '@/lib/pricing';
@@ -42,21 +43,22 @@ export function adminConfigured(): boolean {
 }
 
 /**
- * The one gate. Throws `NotAdminError` unless the caller has a session whose mobile
- * is in ADMIN_MOBILES. Route handlers turn the throw into a 403; the page renders
- * an "admin not configured" / "not authorised" state. It never trusts a client
- * flag, a query parameter, or the session's own `isAdmin` alone — the env
- * allowlist is the authority, so a compromised session that set isAdmin still
- * fails the mobile check.
+ * The admin gate for fulfilment/ops surfaces: owner or ops staff (see lib/roles).
+ * Throws `NotAdminError` for every failure — no session, no role, wrong role — so
+ * route handlers answer 403 and pages render a "not authorised" state. It never
+ * trusts a client flag, a query parameter, or the session's own `isAdmin`: roles
+ * are resolved from the env allowlist and the staff collection on every request.
  */
 export async function requireAdmin(): Promise<AdminSession> {
   const allow = adminMobiles();
-  if (allow.length === 0) throw new NotAdminError('Admin is not configured');
-
   const session = await getSession();
-  if (!session) throw new NotAdminError('Not authenticated');
-  if (!allow.includes(session.mobile)) throw new NotAdminError('Not authorised');
-
+  if (!session) {
+    throw new NotAdminError(allow.length === 0 ? 'Admin is not configured' : 'Not authenticated');
+  }
+  const p = await principalFor(session.mobile);
+  if (p.staffRole !== 'owner' && p.staffRole !== 'ops') {
+    throw new NotAdminError(allow.length === 0 ? 'Admin is not configured' : 'Not authorised');
+  }
   return { mobile: session.mobile, isAdmin: true };
 }
 
