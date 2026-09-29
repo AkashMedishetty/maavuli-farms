@@ -37,9 +37,10 @@ never invent business facts, secrets only in env).
   `MONGODB_DB=maavuli_it_<agent> pnpm it scripts/it/<agent>-<topic>.ts`.
   Build every lib call's `ctx` with an explicit `now` to exercise cutoffs. Clean up
   your own test data or use fresh mobiles (e.g. `9<agent digit>xxxxxxxx`).
-- Dev server only if you must hit a route: `MONGODB_DB=maavuli_it_<agent> PORT=<port>
-  pnpm dev` on your port (B1 3101, B2 3102, B3 3103, B4 3104, B5 3105, B6 3106,
-  B7a 3107, B7b 3108, B8 3109, B9 3110, B10 3111). Stop it when done.
+- Do NOT start a dev server (`next dev`) or run `next build`: the host is memory-tight
+  and four agents already died from it. Test lib code with the integration scripts;
+  route handlers are exercised later by the e2e suite. Run `pnpm typecheck` at most
+  once per numbered item, and integration scripts one at a time.
 
 ### Report (write it FIRST as a skeleton, update after each unit of work)
 `/Users/akash/CTX/Websites/maavuli-platform/.agents/reports/<agent>.md` with:
@@ -201,9 +202,16 @@ outbox 'suppressed'). Language from `user.lang`. Who enqueues what (dedupe key):
 ## 5. Tick (`/api/cron/tick`, every 5 min; each step leased in job_runs, errors isolated)
 
 1 `expireUnpaidOrders` (B1) · 2 `activateDueSubscriptions` (B1) · 3 `lockDueDays` (B2) ·
-4 `closeDueDays` (B2) · 5 `autoResolveStaleUnconfirmed` (B2) · 6
-`completeEndedSubscriptions` (B1) · 7 `enqueueRenewalReminders` (B6) · 8 `drainOutbox`
-(B6) · 9 `refreshStaleRoutes` (B4) · 10 `purgeOldPhotos` (B5).
+4 `closeDueDays` (B2) · 5 `autoResolveStaleUnconfirmed` (B2) · 6 `compensatePendingMisses`
+(B3 — retries any fault-'ours' miss whose compensation failed) · 7
+`completeEndedSubscriptions` (B1) · 8 `enqueueRenewalReminders` (B6) · 9 `drainOutbox`
+(B6) · 10 `refreshStaleRoutes` (B4) · 11 `purgeOldPhotos` (B5).
+
+**Status after wave 1 (commit f7cbff1):** B4 routing, B5 rider app and B6 notifications
+are DONE and committed — call their modules as-is. `lib/outcomes` never throws on a
+compensation failure (the sweep in step 6 retries) and calls `reverseCompensation` when
+a miss is corrected to delivered or its fault moves ours → customer. B2's lane (day
+engine) is being built by the orchestrator directly.
 
 ## 6. Ownership (edit ONLY your files; create new files only inside your area)
 

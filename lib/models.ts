@@ -565,6 +565,9 @@ export interface DayLock {
   stops: number;
   cowLitres: number;
   buffaloLitres: number;
+  /** set when the day closes (unmarked deliveries → unconfirmed, runs closed) */
+  closedAt?: Date;
+  unconfirmedAtClose?: number;
 }
 
 /**

@@ -110,8 +110,15 @@ function localOrder(origin: LatLng, stops: readonly StopInput[]): { order: strin
 /**
  * Order `stops` for `riderId` by their standing route — see the file header.
  * NEVER calls Google (it runs inside the daily lock). riderId null → local order.
+ * `markDirty: false` makes it read-only (the manifest preview must not write).
  */
-export async function orderStopsForRider(riderId: ObjectId | null, stops: StopInput[], ctx: OpCtx): Promise<OrderedStops> {
+export async function orderStopsForRider(
+  riderId: ObjectId | null,
+  stops: StopInput[],
+  ctx: OpCtx,
+  opts: { markDirty?: boolean } = {},
+): Promise<OrderedStops> {
+  const markDirty = opts.markDirty ?? true;
   if (stops.length === 0) return { order: [], source: 'none' };
   const db = await getDb();
   const unique = [...new Map(stops.map(s => [s.stopKey, s])).values()];
@@ -125,7 +132,7 @@ export async function orderStopsForRider(riderId: ObjectId | null, stops: StopIn
 
   const standing = await col.standingRoutes(db).findOne({ riderId });
   if (!standing || standing.stopOrder.length === 0) {
-    await markRouteDirty(riderId, standing ? 'first stops' : 'no standing route', ctx);
+    if (markDirty) await markRouteDirty(riderId, standing ? 'first stops' : 'no standing route', ctx);
     const l = localOrder(origin, unique);
     return { order: l.order, source: 'local', totalM: l.totalM };
   }
@@ -138,7 +145,7 @@ export async function orderStopsForRider(riderId: ObjectId | null, stops: StopIn
   const fresh = toPoints(unique.filter(s => !keptKeys.has(s.stopKey)));
 
   const ordered = fresh.length ? insertAllCheapest(origin, kept, fresh) : kept;
-  if (fresh.length) await markRouteDirty(riderId, `${fresh.length} new stop(s)`, ctx);
+  if (fresh.length && markDirty) await markRouteDirty(riderId, `${fresh.length} new stop(s)`, ctx);
 
   return {
     order: ordered.map(s => s.stopKey),

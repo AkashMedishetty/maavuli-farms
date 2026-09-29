@@ -37,13 +37,17 @@ export function deliveredProofOk(hasPhoto: boolean, note: string | undefined): b
   return hasPhoto || (typeof note === 'string' && note.trim() !== '');
 }
 
-/** Resolve the fault of a missed delivery. Only staff may override the reason default. */
+/**
+ * Resolve the fault of a missed delivery. Only staff — and the platform's own rules
+ * (actor 'system', e.g. "unconfirmed for 24 h after day close counts as our miss") —
+ * may override the reason default. A rider or customer never can.
+ */
 export function resolveFault(
   reason: NotDeliveredReason,
   actorKind: 'rider' | 'staff' | 'system' | 'customer',
   explicit?: Fault,
 ): Fault {
-  if (actorKind === 'staff' && explicit) return explicit;
+  if ((actorKind === 'staff' || actorKind === 'system') && explicit) return explicit;
   return REASON_FAULT[reason];
 }
 

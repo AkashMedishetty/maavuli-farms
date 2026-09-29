@@ -23,7 +23,6 @@
     "db:init": "tsx --env-file-if-exists=.env.local scripts/init-db.ts",
     "db:migrate-platform": "tsx --env-file-if-exists=.env.local scripts/migrate-platform.ts",
     "db:seed-dev": "tsx --env-file-if-exists=.env.local scripts/seed-dev.ts",
-    "db:roll": "node --env-file-if-exists=.env.local scripts/roll-deliveries.mjs",
     "db:seed-pincodes": "node --env-file-if-exists=.env.local scripts/seed-pincodes.mjs",
     "db:seed-zones": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/seed-zones.mjs"
   },

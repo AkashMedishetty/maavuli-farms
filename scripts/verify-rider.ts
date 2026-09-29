@@ -49,6 +49,8 @@ t('could_not_find → unknown', resolveFault('could_not_find', 'rider') === 'unk
 t('rider cannot override fault', resolveFault('could_not_find', 'rider', 'ours') === 'unknown');
 t('staff CAN override fault', resolveFault('could_not_find', 'staff', 'ours') === 'ours');
 t('staff without explicit takes default', resolveFault('refused', 'staff') === 'customer');
+t('system (platform rule) CAN set fault', resolveFault('other', 'system', 'ours') === 'ours');
+t('customer cannot override fault', resolveFault('could_not_find', 'customer', 'ours') === 'unknown');
 
 // ---- action validation ----
 t('delivered with photo valid', validateAction({ type: 'delivered', deliveryId: 'x', hasPhoto: true }).ok === true);
