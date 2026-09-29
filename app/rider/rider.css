@@ -60,7 +60,7 @@
 .rbtn.primary { background: var(--accent); color: #04121b; border-color: transparent; }
 .rbtn.ok { background: var(--ok); color: #04140a; border-color: transparent; }
 .rbtn.ghost { background: transparent; }
-.rbtn.small { width: auto; min-height: 40px; padding: 8px 12px; font-size: .9rem; }
+.rbtn.small { width: auto; min-height: 44px; padding: 8px 12px; font-size: .9rem; }
 .rbtn:disabled { opacity: .5; cursor: not-allowed; }
 
 .rbtn-row { display: flex; gap: 10px; }
@@ -136,7 +136,7 @@
   padding: 10px calc(12px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom));
   font-weight: 700; z-index: 20;
 }
-.syncbar.offline { background: var(--bad); color: #fff; }
+.syncbar.offline { background: #b91c1c; color: #fff; } /* 6.5:1 with white; --bad is 3.8:1 */
 
 /* states */
 .rnote { color: var(--muted); text-align: center; padding: 32px 8px; }

@@ -7,6 +7,7 @@ import {
   updateQueued,
   type QueuedAction,
 } from './queue';
+import { classifyResult, type ActionResultLike, type RejectedAction } from './logic';
 
 /* -------------------------------------------------------- image compression -- */
 
@@ -101,65 +102,96 @@ export async function uploadPhoto(deliveryId: string, blob: Blob, contentType = 
 export interface FlushResult {
   flushed: number;
   remaining: number;
+  /** actions the server refused permanently — dropped from the queue; show them and reload */
+  rejected: RejectedAction[];
+}
+
+type SendOutcome = { kind: 'ok' } | { kind: 'retry'; error: string } | { kind: 'rejected'; error: string };
+
+/**
+ * Upload the action's photo (unless already uploaded), then POST the action.
+ * Throws on network / HTTP failure (caller retries). `onPhotoKey` lets the queue
+ * persist the key so a retry does not upload the photo twice.
+ */
+async function sendAction(a: QueuedAction, onPhotoKey?: (key: string) => Promise<void>): Promise<SendOutcome> {
+  let photoKey = a.photoKey;
+  if (!photoKey && a.photoBlob) {
+    photoKey = await uploadPhoto(a.deliveryId, a.photoBlob, a.photoContentType ?? 'image/jpeg');
+    if (onPhotoKey) await onPhotoKey(photoKey);
+  }
+
+  const action = {
+    actionId: a.actionId,
+    type: a.type,
+    deliveryId: a.deliveryId,
+    ...(a.note ? { note: a.note } : {}),
+    ...(a.reason ? { reason: a.reason } : {}),
+    ...(photoKey ? { proof: { ...a.proof, photoKey } } : a.proof ? { proof: a.proof } : {}),
+  };
+
+  const res = await postJson('/api/rider/actions', { op: 'actions', actions: [action] });
+  if (!res.ok) throw new Error(`actions failed (${res.status})`);
+  const data = (await res.json()) as { results?: ActionResultLike[] };
+  const r = data.results?.[0];
+  const kind = classifyResult(r);
+  if (kind === 'ok') return { kind };
+  return { kind, error: r?.error ?? 'action not answered' };
+}
+
+/**
+ * Post one action straight to the server, bypassing IndexedDB — the fallback when
+ * the phone cannot store the queue (private mode, storage full). Throws on network
+ * failure so the caller can tell the rider it was not saved.
+ */
+export async function postActionDirect(a: QueuedAction): Promise<SendOutcome> {
+  return sendAction(a);
 }
 
 /**
  * Drain the offline queue: for each due action, upload its photo (if any and not yet
- * uploaded), then POST the action. On success remove it; on failure bump attempts
- * and schedule the next try with backoff. Server idempotency makes this safe to run
- * repeatedly and concurrently with a fresh capture.
+ * uploaded), then POST the action. On success remove it; on a transient failure bump
+ * attempts and schedule the next try with backoff; on a permanent rejection remove it
+ * and report it in `rejected` so the app can tell the rider and reload the true state.
+ * Server idempotency makes this safe to run repeatedly and concurrently with a capture.
  */
 export async function flushQueue(): Promise<FlushResult> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     const all = await allQueued();
-    return { flushed: 0, remaining: all.length };
+    return { flushed: 0, remaining: all.length, rejected: [] };
   }
 
   const now = Date.now();
   const queued = await allQueued();
   let flushed = 0;
+  const rejected: RejectedAction[] = [];
 
   for (const a of queued) {
     if (a.nextAttemptAt > now) continue;
+    let current = a;
     try {
-      let photoKey = a.photoKey;
-      if (!photoKey && a.photoBlob) {
-        photoKey = await uploadPhoto(a.deliveryId, a.photoBlob, a.photoContentType ?? 'image/jpeg');
-        await updateQueued({ ...a, photoKey });
-      }
-
-      const action = {
-        actionId: a.actionId,
-        type: a.type,
-        deliveryId: a.deliveryId,
-        ...(a.note ? { note: a.note } : {}),
-        ...(a.reason ? { reason: a.reason } : {}),
-        ...(photoKey ? { proof: { ...a.proof, photoKey } } : a.proof ? { proof: a.proof } : {}),
-      };
-
-      const res = await postJson('/api/rider/actions', { op: 'actions', actions: [action] });
-      if (!res.ok) throw new Error(`actions failed (${res.status})`);
-      const data = (await res.json()) as { results?: { ok: boolean; error?: string; retryable?: boolean }[] };
-      const r = data.results?.[0];
-      if (r && !r.ok && r.retryable !== true) {
-        // A permanent rejection (e.g. illegal transition, not this rider's stop) —
-        // drop it so it does not wedge the queue forever, but keep going. The server
-        // marks transient failures `retryable`, and those stay queued with backoff.
+      const out = await sendAction(a, async photoKey => {
+        current = { ...a, photoKey };
+        await updateQueued(current);
+      });
+      if (out.kind === 'rejected') {
+        // Permanent (not this rider's stop, a past day, illegal transition, invalid
+        // input): drop it so it cannot wedge the queue, and surface it.
         await removeQueued(a.actionId);
+        rejected.push({ actionId: a.actionId, deliveryId: a.deliveryId, error: out.error });
         continue;
       }
-      if (!r?.ok) throw new Error(r?.error ?? 'action rejected');
+      if (out.kind === 'retry') throw new Error(out.error);
 
       await removeQueued(a.actionId);
       flushed++;
     } catch {
-      const attempts = a.attempts + 1;
-      await updateQueued({ ...a, attempts, nextAttemptAt: Date.now() + backoffMs(attempts) });
+      const attempts = current.attempts + 1;
+      await updateQueued({ ...current, attempts, nextAttemptAt: Date.now() + backoffMs(attempts) });
     }
   }
 
   const remaining = (await allQueued()).length;
-  return { flushed, remaining };
+  return { flushed, remaining, rejected };
 }
 
 function isRetryable(error?: string): boolean {

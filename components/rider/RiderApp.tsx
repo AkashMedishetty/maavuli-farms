@@ -9,7 +9,21 @@ import {
   readCachedToday,
   type QueuedAction,
 } from './queue';
-import { apiCloseRun, apiStartRun, compressImage, flushQueue, getPosition } from './sync';
+import {
+  apiCloseRun,
+  apiStartRun,
+  compressImage,
+  flushQueue,
+  getPosition,
+  postActionDirect,
+} from './sync';
+import {
+  applyOptimisticOutcome,
+  formatLitres,
+  formatRoundDate,
+  rejectionMessage,
+  usableCachedRound,
+} from './logic';
 
 /* ------------------------------------------------------------------ types --- */
 
@@ -64,10 +78,15 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
   const [today, setToday] = useState<Today | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [offline, setOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  // No navigator read during render: server and first client render agree (hydration).
+  const [offline, setOffline] = useState(false);
   const [pending, setPending] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Stop | null>(null);
+  /** permanently rejected actions — survives the reload that load() triggers */
+  const [notice, setNotice] = useState<string | null>(null);
+  const todayRef = useRef<Today | null>(null);
+  todayRef.current = today;
 
   const load = useCallback(async () => {
     setError(null);
@@ -79,10 +98,12 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
       }
       const data = (await res.json()) as Today;
       setToday(data);
-      await cacheToday(data);
+      await cacheToday(data).catch(() => {
+        /* IndexedDB unavailable — the round just won't be there offline */
+      });
     } catch (e) {
-      // Offline / server down: fall back to the last cached round, honestly labelled.
-      const cached = (await readCachedToday()) as Today | null;
+      // Offline / server down: fall back to the cached round, but only if it is TODAY's.
+      const cached = usableCachedRound((await readCachedToday()) as Today | null, new Date());
       if (cached) {
         setToday(cached);
         setError('Showing your last saved round — you appear to be offline.');
@@ -93,6 +114,27 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
       setLoading(false);
     }
   }, []);
+
+  const runFlush = useCallback(async () => {
+    try {
+      const { flushed, remaining, rejected } = await flushQueue();
+      setPending(remaining);
+      if (rejected.length > 0) setNotice(rejectionMessage(rejected, todayRef.current?.stops ?? []));
+      // A rejection means our optimistic "done" is wrong: reload the true state.
+      if (flushed > 0 || rejected.length > 0) void load();
+    } catch {
+      /* IndexedDB unavailable — outcomes are posted directly instead (recordOutcome) */
+    }
+  }, [load]);
+
+  async function retryLoad() {
+    setBusy('load');
+    try {
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
 
   const refreshPending = useCallback(async () => {
     try {
@@ -106,21 +148,21 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
   useEffect(() => {
     void load();
     void refreshPending();
-    const online = () => setOffline(false);
+    setOffline(!navigator.onLine);
+    const online = () => {
+      setOffline(false);
+      void runFlush();
+    };
     const off = () => setOffline(true);
     window.addEventListener('online', online);
     window.addEventListener('offline', off);
-    const timer = setInterval(async () => {
-      const { flushed, remaining } = await flushQueue();
-      setPending(remaining);
-      if (flushed > 0) void load();
-    }, 15_000);
+    const timer = setInterval(() => void runFlush(), 15_000);
     return () => {
       window.removeEventListener('online', online);
       window.removeEventListener('offline', off);
       clearInterval(timer);
     };
-  }, [load, refreshPending]);
+  }, [load, refreshPending, runFlush]);
 
   async function onStart() {
     setBusy('start');
@@ -134,27 +176,54 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
     }
   }
 
-  async function queueOutcome(a: QueuedAction) {
-    await enqueueAction(a);
-    await refreshPending();
-    // optimistic: mark the stop done locally
-    setToday(t =>
-      t
-        ? {
-            ...t,
-            stops: t.stops.map(s =>
-              s.items.some(i => i.deliveryId === a.deliveryId)
-                ? { ...s, done: true, items: s.items.map(i => ({ ...i, status: a.type })) }
-                : s,
-            ),
-            progress: { ...t.progress, done: Math.min(t.progress.total, t.progress.done + 1) },
-          }
-        : t,
-    );
-    // try an immediate flush
-    const { remaining, flushed } = await flushQueue();
-    setPending(remaining);
-    if (flushed > 0) void load();
+  /** optimistic: mark the stop done locally; progress is recounted per stop */
+  function markLocal(a: QueuedAction) {
+    setToday(t => (t ? applyOptimisticOutcome(t, a.deliveryId, a.type) : t));
+  }
+
+  /**
+   * Save the outcome to the phone's queue first. If the phone cannot store it
+   * (IndexedDB unavailable / full), post it directly when online. Returns false
+   * (with an error shown) when the outcome was NOT recorded anywhere.
+   */
+  async function recordOutcome(a: QueuedAction): Promise<boolean> {
+    let stored = true;
+    try {
+      await enqueueAction(a);
+    } catch {
+      stored = false;
+    }
+
+    if (stored) {
+      markLocal(a);
+      await refreshPending();
+      await runFlush(); // try an immediate flush
+      return true;
+    }
+
+    if (!navigator.onLine) {
+      setError(
+        'Could not save this on the phone and you are offline — nothing was recorded. Keep the app open and try again when you have signal.',
+      );
+      return false;
+    }
+    try {
+      const out = await postActionDirect(a);
+      if (out.kind === 'ok') {
+        markLocal(a);
+        return true;
+      }
+      if (out.kind === 'rejected') {
+        setNotice(rejectionMessage([{ actionId: a.actionId, deliveryId: a.deliveryId, error: out.error }], today?.stops ?? []));
+        void load();
+        return false;
+      }
+      setError(`Could not save this on the phone and the server said: ${out.error}. Try again in a moment.`);
+      return false;
+    } catch {
+      setError('Could not save this on the phone or send it — nothing was recorded. Try again and keep the app open.');
+      return false;
+    }
   }
 
   async function onDelivered(stop: Stop, file: File) {
@@ -163,7 +232,7 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
       const [blob, gps] = await Promise.all([compressImage(file).catch(() => null), getPosition()]);
       for (const item of stop.items) {
         if (item.status === 'delivered') continue;
-        await queueOutcome({
+        const saved = await recordOutcome({
           actionId: newActionId(),
           deliveryId: item.deliveryId,
           type: 'delivered',
@@ -173,7 +242,10 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
           nextAttemptAt: Date.now(),
           createdAt: Date.now(),
         });
+        if (!saved) break;
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not record this delivery. Try again.');
     } finally {
       setBusy(null);
     }
@@ -181,10 +253,11 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
 
   async function onMissed(stop: Stop, reason: string) {
     setBusy(stop.stopKey);
+    let ok = true;
     try {
       for (const item of stop.items) {
         if (item.status !== 'locked' && item.status !== 'out_for_delivery') continue;
-        await queueOutcome({
+        const saved = await recordOutcome({
           actionId: newActionId(),
           deliveryId: item.deliveryId,
           type: 'not_delivered',
@@ -193,8 +266,14 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
           nextAttemptAt: Date.now(),
           createdAt: Date.now(),
         });
+        if (!saved) {
+          ok = false; // keep the sheet open so the rider can retry
+          break;
+        }
       }
-      setSheet(null);
+      if (ok) setSheet(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not record this. Try again.');
     } finally {
       setBusy(null);
     }
@@ -214,17 +293,32 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
 
   /* ------------------------------------------------------------------ render */
 
+  const failedRead = !loading && !today && !!error;
+
   return (
     <main className="rider-main">
       <header className="rider-head">
         <h1>Today’s round</h1>
         <p className="sub">
           {riderName ? `${riderName} · ` : ''}
-          {today ? `${today.date} · window ${today.window.start}–${today.window.end}` : '—'}
+          {today ? `${formatRoundDate(today.date)} · window ${today.window.start}–${today.window.end}` : '—'}
         </p>
       </header>
 
-      {error ? <div className="rerror">{error}</div> : null}
+      {error && !failedRead ? (
+        <div className="rerror" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div className="rerror" role="alert">
+          {notice}
+          <button className="rbtn ghost small" style={{ marginTop: 10 }} onClick={() => setNotice(null)}>
+            OK
+          </button>
+        </div>
+      ) : null}
 
       {loading ? (
         <>
@@ -232,6 +326,16 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
           <div className="rskeleton" />
           <div className="rskeleton" />
         </>
+      ) : failedRead ? (
+        <div className="rerror" role="alert">
+          <p style={{ margin: '0 0 12px' }}>
+            {error}
+            <span className="te">మీ రౌండ్ లోడ్ కాలేదు.</span>
+          </p>
+          <button className="rbtn" onClick={retryLoad} disabled={busy === 'load'}>
+            {busy === 'load' ? <span className="spin" /> : 'Try again'}
+          </button>
+        </div>
       ) : !today || !today.hasRun ? (
         <p className="rnote">
           No round assigned to you today.
@@ -241,7 +345,7 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
         <>
           <div className="rbar">
             <span className="prog">
-              {today.progress.done}/{today.progress.total} stops · {today.load.cowLitres + today.load.buffaloLitres} L loaded
+              {today.progress.done}/{today.progress.total} stops · {formatLitres(today.load.cowLitres + today.load.buffaloLitres)} L loaded
             </span>
             <span>{statusLabel(today.status)}</span>
           </div>
@@ -296,9 +400,13 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
       ) : null}
 
       {offline ? (
-        <div className="syncbar offline">Offline — {pending} waiting to sync</div>
+        <div className="syncbar offline" role="status">
+          Offline — {pending} waiting to sync
+        </div>
       ) : pending > 0 ? (
-        <div className="syncbar">{pending} waiting to sync…</div>
+        <div className="syncbar" role="status">
+          {pending} waiting to sync…
+        </div>
       ) : null}
     </main>
   );
@@ -336,7 +444,7 @@ function StopCard({
       <ul className="items">
         {stop.items.map(i => (
           <li key={i.deliveryId}>
-            {i.litres} L {i.kind}
+            {formatLitres(i.litres)} L {i.kind}
             {i.source !== 'plan' ? <span className="src">({i.source})</span> : null}
           </li>
         ))}
@@ -391,10 +499,52 @@ function MissedSheet({
   onCancel: () => void;
 }) {
   const [reason, setReason] = useState<string | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef(onCancel);
+  cancelRef.current = onCancel;
+
+  // Focus into the sheet, Escape closes, Tab stays inside, focus returns to the trigger.
+  useEffect(() => {
+    const trigger = document.activeElement as HTMLElement | null;
+    boxRef.current?.querySelector<HTMLElement>('.chip')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !boxRef.current) return;
+      const f = Array.from(boxRef.current.querySelectorAll<HTMLElement>('button:not([disabled])'));
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !boxRef.current.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !boxRef.current.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      if (trigger && trigger.isConnected) trigger.focus();
+    };
+  }, []);
+
   return (
     <div className="rmodal-backdrop" onClick={onCancel}>
-      <div className="rmodal" onClick={e => e.stopPropagation()}>
-        <h3>
+      <div
+        ref={boxRef}
+        className="rmodal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="missed-sheet-title"
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 id="missed-sheet-title">
           Why couldn’t you deliver to {stop.name}?<span className="te">ఎందుకు డెలివరీ కాలేదు?</span>
         </h3>
         <div className="chips">
