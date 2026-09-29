@@ -1,12 +1,16 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
+import { dayRulesForDisplay } from '@/lib/settings';
 import { TENURES, PRODUCTS, formatINR } from '@/lib/pricing';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Refund & Cancellation Policy' };
 
 const rates = PRODUCTS.map(p => `${p.label} ${formatINR(p.baseRatePaise)} per litre`).join(', ');
 
-export default function RefundsPage() {
+export default async function RefundsPage() {
+  const rules = await dayRulesForDisplay();
   return (
     <LegalPage
       title="Refund & Cancellation Policy"
@@ -55,7 +59,7 @@ export default function RefundsPage() {
           ],
         },
       ]}
-      toConfirm={assumptionsFor('refunds')}
+      toConfirm={assumptionsFor('refunds', rules)}
       note="Draft prepared for Razorpay activation in test mode. Razorpay requires a published refund and cancellation policy before live keys are activated; every term above still needs Maavuli’s confirmation and a lawyer’s review before it is binding."
     />
   );

@@ -1,9 +1,13 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
+import { dayRulesForDisplay } from '@/lib/settings';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Shipping & Delivery Policy' };
 
-export default function ShippingPage() {
+export default async function ShippingPage() {
+  const rules = await dayRulesForDisplay();
   return (
     <LegalPage
       title="Shipping & Delivery Policy"
@@ -55,7 +59,7 @@ export default function ShippingPage() {
           ],
         },
       ]}
-      toConfirm={assumptionsFor('shipping')}
+      toConfirm={assumptionsFor('shipping', rules)}
       note="Draft prepared for Razorpay activation in test mode. The delivery window, cut-off, first-delivery timing and serviceable area are proposed defaults pending Maavuli’s confirmation and legal review; they are not executed terms."
     />
   );

@@ -21,6 +21,8 @@
  * drop it from the "To confirm" block.
  */
 
+import { DEFAULT_DAY_RULES, hmLabel, type DayRules } from './cutoff';
+
 /** A single value we chose rather than were told. `page` groups it per policy. */
 export interface DraftAssumption {
   id: string;
@@ -37,21 +39,21 @@ export const DRAFT_ASSUMPTIONS: readonly DraftAssumption[] = [
     id: 'delivery-window',
     page: 'shipping',
     label: 'Daily delivery window',
-    value: 'Between 5:30 AM and 8:00 AM, every morning including weekends. (The build’s default window; ops can change it in settings.)',
+    value: 'Between {windowStart} and {windowEnd}, every morning including weekends.',
   },
   {
     id: 'order-cutoff',
     page: 'shipping',
     label: 'Cut-off for the next morning',
     value:
-      'Changes for a delivery day — a pause, a resumed day, extra milk, a cancellation, an address change — close at 4:00 PM the day before. After that the day’s route is fixed and the change applies from the next open day.',
+      'Changes for a delivery day — a pause, a resumed day, extra milk, a cancellation, an address change — close at {cutoff} the day before. After that the day’s route is fixed and the change applies from the next open day.',
   },
   {
     id: 'first-delivery',
     page: 'shipping',
     label: 'When a new subscription starts',
     value:
-      'The first delivery is on the start date you choose (up to 30 days ahead), or the earliest day still open under the 4:00 PM cut-off if that is later. The term runs from the first delivery.',
+      'The first delivery is on the start date you choose (up to 30 days ahead), or the earliest day still open under the {cutoff} cut-off if that is later. The term runs from the first delivery.',
   },
   {
     id: 'missed-delivery',
@@ -81,7 +83,7 @@ export const DRAFT_ASSUMPTIONS: readonly DraftAssumption[] = [
     page: 'refunds',
     label: 'Notice to pause or skip',
     value:
-      'A pause or a single-day skip made before the 4:00 PM cut-off applies from the next morning; later, from the day after.',
+      'A pause or a single-day skip made before the {cutoff} cut-off applies from the next morning; later, from the day after.',
   },
   {
     id: 'pause-behaviour',
@@ -185,9 +187,25 @@ export const DRAFT_ASSUMPTIONS: readonly DraftAssumption[] = [
   },
 ] as const;
 
-/** The assumptions surfaced on a given policy page, plus the "all" pages. */
-export function assumptionsFor(page: DraftAssumption['page']): DraftAssumption[] {
-  return DRAFT_ASSUMPTIONS.filter(a => a.page === page || a.page === 'all');
+/**
+ * The assumptions surfaced on a given policy page, plus the "all" pages.
+ *
+ * Times in the texts are TOKENS ({cutoff}, {windowStart}, {windowEnd}) filled from
+ * the live ops settings, because ops can change the cut-off and the delivery window
+ * in admin — a policy page that kept saying "4:00 PM" after the cut-off moved would
+ * promise customers something the platform no longer does.
+ */
+export function assumptionsFor(page: DraftAssumption['page'], rules: DayRules = DEFAULT_DAY_RULES): DraftAssumption[] {
+  const fill = (s: string) =>
+    s
+      .replaceAll('{cutoff}', hmLabel(rules.cutoffTime))
+      .replaceAll('{windowStart}', hmLabel(rules.windowStart))
+      .replaceAll('{windowEnd}', hmLabel(rules.windowEnd));
+  return DRAFT_ASSUMPTIONS.filter(a => a.page === page || a.page === 'all').map(a => ({
+    ...a,
+    label: fill(a.label),
+    value: fill(a.value),
+  }));
 }
 
 /**

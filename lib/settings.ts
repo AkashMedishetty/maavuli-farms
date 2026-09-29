@@ -50,6 +50,18 @@ export function dayRulesOf(s: OpsSettingsValues): DayRules {
   };
 }
 
+/**
+ * The live day rules for display on public pages (policies, FAQ). A database
+ * outage must not take a policy page down, so it falls back to the defaults.
+ */
+export async function dayRulesForDisplay(): Promise<DayRules> {
+  try {
+    return dayRulesOf(await getOpsSettings());
+  } catch {
+    return DEFAULT_DAY_RULES;
+  }
+}
+
 export function validateOpsSettings(s: OpsSettingsValues): string[] {
   const errs = validateDayRules(dayRulesOf(s));
   const int = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;

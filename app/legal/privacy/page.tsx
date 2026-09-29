@@ -1,9 +1,13 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
+import { dayRulesForDisplay } from '@/lib/settings';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Privacy Policy' };
 
-export default function PrivacyPage() {
+export default async function PrivacyPage() {
+  const rules = await dayRulesForDisplay();
   return (
     <LegalPage
       title="Privacy Policy"
@@ -55,7 +59,7 @@ export default function PrivacyPage() {
         },
       ]}
       toConfirm={[
-        ...assumptionsFor('privacy'),
+        ...assumptionsFor('privacy', rules),
         {
           id: 'data-retention',
           page: 'privacy',
