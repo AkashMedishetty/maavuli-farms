@@ -121,6 +121,7 @@ export function ExtraMilk({
           planLabel={`Extra ${phase.preview.litres} L ${phase.preview.kind} milk, ${dayLabel(phase.preview.date)}`}
           onPaid={(r) => void onPaid(r)}
           onError={onPayError}
+          label="Pay for extra milk"
         />
         {act.pending && <p className="acct-muted" aria-live="polite">Confirming your payment…</p>}
         {payError && <p className="acct-err" role="alert">{payError}</p>}

@@ -103,10 +103,11 @@ export function reasonLabel(id: string | undefined): string {
 
 export const DONE_ITEM_STATUSES: readonly string[] = ['delivered', 'not_delivered', 'cancelled'];
 
-/** Read `{ error, issues }` from a failed API response. */
-export async function apiError(res: Response, fallback: string): Promise<{ error: string; issues: string[] }> {
-  const body = (await res.json().catch(() => null)) as { error?: unknown; issues?: unknown } | null;
+/** Read `{ error, issues, code? }` from a failed API response. */
+export async function apiError(res: Response, fallback: string): Promise<{ error: string; issues: string[]; code: string | null }> {
+  const body = (await res.json().catch(() => null)) as { error?: unknown; issues?: unknown; code?: unknown } | null;
   const error = body && typeof body.error === 'string' ? body.error : `${fallback} (HTTP ${res.status})`;
   const issues = body && Array.isArray(body.issues) ? body.issues.filter((i): i is string => typeof i === 'string') : [];
-  return { error, issues };
+  const code = body && typeof body.code === 'string' ? body.code : null;
+  return { error, issues, code };
 }

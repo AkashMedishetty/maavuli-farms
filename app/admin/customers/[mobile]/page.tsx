@@ -181,9 +181,9 @@ function Body({ c, operate, capPaise }: { c: CustomerDetail; operate: boolean; c
             <table>
               <thead>
                 <tr>
-                  <th>When</th>
-                  <th>What</th>
-                  <th className="num">Amount</th>
+                  <th scope="col">When</th>
+                  <th scope="col">What</th>
+                  <th scope="col" className="num">Amount</th>
                 </tr>
               </thead>
               <tbody>

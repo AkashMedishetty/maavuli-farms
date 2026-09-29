@@ -108,13 +108,30 @@ export default function RidersPanel({ canEdit = false, refreshKey = 0 }: { canEd
     if (okd) setForm({ name: '', phone: '', lat: '', lng: '' });
   };
 
-  const editPhone = async (rider: Rider) => {
-    const next = window.prompt(
-      `Sign-in phone for ${rider.name} (10 digits). Leave empty to remove — they will not be able to sign in.`,
-      rider.phone ?? '',
-    );
-    if (next === null) return;
-    await mutate(`phone-${rider.id}`, '/api/admin/riders', json('PATCH', { id: rider.id, phone: next.trim() }), 'Could not update the phone', 'Phone updated.');
+  // Inline "Change phone" editor: one rider at a time, value kept on error, error shown on that row.
+  const [phoneEdit, setPhoneEdit] = useState<{ id: string; value: string; error: string | null } | null>(null);
+
+  const savePhone = async (rider: Rider) => {
+    if (!phoneEdit || phoneEdit.id !== rider.id || busy) return;
+    const value = phoneEdit.value.trim();
+    setBusy(`phone-${rider.id}`);
+    setNotice(null);
+    setPhoneEdit({ ...phoneEdit, error: null });
+    try {
+      const r = await fetch('/api/admin/riders', json('PATCH', { id: rider.id, phone: value }));
+      if (!r.ok) {
+        const error = await errorOf(r, 'Could not update the phone');
+        setPhoneEdit(p => (p && p.id === rider.id ? { ...p, error } : p));
+        return;
+      }
+      setPhoneEdit(null);
+      setNotice(value ? `${rider.name}'s phone updated.` : `${rider.name}'s phone removed — they can no longer sign in.`);
+      await load();
+    } catch {
+      setPhoneEdit(p => (p && p.id === rider.id ? { ...p, error: 'Could not update the phone: the network request did not complete.' } : p));
+    } finally {
+      setBusy(null);
+    }
   };
 
   const deleteRider = async (rider: Rider) => {
@@ -234,13 +251,55 @@ export default function RidersPanel({ canEdit = false, refreshKey = 0 }: { canEd
                         >
                           {busy === `act-${rider.id}` ? 'Saving…' : rider.active ? 'Turn off' : 'Turn on'}
                         </button>
-                        <button type="button" className="ops-btn ops-btn-small" disabled={busy !== null} onClick={() => void editPhone(rider)}>
-                          {busy === `phone-${rider.id}` ? 'Saving…' : 'Change phone'}
+                        <button
+                          type="button"
+                          className="ops-btn ops-btn-small"
+                          disabled={busy !== null}
+                          aria-expanded={phoneEdit?.id === rider.id}
+                          onClick={() =>
+                            setPhoneEdit(p => (p?.id === rider.id ? null : { id: rider.id, value: rider.phone ?? '', error: null }))
+                          }
+                        >
+                          {phoneEdit?.id === rider.id ? 'Cancel' : 'Change phone'}
                         </button>
                         <button type="button" className="ops-btn ops-btn-small ops-btn-danger" disabled={busy !== null} onClick={() => void deleteRider(rider)}>
                           {busy === `del-${rider.id}` ? 'Removing…' : 'Remove'}
                         </button>
                       </div>
+                    )}
+                    {canEdit && phoneEdit?.id === rider.id && (
+                      <form
+                        className="ops-actions"
+                        onSubmit={e => {
+                          e.preventDefault();
+                          void savePhone(rider);
+                        }}
+                      >
+                        <label className="ops-field" style={{ marginBottom: 0 }}>
+                          <span>New sign-in phone for {rider.name}</span>
+                          <input
+                            type="tel"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            maxLength={10}
+                            placeholder="10-digit mobile"
+                            value={phoneEdit.value}
+                            onChange={e => setPhoneEdit({ ...phoneEdit, value: e.target.value, error: null })}
+                            aria-invalid={phoneEdit.error ? true : undefined}
+                            aria-describedby={`phone-help-${rider.id}`}
+                            autoFocus
+                          />
+                          <small id={`phone-help-${rider.id}`}>Leave empty to remove it — they will not be able to sign in.</small>
+                        </label>
+                        <button type="submit" className="ops-btn ops-btn-primary" disabled={busy !== null}>
+                          {busy === `phone-${rider.id}` ? 'Saving…' : 'Save phone'}
+                        </button>
+                        {phoneEdit.error && (
+                          <p className="ops-error" role="alert" style={{ flexBasis: '100%', margin: 0 }}>
+                            {phoneEdit.error}
+                          </p>
+                        )}
+                      </form>
                     )}
                   </li>
                 );

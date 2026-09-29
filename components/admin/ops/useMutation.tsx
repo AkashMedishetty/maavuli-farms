@@ -8,6 +8,8 @@ export interface MutationState {
   pending: boolean;
   error: string | null;
   issues: string[];
+  /** The API's machine-readable error code (e.g. 'upi_required'), when it sent one. */
+  code: string | null;
   done: string | null;
 }
 
@@ -17,7 +19,7 @@ export interface MutationState {
  */
 export function useMutation() {
   const router = useRouter();
-  const [state, setState] = useState<MutationState>({ pending: false, error: null, issues: [], done: null });
+  const [state, setState] = useState<MutationState>({ pending: false, error: null, issues: [], code: null, done: null });
 
   const run = useCallback(
     async (
@@ -25,7 +27,7 @@ export function useMutation() {
       init: { method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown },
       opts: { fallback: string; success?: string; refresh?: boolean } = { fallback: 'Request failed' },
     ): Promise<Record<string, unknown> | null> => {
-      setState({ pending: true, error: null, issues: [], done: null });
+      setState({ pending: true, error: null, issues: [], code: null, done: null });
       try {
         const res = await fetch(url, {
           method: init.method,
@@ -35,11 +37,11 @@ export function useMutation() {
         });
         if (!res.ok) {
           const e = await apiError(res, opts.fallback);
-          setState({ pending: false, error: e.error, issues: e.issues, done: null });
+          setState({ pending: false, error: e.error, issues: e.issues, code: e.code, done: null });
           return null;
         }
         const body = ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
-        setState({ pending: false, error: null, issues: [], done: opts.success ?? 'Done.' });
+        setState({ pending: false, error: null, issues: [], code: null, done: opts.success ?? 'Done.' });
         if (opts.refresh !== false) router.refresh();
         return body;
       } catch {
@@ -47,6 +49,7 @@ export function useMutation() {
           pending: false,
           error: `${opts.fallback}: the network request did not complete. Check the connection and try again.`,
           issues: [],
+          code: null,
           done: null,
         });
         return null;
@@ -55,7 +58,7 @@ export function useMutation() {
     [router],
   );
 
-  const reset = useCallback(() => setState({ pending: false, error: null, issues: [], done: null }), []);
+  const reset = useCallback(() => setState({ pending: false, error: null, issues: [], code: null, done: null }), []);
   return { ...state, run, reset };
 }
 

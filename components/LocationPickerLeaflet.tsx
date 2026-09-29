@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_CENTRE, roundCoord, samePoint, type EngineProps } from './LocationPickerShared';
 
 /**
@@ -170,8 +170,10 @@ export default function LocationPickerLeaflet({ value, onChange, idPrefix }: Eng
     }
   }, [value, ready]);
 
-  async function runSearch(e: FormEvent) {
-    e.preventDefault();
+  // Not a <form>: this picker is rendered INSIDE the account address form, and a
+  // nested form is invalid HTML (dropped by the parser, and Enter/Search would
+  // submit the outer address form). A search landmark + button + Enter handler.
+  async function runSearch() {
     const text = q.trim();
     if (text.length < 3 || search.kind === 'busy') return;
     setSearch({ kind: 'busy' });
@@ -204,7 +206,7 @@ export default function LocationPickerLeaflet({ value, onChange, idPrefix }: Eng
   const inputId = `${idPrefix}-search`;
   return (
     <div className="lp-engine">
-      <form className="lp-search" onSubmit={runSearch} role="search">
+      <div className="lp-search" role="search">
         <label htmlFor={inputId} className="lp-label">
           Search your society, building or area
         </label>
@@ -218,12 +220,17 @@ export default function LocationPickerLeaflet({ value, onChange, idPrefix }: Eng
             placeholder="e.g. Aparna Towers, Safilguda"
             autoComplete="off"
             maxLength={120}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault(); // never submit an enclosing form
+              void runSearch();
+            }}
           />
-          <button type="submit" className="lp-btn" disabled={q.trim().length < 3 || search.kind === 'busy'}>
+          <button type="button" className="lp-btn" onClick={() => void runSearch()} disabled={q.trim().length < 3 || search.kind === 'busy'}>
             {search.kind === 'busy' ? 'Searching…' : 'Search'}
           </button>
         </div>
-      </form>
+      </div>
 
       {search.kind === 'error' ? (
         <p className="lp-msg is-err" role="alert">{search.message}</p>

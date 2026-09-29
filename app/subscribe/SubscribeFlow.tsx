@@ -183,10 +183,22 @@ export default function SubscribeFlow({ renewal }: { renewal: RenewalProp }) {
     setStep(s);
   }, []);
 
+  // After a step change, move focus to the new step's heading so keyboard and
+  // screen-reader users are not left on <body> (the button they pressed unmounted).
+  const focusHeading = useRef(false);
   const go = (s: Step) => {
+    focusHeading.current = true;
     setStep(s);
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  useEffect(() => {
+    if (!focusHeading.current) return;
+    focusHeading.current = false;
+    const h = document.querySelector<HTMLHeadingElement>('main.sb h1');
+    if (!h) return;
+    if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1');
+    h.focus({ preventScroll: true });
+  }, [step]);
 
   const idx = STEPS.indexOf(step);
   const pct = Math.round((idx / (STEPS.length - 1)) * 100);
@@ -386,9 +398,15 @@ function StepError({ fail }: { fail: ApiFail | undefined }) {
           </ul>
         ) : null}
         {fail.missing?.length ? (
-          <p className="sb-issues">
-            Missing configuration: {fail.missing.map((m) => <code key={m}>{m} </code>)}
-          </p>
+          IS_DEV ? (
+            <p className="sb-issues">
+              Missing configuration: {fail.missing.map((m) => <code key={m}>{m} </code>)}
+            </p>
+          ) : (
+            <p className="sb-issues">
+              Online sign-up is paused — call <a href={PHONE_HREF}>{PHONE}</a>.
+            </p>
+          )
         ) : null}
       </div>
     </div>
@@ -406,7 +424,20 @@ function MissingPrior({ label, onFix }: { label: string; onFix: () => void }) {
   );
 }
 
+/** Env-var names are for developers only; the public never sees them (§9). */
+const IS_DEV = process.env.NODE_ENV !== 'production';
+
 function DevMissing({ title, missing }: { title: string; missing: string[] }) {
+  if (!IS_DEV) {
+    return (
+      <div className="sb-notice is-err" role="alert">
+        <span className="sb-dot" aria-hidden="true" />
+        <span>
+          Online sign-up is paused — call <a href={PHONE_HREF}>{PHONE}</a> and we will set up your delivery.
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="sb-dev" role="status">
       <strong>{title}</strong>

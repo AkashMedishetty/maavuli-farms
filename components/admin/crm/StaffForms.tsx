@@ -39,11 +39,11 @@ export function AddStaff() {
     >
       <label className="ops-field">
         <span>Mobile</span>
-        <input inputMode="tel" value={mobile} onChange={e => setMobile(e.target.value)} placeholder="10 digits" required disabled={m.pending} />
+        <input type="tel" inputMode="numeric" autoComplete="off" maxLength={10} value={mobile} onChange={e => setMobile(e.target.value)} placeholder="10 digits" required disabled={m.pending} />
       </label>
       <label className="ops-field">
         <span>Name</span>
-        <input value={name} onChange={e => setName(e.target.value)} maxLength={60} required disabled={m.pending} />
+        <input type="text" value={name} onChange={e => setName(e.target.value)} maxLength={60} required disabled={m.pending} />
       </label>
       <fieldset className="ops-chips">
         <legend>Role</legend>

@@ -43,10 +43,11 @@ export default function Nav() {
   const isOn = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
 
   return (
-    <nav className={`vnav${open ? ' open' : ''}`}>
+    <nav className={`vnav${open ? ' open' : ''}`} aria-label="Main">
       <div className="vnav-group vnav-left">
         {LEFT.map(l => (
           <Link key={l.href} href={l.href} className={isOn(l.href) ? 'pill on' : 'pill'}
+                aria-current={isOn(l.href) ? 'page' : undefined}
                 onClick={() => setOpen(false)}>
             {l.label}
           </Link>
@@ -61,6 +62,7 @@ export default function Nav() {
       <div className="vnav-group vnav-right">
         {RIGHT.map(l => (
           <Link key={l.href} href={l.href} className={isOn(l.href) ? 'pill on' : 'pill'}
+                aria-current={isOn(l.href) ? 'page' : undefined}
                 onClick={() => setOpen(false)}>
             {l.label}
           </Link>
@@ -70,14 +72,15 @@ export default function Nav() {
         </Link>
       </div>
 
-      <button className="vnav-burger" aria-expanded={open} aria-controls="vnav-sheet"
+      <button type="button" className="vnav-burger" aria-expanded={open} aria-controls="vnav-sheet"
               onClick={() => setOpen(v => !v)}>
         {open ? 'Close' : 'Menu'}
       </button>
 
       <div className="vnav-sheet" id="vnav-sheet">
         {[...LEFT, ...RIGHT].map(l => (
-          <Link key={l.href} href={l.href} onClick={() => setOpen(false)}>{l.label}</Link>
+          <Link key={l.href} href={l.href} aria-current={isOn(l.href) ? 'page' : undefined}
+                onClick={() => setOpen(false)}>{l.label}</Link>
         ))}
         <Link href="/subscribe" className="vnav-cta" onClick={() => setOpen(false)}>
           Subscribe <span aria-hidden />

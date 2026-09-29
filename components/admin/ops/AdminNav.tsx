@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface NavItem {
   href: string;
@@ -17,8 +17,23 @@ export interface NavItem {
 export default function AdminNav({ items, who }: { items: NavItem[]; who: string }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const isActive = (href: string) => (href === '/admin' ? path === '/admin' : path === href || path.startsWith(`${href}/`));
   const current = items.find(i => isActive(i.href));
+
+  // Disclosure: on open move focus to the first link; Escape closes and returns focus to the toggle.
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.querySelector<HTMLAnchorElement>('a')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      toggleRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
 
   return (
     <nav className="ops-nav" aria-label="Admin">
@@ -28,6 +43,7 @@ export default function AdminNav({ items, who }: { items: NavItem[]; who: string
         </Link>
         <span className="ops-nav-current">{current?.label ?? ''}</span>
         <button
+          ref={toggleRef}
           type="button"
           className="ops-nav-toggle"
           aria-expanded={open}
@@ -37,7 +53,7 @@ export default function AdminNav({ items, who }: { items: NavItem[]; who: string
           {open ? 'Close' : 'Menu'}
         </button>
       </div>
-      <div id="ops-nav-list" className={`ops-nav-list${open ? ' is-open' : ''}`}>
+      <div ref={listRef} id="ops-nav-list" className={`ops-nav-list${open ? ' is-open' : ''}`}>
         <ul>
           {items
             .filter(i => i.group === 'ops')

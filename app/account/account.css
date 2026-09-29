@@ -224,3 +224,20 @@
 .pc-key { display: inline-block; width: 14px; height: 14px; border-radius: 3px; }
 .pc-key-paused { background: var(--red, #8c170e); }
 .pc-key-closed { background: #f1ecea; border: 1px solid var(--acct-line); margin-left: 0.5rem; }
+
+/*
+ * Narrow phones: the calendar sits inside page > card > plan > details padding,
+ * which left each day ≈ 35 px wide at 360 px. Let the calendar bleed out to the
+ * page gutter (centred on the viewport — every ancestor's padding is symmetric)
+ * so seven columns get ≥ 44 px each: (360 − 24 − 6×2) / 7 ≈ 46 px.
+ */
+@media (max-width: 400px) {
+  .acct-details > .pc {
+    box-sizing: border-box;
+    width: calc(100vw - 1.5rem);
+    max-width: none;
+    margin-inline: calc(50% - 50vw + 0.75rem);
+    padding-inline: 0;
+  }
+  .pc-grid { gap: 2px; }
+}

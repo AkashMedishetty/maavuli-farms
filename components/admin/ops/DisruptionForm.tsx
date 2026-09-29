@@ -165,9 +165,16 @@ export default function DisruptionForm({ zones, minDate, maxDate }: { zones: Zon
       {preview && (
         <div className="ops-warn" role="status" style={{ marginTop: '0.5rem' }}>
           {preview.affected === 0 ? (
-            <p style={{ margin: 0 }}>
-              No deliveries on {ymdLabel(date)} in {scope} would be affected. Nothing to declare.
-            </p>
+            <>
+              <p style={{ margin: 0 }}>
+                No deliveries on {ymdLabel(date)} in {scope} would be affected. Nothing to declare.
+              </p>
+              <div className="ops-actions">
+                <button type="button" className="ops-btn" onClick={invalidate}>
+                  Check again
+                </button>
+              </div>
+            </>
           ) : (
             <>
               <p>

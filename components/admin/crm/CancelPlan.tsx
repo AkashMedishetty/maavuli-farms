@@ -18,6 +18,7 @@ export default function CancelPlan({ mobile, subscriptionId }: { mobile: string;
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [reason, setReason] = useState('');
+  const [doneMsg, setDoneMsg] = useState<string | null>(null);
   const m = useMutation();
 
   async function load() {
@@ -49,7 +50,7 @@ export default function CancelPlan({ mobile, subscriptionId }: { mobile: string;
     );
   }
 
-  if (m.done) return <MutationMessage error={null} issues={[]} done={m.done} />;
+  if (m.done) return <MutationMessage error={null} issues={[]} done={doneMsg ?? m.done} />;
 
   return (
     <div className="crm-panel" aria-live="polite">
@@ -75,11 +76,23 @@ export default function CancelPlan({ mobile, subscriptionId }: { mobile: string;
           onSubmit={e => {
             e.preventDefault();
             if (reason.trim().length < 3) return;
-            void m.run(
-              `${base(mobile, subscriptionId)}/cancel`,
-              { method: 'POST', body: { reason: reason.trim() } },
-              { fallback: 'Could not cancel the plan', success: 'Plan cancelled. The refund has been started (see Refunds below).' },
-            );
+            const b = preview.breakdown;
+            const noRefund =
+              b.toCreditPaise > 0
+                ? 'Plan cancelled. No refund is due; the balance went to the customer’s credit.'
+                : 'Plan cancelled. No refund is due.';
+            const started = 'Plan cancelled. The refund has been started (see Refunds below).';
+            void m
+              .run(
+                `${base(mobile, subscriptionId)}/cancel`,
+                { method: 'POST', body: { reason: reason.trim() } },
+                { fallback: 'Could not cancel the plan', success: b.toSourcePaise > 0 ? started : noRefund },
+              )
+              .then(r => {
+                // The server's answer wins over the preview (numbers can move between preview and confirm).
+                const res = (r?.result ?? null) as { refundId?: string | null } | null;
+                if (res && 'refundId' in res) setDoneMsg(res.refundId ? started : noRefund);
+              });
           }}
         >
           <p>

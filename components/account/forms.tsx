@@ -137,7 +137,16 @@ export function PreferencesForm({ initial }: { initial: PrefsValue }) {
   return (
     <form className="acct-stack" onSubmit={(e) => void submit(e)}>
       <label className="acct-check">
-        <input type="checkbox" checked={v.whatsappOptIn} onChange={(e) => set('whatsappOptIn', e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={v.whatsappOptIn}
+          onChange={(e) => {
+            const on = e.target.checked;
+            set('whatsappOptIn', on);
+            // The daily photo is a WhatsApp message: turning WhatsApp off turns it off too.
+            if (!on) set('notifyDailyDelivered', false);
+          }}
+        />
         <span>
           Send me WhatsApp updates (order confirmations, missed deliveries, refunds). Without this we cannot message you.
         </span>

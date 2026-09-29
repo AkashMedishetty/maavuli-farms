@@ -66,10 +66,13 @@ export default function RazorpayCheckout({
   planLabel,
   onPaid,
   onError,
+  label = 'Pay & start delivery',
 }: {
   order: CheckoutOrder;
   mobile: string;
   planLabel: string;
+  /** Button copy once the script is ready (extra-milk payments start nothing). */
+  label?: string;
   /** Razorpay reported success. The parent confirms via /api/payments/verify. */
   onPaid: (r: RazorpayResponse) => void;
   onError: (message: string) => void;
@@ -79,6 +82,12 @@ export default function RazorpayCheckout({
   const openedRef = useRef(false);
 
   const isTest = order.keyId.startsWith('rzp_test_');
+
+  // A second checkout in the same page session: the script is already loaded, and
+  // next/script's onLoad does not fire again — read it from window instead.
+  useEffect(() => {
+    if (window.Razorpay) setScriptReady(true);
+  }, []);
 
   const open = useCallback(() => {
     if (!window.Razorpay) {
@@ -128,6 +137,7 @@ export default function RazorpayCheckout({
         src="https://checkout.razorpay.com/v1/checkout.js"
         strategy="lazyOnload"
         onLoad={() => setScriptReady(true)}
+        onReady={() => setScriptReady(true)}
         onError={() =>
           onError('The payment window could not load. Check your connection and try again.')
         }
@@ -149,7 +159,7 @@ export default function RazorpayCheckout({
             <span className="sb-spinner" aria-hidden="true" /> Opening payment…
           </>
         ) : scriptReady ? (
-          'Pay & start delivery'
+          label
         ) : (
           'Loading payment…'
         )}

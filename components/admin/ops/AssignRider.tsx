@@ -16,12 +16,17 @@ export default function AssignRider({
   label = 'Assign rider',
 }: {
   runId: string;
-  riders: RiderOption[];
+  /** null = the rider list failed to load (not "there are no riders"). */
+  riders: RiderOption[] | null;
   currentRiderId: string | null;
   label?: string;
 }) {
   const [riderId, setRiderId] = useState('');
   const m = useMutation();
+
+  if (riders === null) {
+    return <p className="ops-muted">The rider list failed to load. Reload the page to assign a rider.</p>;
+  }
   const choices = riders.filter(r => r.id !== currentRiderId);
 
   if (choices.length === 0) {

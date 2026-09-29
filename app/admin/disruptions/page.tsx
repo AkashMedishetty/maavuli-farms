@@ -28,12 +28,14 @@ export default async function AdminDisruptionsPage() {
         <p className="ops-sub">When a whole area cannot be served, declare it once instead of marking each stop.</p>
       </header>
 
-      {operate &&
-        (zRes.status === 'fulfilled' ? (
-          <DisruptionForm zones={zRes.value} minDate={today} maxDate={addDaysYMD(today, MAX_DAYS_AHEAD)} />
-        ) : (
-          <LoadError what="zones (needed to declare a disruption)" message={loadErrorMessage(zRes.reason)} />
-        ))}
+      {zRes.status === 'fulfilled' ? (
+        operate && <DisruptionForm zones={zRes.value} minDate={today} maxDate={addDaysYMD(today, MAX_DAYS_AHEAD)} />
+      ) : (
+        <LoadError
+          what={operate ? 'zones (needed to declare a disruption)' : 'zone names'}
+          message={loadErrorMessage(zRes.reason)}
+        />
+      )}
 
       <section className="ops-card" aria-labelledby="past-h">
         <h2 id="past-h">Last 30 days and upcoming</h2>
@@ -51,7 +53,12 @@ export default async function AdminDisruptionsPage() {
                 </div>
                 <p style={{ margin: '0.2rem 0' }}>{d.reason}</p>
                 <p className="ops-muted" style={{ margin: 0 }}>
-                  {d.zoneIds.length === 0 ? 'All zones' : d.zoneIds.map(z => zoneName.get(z.toHexString()) ?? 'deleted zone').join(', ')} ·
+                  {d.zoneIds.length === 0
+                    ? 'All zones'
+                    : zRes.status === 'rejected'
+                      ? `${d.zoneIds.length} zone${d.zoneIds.length === 1 ? '' : 's'} (zone names unavailable)`
+                      : d.zoneIds.map(z => zoneName.get(z.toHexString()) ?? 'deleted zone').join(', ')}{' '}
+                  ·
                   declared {dateTimeLabel(d.createdAt.toISOString())} by {d.createdBy.id}
                 </p>
               </li>

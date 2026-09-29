@@ -177,7 +177,7 @@ export default async function AdminMessagesPage({ searchParams }: { searchParams
           )}
           <label>
             Mobile
-            <input name="mobile" inputMode="numeric" defaultValue={mobile ?? ''} placeholder="10 digits" />
+            <input type="tel" name="mobile" inputMode="numeric" defaultValue={mobile ?? ''} placeholder="10 digits" />
           </label>
           <button className="ops-btn ops-btn-primary" type="submit">
             Filter

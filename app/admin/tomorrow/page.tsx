@@ -81,7 +81,8 @@ export default async function AdminDayPlanPage({ searchParams }: { searchParams:
   const operate = canOperate(p.staffRole);
 
   const [mRes, rRes] = await Promise.allSettled([getManifest(date, ctx), activeRiderOptions()]);
-  const riders = rRes.status === 'fulfilled' ? rRes.value : [];
+  // null (not []) on a failed read, so the assign controls say "failed to load", not "no riders".
+  const riders = rRes.status === 'fulfilled' ? rRes.value : null;
 
   if (mRes.status === 'rejected') {
     return (

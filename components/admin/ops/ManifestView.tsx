@@ -72,14 +72,17 @@ export function UnassignedWarning({
   canOperate,
 }: {
   m: Manifest;
-  riders: RiderOption[];
+  /** null = the rider list failed to load. */
+  riders: RiderOption[] | null;
   canOperate: boolean;
 }) {
   const run = m.runs.find(r => r.riderId === null && r.stops.length > 0);
   if (!run) return null;
   return (
     <section className="ops-card ops-card-warn" aria-labelledby="unassigned-h">
-      <h2 id="unassigned-h">Unassigned: {run.stops.length} stop{run.stops.length === 1 ? '' : 's'} have no rider</h2>
+      <h2 id="unassigned-h">
+        Unassigned: {run.stops.length} stop{run.stops.length === 1 ? ' has' : 's have'} no rider
+      </h2>
       <p>
         {litres(run.load.cowLitres)} cow · {litres(run.load.buffaloLitres)} buffalo. These doorsteps are in a zone with
         no rider (or in no zone). Nobody will deliver them unless you assign a rider.
@@ -105,7 +108,8 @@ export function RunCards({
   showProgress,
 }: {
   m: Manifest;
-  riders: RiderOption[];
+  /** null = the rider list failed to load. */
+  riders: RiderOption[] | null;
   canOperate: boolean;
   showProgress: boolean;
 }) {
@@ -145,7 +149,10 @@ export function RunCards({
                 </p>
               </>
             )}
-            {canOperate && run.runId && run.status !== 'closed' && riders.length > 1 && (
+            {canOperate && run.runId && run.status !== 'closed' && riders === null && (
+              <p className="ops-muted ops-noprint">Rider list failed to load — reload to hand this run to a cover rider.</p>
+            )}
+            {canOperate && run.runId && run.status !== 'closed' && riders !== null && riders.length > 1 && (
               <details className="ops-noprint">
                 <summary className="ops-btn ops-btn-small" style={{ marginTop: '0.5rem' }}>
                   Hand to a cover rider

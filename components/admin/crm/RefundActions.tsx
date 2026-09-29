@@ -14,6 +14,7 @@ export default function RefundActions({
 }: {
   refundId: string;
   status: string;
+  /** The UPI id the customer saved for this refund (prefills the payout field). */
   upiId: string | null;
 }) {
   const process = useMutation();
@@ -21,6 +22,7 @@ export default function RefundActions({
   const [open, setOpen] = useState(false);
   const [vpa, setVpa] = useState(upiId ?? '');
   const [utr, setUtr] = useState('');
+  const [reason, setReason] = useState('');
   const url = (s: string) => `/api/admin/refunds/${encodeURIComponent(refundId)}/${s}`;
 
   if (status === 'pending' || status === 'failed') {
@@ -60,15 +62,25 @@ export default function RefundActions({
     );
   }
 
+  const savedUpi = upiId?.trim() || null;
+  const overriding = savedUpi !== null && vpa.trim() !== '' && vpa.trim().toLowerCase() !== savedUpi.toLowerCase();
+  // Put the API's error next to the field it is about.
+  const errAt = manual.code === 'upi_required' ? 'upi' : manual.code === 'upi_override_reason' ? 'reason' : 'form';
+  const msgAt = (where: typeof errAt) =>
+    errAt === where ? <MutationMessage error={manual.error} issues={manual.issues} done={null} /> : null;
+
   return (
     <form
       className="crm-panel"
       onSubmit={e => {
         e.preventDefault();
-        if (!vpa.trim() || !utr.trim()) return;
+        if (!utr.trim()) return;
+        const body: { utr: string; upiId?: string; reason?: string } = { utr: utr.trim() };
+        if (vpa.trim()) body.upiId = vpa.trim();
+        if (reason.trim()) body.reason = reason.trim();
         void manual.run(
           url('manual'),
-          { method: 'POST', body: { upiId: vpa.trim(), utr: utr.trim() } },
+          { method: 'POST', body },
           { fallback: 'Could not record the payment', success: 'Recorded as paid by UPI. The customer is told on WhatsApp.' },
         );
       }}
@@ -76,22 +88,51 @@ export default function RefundActions({
       <p className="ops-muted">Pay the amount from the business UPI app first, then record it here.</p>
       <label className="ops-field">
         <span>Customer UPI id</span>
-        <input value={vpa} onChange={e => setVpa(e.target.value)} placeholder="name@bank" autoComplete="off" required disabled={manual.pending} />
+        <input
+          type="text"
+          inputMode="email"
+          autoCapitalize="none"
+          spellCheck={false}
+          value={vpa}
+          onChange={e => setVpa(e.target.value)}
+          placeholder="name@bank"
+          autoComplete="off"
+          required={!savedUpi}
+          disabled={manual.pending}
+          aria-invalid={errAt === 'upi' && manual.error ? true : undefined}
+        />
+        {savedUpi && <small>The customer gave {savedUpi}. Pay that one unless they asked you to change it.</small>}
       </label>
-      {!upiId && <p className="ops-warn">The customer has not given a UPI id yet — confirm it with them by phone.</p>}
+      {msgAt('upi')}
+      {!savedUpi && <p className="ops-warn">The customer has not given a UPI id yet — confirm it with them by phone.</p>}
+      <label className="ops-field">
+        <span>Reason (needed if you pay a different UPI id)</span>
+        <input
+          type="text"
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+          maxLength={300}
+          autoComplete="off"
+          required={overriding}
+          disabled={manual.pending}
+          aria-invalid={errAt === 'reason' && manual.error ? true : undefined}
+        />
+        {overriding && <small>This is not the UPI id the customer gave — say why (at least 5 characters).</small>}
+      </label>
+      {msgAt('reason')}
       <label className="ops-field">
         <span>UTR / transaction reference</span>
-        <input value={utr} onChange={e => setUtr(e.target.value)} autoComplete="off" required maxLength={30} disabled={manual.pending} />
+        <input type="text" autoCapitalize="characters" value={utr} onChange={e => setUtr(e.target.value)} autoComplete="off" required maxLength={30} disabled={manual.pending} />
       </label>
       <div className="ops-actions">
-        <button type="submit" className="ops-btn ops-btn-primary" disabled={manual.pending || !vpa.trim() || !utr.trim()}>
+        <button type="submit" className="ops-btn ops-btn-primary" disabled={manual.pending || !utr.trim() || (!savedUpi && !vpa.trim())}>
           {manual.pending ? 'Saving…' : 'Record payment'}
         </button>
         <button type="button" className="ops-btn" disabled={manual.pending} onClick={() => setOpen(false)}>
           Cancel
         </button>
       </div>
-      <MutationMessage error={manual.error} issues={manual.issues} done={manual.done} />
+      {errAt === 'form' ? <MutationMessage error={manual.error} issues={manual.issues} done={manual.done} /> : null}
     </form>
   );
 }

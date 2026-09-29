@@ -102,6 +102,25 @@ export default function ZoneMap({ canEdit = true, onChange }: { canEdit?: boolea
     setIsError(error);
   };
 
+  // Typed centre (for when the map is down, and for keyboard / screen-reader users).
+  const [latText, setLatText] = useState('');
+  const [lngText, setLngText] = useState('');
+  const typeCentre = (lat: string, lng: string) => {
+    setLatText(lat);
+    setLngText(lng);
+    const la = Number(lat);
+    const ln = Number(lng);
+    const ok = lat.trim() !== '' && lng.trim() !== '' && Number.isFinite(la) && Number.isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180;
+    setCentre(ok ? { lat: la, lng: ln } : null);
+  };
+
+  /** The API's error plus its field issues (§9), as RidersPanel does. */
+  const errorText = (b: { error?: unknown; issues?: unknown }, fallback: string) => {
+    const base = typeof b.error === 'string' ? b.error : fallback;
+    const issues = Array.isArray(b.issues) ? b.issues.filter((i): i is string => typeof i === 'string') : [];
+    return issues.length ? `${base}: ${issues.join('; ')}` : base;
+  };
+
   const refresh = useCallback(async () => {
     try {
       const r = await fetch('/api/admin/zones', { cache: 'no-store' });
@@ -135,6 +154,8 @@ export default function ZoneMap({ canEdit = true, onChange }: { canEdit?: boolea
         if (canEdit) {
           m.on('click', (e: { latlng: { lat: number; lng: number } }) => {
             setCentre({ lat: e.latlng.lat, lng: e.latlng.lng });
+            setLatText(e.latlng.lat.toFixed(5));
+            setLngText(e.latlng.lng.toFixed(5));
           });
         }
         map.current = m;
@@ -200,10 +221,12 @@ export default function ZoneMap({ canEdit = true, onChange }: { canEdit?: boolea
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), lat: centre.lat, lng: centre.lng, radiusM }),
       });
-      const b = (await r.json().catch(() => ({}))) as { error?: string; name?: string };
-      if (!r.ok) { say(b.error ?? `Could not save the zone (HTTP ${r.status}).`, true); return; }
+      const b = (await r.json().catch(() => ({}))) as { error?: string; issues?: unknown; name?: string };
+      if (!r.ok) { say(errorText(b, `Could not save the zone (HTTP ${r.status}).`), true); return; }
       setName('');
       setCentre(null);
+      setLatText('');
+      setLngText('');
       await refresh();
       onChange?.();
       say(`Saved “${b.name ?? name.trim()}”. Give it a rider in the list above.`);
@@ -220,8 +243,8 @@ export default function ZoneMap({ canEdit = true, onChange }: { canEdit?: boolea
     try {
       const r = await fetch(url, init);
       if (!r.ok) {
-        const b = (await r.json().catch(() => ({}))) as { error?: string };
-        say(b.error ?? `${fallback} (HTTP ${r.status}).`, true);
+        const b = (await r.json().catch(() => ({}))) as { error?: string; issues?: unknown };
+        say(errorText(b, `${fallback} (HTTP ${r.status}).`), true);
         return;
       }
       await refresh();
@@ -266,12 +289,12 @@ export default function ZoneMap({ canEdit = true, onChange }: { canEdit?: boolea
 
       {loadError ? (
         <p className="ops-warn">
-          The map could not load ({loadError}). Zones can still be managed from the list below; the map is only for
-          picking a centre.
+          The map could not load ({loadError}). Existing zones can still be turned on/off or deleted below
+          {canEdit ? ', and a new zone can be added by typing its centre latitude and longitude' : ''}.
         </p>
       ) : null}
 
-      <div ref={holder} className="zone-map" role="application" aria-label="Delivery zone map" />
+      <div ref={holder} className="zone-map" role="application" aria-label="Delivery zone map (or type the centre below)" />
 
       {canEdit && (
         <div className="ops-card" style={{ background: 'var(--ops-soft)' }}>
@@ -279,8 +302,18 @@ export default function ZoneMap({ canEdit = true, onChange }: { canEdit?: boolea
           <p className="ops-muted">
             {centre
               ? `Centre ${centre.lat.toFixed(5)}, ${centre.lng.toFixed(5)} — adjust the radius, name it, then save.`
-              : 'Tap the map to place a zone centre.'}
+              : 'Tap the map to place a zone centre, or type its latitude and longitude.'}
           </p>
+          <div className="ops-form-grid">
+            <label className="ops-field">
+              <span>Centre latitude</span>
+              <input type="text" inputMode="decimal" autoComplete="off" value={latText} onChange={e => typeCentre(e.target.value, lngText)} placeholder="e.g. 17.47350" />
+            </label>
+            <label className="ops-field">
+              <span>Centre longitude</span>
+              <input type="text" inputMode="decimal" autoComplete="off" value={lngText} onChange={e => typeCentre(latText, e.target.value)} placeholder="e.g. 78.54680" />
+            </label>
+          </div>
           <label className="ops-field">
             <span>Zone name</span>
             <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Safilguda morning round" maxLength={80} />

@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { CONTACT } from '@/lib/content';
 
 /**
  * One-time-code sign-in, used by the pay step (and the renewal gate). Moved out of
@@ -35,8 +36,11 @@ export default function OtpForm({
       });
       const body = (await res.json().catch(() => ({}))) as { devCode?: string; error?: string; missing?: string[]; retryAfter?: number };
       if (res.status === 503) {
+        // Env-var names are shown to developers only, never to the public (§9).
         setErr(
-          `Sign-in codes are not configured on this server${body.missing?.length ? ` (missing ${body.missing.join(', ')})` : ''}. Please call us to set up delivery.`,
+          process.env.NODE_ENV !== 'production'
+            ? `Sign-in codes are not configured on this server${body.missing?.length ? ` (missing ${body.missing.join(', ')})` : ''}. Please call us to set up delivery.`
+            : `Online sign-up is paused — call ${CONTACT.phones[0] ?? 'us'} and we will set up your delivery.`,
         );
         return;
       }

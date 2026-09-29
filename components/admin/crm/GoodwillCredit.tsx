@@ -55,7 +55,7 @@ export default function GoodwillCredit({ mobile, capPaise }: { mobile: string; c
       <p className="ops-muted">Not refundable. Your role can give up to {formatINR(capPaise)} per entry.</p>
       <label className="ops-field">
         <span>Amount (₹)</span>
-        <input inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 115" disabled={m.pending} required />
+        <input type="text" inputMode="decimal" autoComplete="off" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 115" disabled={m.pending} required />
       </label>
       {amount && paise === null && <p className="ops-error">Enter an amount in rupees, like 115 or 57.50.</p>}
       {overCap && <p className="ops-error">That is above your cap of {formatINR(capPaise)}.</p>}

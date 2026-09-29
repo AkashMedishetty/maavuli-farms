@@ -20,7 +20,8 @@ export default async function AdminTodayPage() {
   // Each block loads independently so one failure never blanks the whole morning.
   const [mRes, rRes, sRes] = await Promise.allSettled([getManifest(today, ctx), activeRiderOptions(), systemStatus(ctx)]);
   const manifest: Manifest | null = mRes.status === 'fulfilled' ? mRes.value : null;
-  const riders: RiderOptionRow[] = rRes.status === 'fulfilled' ? rRes.value : [];
+  // null (not []) on a failed read, so the assign controls say "failed to load", not "no riders".
+  const riders: RiderOptionRow[] | null = rRes.status === 'fulfilled' ? rRes.value : null;
   const system: SystemStatus | null = sRes.status === 'fulfilled' ? sRes.value : null;
   const counts = manifest ? countItems(manifest.runs) : null;
 

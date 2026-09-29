@@ -94,6 +94,10 @@ export default function PourLoader() {
     // ?loader still forces a replay, so the animation can be re-watched on demand
     const forced = new URLSearchParams(window.location.search).has('loader');
     if ((skip || reduced) && !forced) { done(); return; }
+    // The root layout's pre-paint script already marked the page `loaded` (the
+    // /admin and /rider work tools, or the skip key), so the overlay is hidden:
+    // do not run a ~3.5 s animation nobody can see on a rider's low-end phone.
+    if (document.documentElement.classList.contains('loaded')) { done(); return; }
 
     document.documentElement.classList.add('loading');
 
