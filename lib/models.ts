@@ -398,6 +398,8 @@ export interface DeliveryProof {
   /** metres between that point and the customer's pin — large values get flagged */
   distanceFromPinM?: number;
   capturedAt?: Date;
+  /** needs an ops look: no photo (note instead), or the tap was far from the pin */
+  flagged?: boolean;
 }
 
 /** One row per subscription per date per source — the morning round is read from these. */

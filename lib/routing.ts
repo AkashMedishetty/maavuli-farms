@@ -163,6 +163,39 @@ export function centroid(points: readonly GeoPoint[]): GeoPoint | null {
 }
 
 /**
+ * Insert `stop` into an open path (origin → order[0] → … → order[n-1]) at the
+ * position that adds the least distance, and return the new order (the input is
+ * not mutated). Candidate positions are "right after the origin", between any two
+ * consecutive stops, and at the end — which, on an open path, costs only the one
+ * new leg.
+ *
+ * This is how a new customer joins a rider's STANDING route between re-optimisations:
+ * the rest of the round keeps the order the rider already knows.
+ */
+export function cheapestInsertion<S extends Waypoint>(origin: GeoPoint, order: readonly S[], stop: S): S[] {
+  if (order.length === 0) return [stop];
+  let bestIdx = order.length; // append after the last stop
+  let bestCost = distanceM(order[order.length - 1]!.point, stop.point);
+  for (let i = 0; i < order.length; i++) {
+    const prev = i === 0 ? origin : order[i - 1]!.point;
+    const next = order[i]!.point;
+    const cost = distanceM(prev, stop.point) + distanceM(stop.point, next) - distanceM(prev, next);
+    if (cost < bestCost - 1e-9) {
+      bestCost = cost;
+      bestIdx = i;
+    }
+  }
+  return [...order.slice(0, bestIdx), stop, ...order.slice(bestIdx)];
+}
+
+/** Insert several stops one by one, each at its cheapest position given the ones before it. */
+export function insertAllCheapest<S extends Waypoint>(origin: GeoPoint, order: readonly S[], stops: readonly S[]): S[] {
+  let out = [...order];
+  for (const s of stops) out = cheapestInsertion(origin, out, s);
+  return out;
+}
+
+/**
  * A Google Maps directions deep link that chains the whole ordered route, origin
  * first. Uses the /maps/dir/ path form (lat,lng segments) rather than the
  * waypoints query parameter, because the path form carries many more stops before

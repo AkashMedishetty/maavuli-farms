@@ -23,7 +23,7 @@
 
 import { NextResponse } from 'next/server';
 import { NotConfiguredError } from './db';
-import { RateLimitError, SmsNotConfiguredError, UnauthorizedError, VerifyError } from './auth';
+import { OtpDeliveryError, RateLimitError, SmsNotConfiguredError, UnauthorizedError, VerifyError } from './auth';
 import { NotAdminError } from './admin';
 import {
   ConflictError,
@@ -86,6 +86,7 @@ export function handleRouteError(err: unknown): NextResponse {
     return jsonError(503, 'Database not configured', { missing: err.missing });
   }
   if (err instanceof SmsNotConfiguredError) return jsonError(503, 'Sign-in codes are not configured', { missing: err.missing });
+  if (err instanceof OtpDeliveryError) return jsonError(502, err.message);
   if (err instanceof ServiceNotConfiguredError) {
     return jsonError(503, err.message, { service: err.service, missing: err.missing });
   }

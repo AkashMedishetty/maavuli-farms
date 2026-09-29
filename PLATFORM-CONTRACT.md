@@ -174,7 +174,7 @@ orders that day's stops with `orderStopsForRider` (no API calls: standing order
 minus absent stops, new stops inserted cheapest-first). Re-optimisation
 (`optimizeStandingRoute`) uses the Google Routes API computeRoutes with
 `optimizeWaypointOrder` (≤ 25 intermediates) when GOOGLE_MAPS_SERVER_KEY is set and
-the daily cap (GOOGLE_ROUTES_DAILY_CAP, counted in api_usage) allows; otherwise the
+the daily and monthly caps (GOOGLE_ROUTES_DAILY_CAP 100, GOOGLE_ROUTES_MONTHLY_CAP 3000, counted in api_usage) allow; travel mode DRIVE for optimisation (Pro SKU), two-wheeler only in the free navigation links; otherwise the
 local solver (lib/routing). It runs only for dirty routes and routes older than 25
 days. Riders navigate with `navigationLinks` (batches of ≤ 10 stops, two-wheeler,
 turn-by-turn) and per-stop `stopNavigationUrl`.
@@ -266,7 +266,7 @@ section 1, `package.json`, `.env.example`, `.gitignore`, `app/layout.tsx`,
 
 `CRON_SECRET`, `MAAVULI_TIME_TRAVEL`, `STORAGE_DRIVER` (vercel-blob|local),
 `BLOB_READ_WRITE_TOKEN`, `GOOGLE_MAPS_SERVER_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_KEY`,
-`GOOGLE_ROUTES_DAILY_CAP`, `WHATSAPP_PROVIDER` (log|meta), `WHATSAPP_API_BASE`,
+`GOOGLE_ROUTES_DAILY_CAP`, `GOOGLE_ROUTES_MONTHLY_CAP`, `WHATSAPP_PROVIDER` (log|meta), `WHATSAPP_API_BASE`,
 `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`,
 `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_AUTH_TEMPLATE`, plus the existing ones. Read env
 only inside functions (never at module scope), via `process.env` with trimming, or

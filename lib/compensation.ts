@@ -22,3 +22,27 @@ export async function compensateMissedDelivery(
   void ctx;
   throw new Error('not implemented: compensateMissedDelivery (owner B3)');
 }
+
+/**
+ * Undo a compensation when the miss turns out not to be one: the delivery was
+ * re-marked delivered, or staff changed its fault from 'ours' to 'customer'.
+ * A still-planned make-up day is removed (endDate moves back, via the same path
+ * pause/unpause use); an unspent missed-day credit gets an offsetting entry. If the
+ * make-up day already locked/was delivered, or the credit was spent, nothing is
+ * clawed back — the event log records that. Clears delivery.resolution. Idempotent.
+ */
+export async function reverseCompensation(deliveryId: ObjectId, ctx: OpCtx): Promise<{ reversed: boolean }> {
+  void deliveryId;
+  void ctx;
+  throw new Error('not implemented: reverseCompensation (owner B3)');
+}
+
+/**
+ * Tick step: compensate every not_delivered / fault 'ours' delivery that has no
+ * `resolution` yet — the retry path when compensation failed after the outcome was
+ * written (lib/outcomes never lets a compensation failure undo a rider's tap).
+ */
+export async function compensatePendingMisses(ctx: OpCtx): Promise<{ compensated: number; failed: number }> {
+  void ctx;
+  throw new Error('not implemented: compensatePendingMisses (owner B3)');
+}

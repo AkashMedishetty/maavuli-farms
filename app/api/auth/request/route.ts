@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   issueOtp,
   InvalidMobileError,
+  OtpDeliveryError,
   RateLimitError,
   SmsNotConfiguredError,
 } from '@/lib/auth';
@@ -61,6 +62,9 @@ export async function POST(req: Request): Promise<NextResponse> {
     }
     if (err instanceof SmsNotConfiguredError) {
       return NextResponse.json({ error: err.message, missing: err.missing }, { status: 503 });
+    }
+    if (err instanceof OtpDeliveryError) {
+      return NextResponse.json({ error: err.message }, { status: 502 });
     }
     if (err instanceof NotConfiguredError) {
       return NextResponse.json({ error: err.message, missing: err.missing }, { status: 503 });

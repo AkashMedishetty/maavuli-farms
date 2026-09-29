@@ -5,37 +5,321 @@
  * OWNER: B5 (rider app). Keep the signatures; replace the bodies.
  */
 
-import type { ObjectId } from 'mongodb';
-import type { Delivery, DeliveryProof, Fault, NotDeliveredReason } from './models';
+import type { Db, ObjectId } from 'mongodb';
+import {
+  col,
+  REASON_FAULT,
+  type Delivery,
+  type DeliveryProof,
+  type DeliveryStatus,
+  type Fault,
+  type NotDeliveredReason,
+} from './models';
 import type { OpCtx } from './clock';
+import { getDb } from './db';
+import { assertTransition, DELIVERY_TRANSITIONS } from './transitions';
+import { recordEvent } from './events';
+import { getOpsSettings } from './settings';
+import { compensateMissedDelivery, reverseCompensation } from './compensation';
+import { enqueueMessage } from './notify';
+import { signedPhotoUrl } from './storage';
+import { deliveredProofOk, distanceFromPinM, isDeliveryFlagged, resolveFault } from './rider-pure';
+import { NotFoundError, ValidationError, ConflictError } from './errors';
 
-/** locked | out_for_delivery | unconfirmed | not_delivered → delivered. Flags proof far from the pin. */
-export async function markDelivered(deliveryId: ObjectId, proof: DeliveryProof, ctx: OpCtx): Promise<Delivery> {
-  void deliveryId;
-  void proof;
-  void ctx;
-  throw new Error('not implemented: markDelivered (owner B5)');
+/** States a delivery may be in when it is marked. */
+const DELIVERABLE_FROM: readonly DeliveryStatus[] = ['locked', 'out_for_delivery', 'unconfirmed', 'not_delivered'];
+const NOT_DELIVERABLE_FROM: readonly DeliveryStatus[] = ['locked', 'out_for_delivery', 'unconfirmed', 'delivered'];
+
+async function loadDelivery(db: Db, deliveryId: ObjectId): Promise<Delivery> {
+  const d = await col.deliveries(db).findOne({ _id: deliveryId });
+  if (!d) throw new NotFoundError('Delivery not found');
+  return d;
+}
+
+/*
+ * Compensation runs AFTER the outcome is durably written. If it fails (a DB blip, a
+ * bug), the outcome must still stand — the rider's tap happened, and throwing here
+ * would make the phone's offline queue record the action as rejected. The miss then
+ * simply has no `resolution` yet, and the tick's compensatePendingMisses sweep
+ * retries it; compensation is idempotent per delivery.
+ */
+async function compensateSafely(deliveryId: ObjectId, ctx: OpCtx): Promise<void> {
+  try {
+    await compensateMissedDelivery(deliveryId, ctx);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[outcomes] compensation deferred to the sweep', String(deliveryId), err instanceof Error ? err.message : err);
+  }
+}
+
+/** Same rule for undoing a compensation (a mistaken "not delivered" corrected to delivered). */
+async function reverseSafely(deliveryId: ObjectId, ctx: OpCtx): Promise<void> {
+  try {
+    await reverseCompensation(deliveryId, ctx);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[outcomes] compensation reversal failed', String(deliveryId), err instanceof Error ? err.message : err);
+  }
 }
 
 /**
- * → not_delivered with a reason; fault defaults from REASON_FAULT (models.ts) and
- * only staff may pass an explicit fault. fault 'ours' → lib/compensation.
+ * How far the phone's tap was from the customer's pin, in metres, or undefined when
+ * either the tap location or the frozen pin is missing (nothing to measure against).
+ */
+function distanceFromPin(delivery: Delivery, proof: DeliveryProof): number | undefined {
+  return distanceFromPinM(delivery.snapshot?.location, proof) ?? undefined;
+}
+
+/**
+ * locked | out_for_delivery | unconfirmed | not_delivered → delivered.
+ *
+ * Proof rules (contract §4): a photo is required; if there is no photo a note must
+ * be present instead and the stop is flagged. A tap further than proofDistanceFlagM
+ * from the pin is also flagged. Re-marking a delivery already delivered is a no-op.
+ */
+export async function markDelivered(deliveryId: ObjectId, proof: DeliveryProof, ctx: OpCtx): Promise<Delivery> {
+  const db = await getDb();
+  const delivery = await loadDelivery(db, deliveryId);
+
+  // Idempotent: re-marking the same outcome is a no-op, returns the current row.
+  if (delivery.status === 'delivered') return delivery;
+
+  if (!DELIVERABLE_FROM.includes(delivery.status)) {
+    assertTransition('delivery', DELIVERY_TRANSITIONS, delivery.status, 'delivered');
+  }
+
+  const settings = await getOpsSettings(db);
+  const distance = distanceFromPin(delivery, proof);
+  const hasPhoto = typeof proof.photoKey === 'string' && proof.photoKey.length > 0;
+
+  // No camera → the rider must type a note, and the stop is flagged.
+  if (!deliveredProofOk(hasPhoto, delivery.note)) {
+    throw new ValidationError('A photo or a note is required to mark this delivery as done.');
+  }
+
+  const flagged = isDeliveryFlagged({
+    hasPhoto,
+    distanceM: distance ?? null,
+    flagThresholdM: settings.proofDistanceFlagM,
+  });
+
+  const proofToStore: DeliveryProof = {
+    ...(proof.photoKey ? { photoKey: proof.photoKey } : {}),
+    ...(typeof proof.lat === 'number' ? { lat: proof.lat } : {}),
+    ...(typeof proof.lng === 'number' ? { lng: proof.lng } : {}),
+    ...(typeof proof.accuracyM === 'number' ? { accuracyM: proof.accuracyM } : {}),
+    ...(typeof distance === 'number' ? { distanceFromPinM: distance } : {}),
+    capturedAt: proof.capturedAt ?? ctx.now,
+    ...(flagged ? { flagged: true } : {}),
+  };
+
+  // Conditional update matching the FROM state — two concurrent writers cannot both win.
+  const res = await col.deliveries(db).updateOne(
+    { _id: deliveryId, status: delivery.status },
+    {
+      $set: {
+        status: 'delivered',
+        deliveredAt: ctx.now,
+        proof: proofToStore,
+        updatedAt: ctx.now,
+      },
+    },
+  );
+  if (res.matchedCount === 0) {
+    throw new ConflictError('This delivery was updated by someone else — reload and try again.');
+  }
+
+  await recordEvent(
+    ctx,
+    {
+      entity: 'delivery',
+      entityId: String(deliveryId),
+      type: 'delivery.delivered',
+      from: delivery.status,
+      to: 'delivered',
+      mobile: delivery.mobile,
+      data: {
+        flagged,
+        ...(typeof distance === 'number' ? { distanceFromPinM: distance } : {}),
+        hasPhoto,
+      },
+    },
+    db,
+  );
+
+  const updated = await loadDelivery(db, deliveryId);
+
+  // A "not delivered" corrected to delivered: undo its make-up day / credit.
+  if (delivery.status === 'not_delivered' && delivery.resolution && delivery.resolution !== 'none') {
+    await reverseSafely(deliveryId, ctx);
+  }
+
+  // delivered_today notice, only for customers who opted into the daily photo.
+  const user = await col.users(db).findOne({ mobile: delivery.mobile });
+  if (user?.notifyDailyDelivered) {
+    const time = ctx.now.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    let mediaUrl: string | undefined;
+    if (proofToStore.photoKey) {
+      try {
+        mediaUrl = await signedPhotoUrl(proofToStore.photoKey, 7 * 24 * 3600);
+      } catch {
+        // A missing NEXT_PUBLIC_SITE_URL must not fail the delivery — send text-only.
+        mediaUrl = undefined;
+      }
+    }
+    await enqueueMessage(
+      {
+        mobile: delivery.mobile,
+        template: 'delivered_today',
+        params: { time },
+        dedupeKey: `delivered:${String(deliveryId)}`,
+        ...(mediaUrl ? { mediaUrl } : {}),
+      },
+      ctx,
+    );
+  }
+
+  return updated;
+}
+
+/**
+ * → not_delivered with a reason. Fault defaults from REASON_FAULT; only STAFF may
+ * pass an explicit fault (a rider's fault is always the reason default). fault
+ * 'ours' triggers compensation (once). Re-marking the same reason is a no-op.
  */
 export async function markNotDelivered(
   deliveryId: ObjectId,
   input: { reason: NotDeliveredReason; note?: string; fault?: Fault },
   ctx: OpCtx,
 ): Promise<Delivery> {
-  void deliveryId;
-  void input;
-  void ctx;
-  throw new Error('not implemented: markNotDelivered (owner B5)');
+  const db = await getDb();
+  const delivery = await loadDelivery(db, deliveryId);
+
+  if (!(input.reason in REASON_FAULT)) {
+    throw new ValidationError(`Unknown reason "${input.reason}"`);
+  }
+
+  // Idempotent no-op: already not_delivered with the same reason.
+  if (delivery.status === 'not_delivered' && delivery.reason === input.reason) return delivery;
+
+  if (!NOT_DELIVERABLE_FROM.includes(delivery.status)) {
+    assertTransition('delivery', DELIVERY_TRANSITIONS, delivery.status, 'not_delivered');
+  }
+
+  // Only staff may override the fault; anyone else takes the reason's default.
+  const fault: Fault = resolveFault(input.reason, ctx.actor.kind, input.fault);
+
+  const res = await col.deliveries(db).updateOne(
+    { _id: deliveryId, status: delivery.status },
+    {
+      $set: {
+        status: 'not_delivered',
+        reason: input.reason,
+        fault,
+        updatedAt: ctx.now,
+        ...(input.note ? { reasonNote: input.note } : {}),
+      },
+    },
+  );
+  if (res.matchedCount === 0) {
+    throw new ConflictError('This delivery was updated by someone else — reload and try again.');
+  }
+
+  await recordEvent(
+    ctx,
+    {
+      entity: 'delivery',
+      entityId: String(deliveryId),
+      type: 'delivery.not_delivered',
+      from: delivery.status,
+      to: 'not_delivered',
+      mobile: delivery.mobile,
+      reason: input.reason,
+      data: { fault },
+    },
+    db,
+  );
+
+  // fault 'ours' → compensate exactly once (B3). fault 'customer' → notify only.
+  if (fault === 'ours') {
+    await compensateSafely(deliveryId, ctx);
+  } else if (fault === 'customer') {
+    const date = delivery.date;
+    await enqueueMessage(
+      {
+        mobile: delivery.mobile,
+        template: 'not_delivered_customer',
+        params: { date, reason: input.reason },
+        dedupeKey: `missed_c:${String(deliveryId)}`,
+      },
+      ctx,
+    );
+  }
+  // fault 'unknown' → nothing yet; ops resolves it with setFault.
+
+  return loadDelivery(db, deliveryId);
 }
 
 /** Staff: decide the fault of a not_delivered(unknown) delivery; 'ours' → compensation. */
 export async function setFault(deliveryId: ObjectId, fault: Exclude<Fault, 'unknown'>, ctx: OpCtx): Promise<Delivery> {
-  void deliveryId;
-  void fault;
-  void ctx;
-  throw new Error('not implemented: setFault (owner B5)');
+  if (ctx.actor.kind !== 'staff') {
+    throw new ValidationError('Only staff may set the fault of a delivery.');
+  }
+  if (fault !== 'ours' && fault !== 'customer') {
+    throw new ValidationError('Fault must be "ours" or "customer".');
+  }
+
+  const db = await getDb();
+  const delivery = await loadDelivery(db, deliveryId);
+
+  if (delivery.status !== 'not_delivered') {
+    throw new ConflictError('Only a not-delivered delivery has a fault to set.', { status: delivery.status });
+  }
+  // Idempotent no-op.
+  if (delivery.fault === fault) return delivery;
+
+  const res = await col.deliveries(db).updateOne(
+    { _id: deliveryId, status: 'not_delivered' },
+    { $set: { fault, updatedAt: ctx.now } },
+  );
+  if (res.matchedCount === 0) {
+    throw new ConflictError('This delivery was updated by someone else — reload and try again.');
+  }
+
+  await recordEvent(
+    ctx,
+    {
+      entity: 'delivery',
+      entityId: String(deliveryId),
+      type: 'delivery.fault_set',
+      mobile: delivery.mobile,
+      reason: delivery.reason,
+      data: { from: delivery.fault ?? 'unknown', to: fault },
+    },
+    db,
+  );
+
+  if (fault === 'ours') {
+    await compensateSafely(deliveryId, ctx);
+  } else {
+    // ours → customer: a compensation already given is undone first.
+    if (delivery.fault === 'ours' && delivery.resolution && delivery.resolution !== 'none') {
+      await reverseSafely(deliveryId, ctx);
+    }
+    await enqueueMessage(
+      {
+        mobile: delivery.mobile,
+        template: 'not_delivered_customer',
+        params: { date: delivery.date, reason: delivery.reason ?? 'other' },
+        dedupeKey: `missed_c:${String(deliveryId)}`,
+      },
+      ctx,
+    );
+  }
+
+  return loadDelivery(db, deliveryId);
 }
