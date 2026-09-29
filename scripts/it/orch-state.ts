@@ -13,7 +13,7 @@ import { addDaysYMD } from '@/lib/cutoff';
 import { __setRazorpayCreateOrderForTests, createCheckoutOrder, markOrderPaid, type CheckoutInput } from '@/lib/orders';
 import { cancelSubscription, extendSubscription, renewalTarget, settleCancellations } from '@/lib/subscriptions';
 import { pauseDates } from '@/lib/pause';
-import { lockDay } from '@/lib/manifest';
+import { autoResolveStaleUnconfirmed, lockDay } from '@/lib/manifest';
 import { ConflictError } from '@/lib/errors';
 
 const db = await getDb();
@@ -230,6 +230,27 @@ await caseRun('webhook on a refunded order', async () => {
     threw = e;
   }
   t('no throw (no 500 loop)', threw === null, threw instanceof Error ? threw.message : threw);
+});
+
+// ---- migrated legacy rows are never auto-compensated ----------------------------
+await caseRun('legacy unconfirmed row', async () => {
+  const m = freshMobile();
+  const legacyDate = '2031-01-05'; // long past its close, and no day lock: the engine never ran that day
+  const { insertedId } = await col.deliveries(db).insertOne({
+    subscriptionId: new ObjectId(),
+    mobile: m,
+    date: legacyDate,
+    kind: 'cow',
+    litres: 1,
+    pincode: '500001',
+    status: 'unconfirmed',
+    source: 'plan',
+    updatedAt: NOW,
+  });
+  await autoResolveStaleUnconfirmed(at(m));
+  const row = await col.deliveries(db).findOne({ _id: insertedId });
+  t('a migrated unconfirmed row is not auto-resolved as our miss', row?.status === 'unconfirmed' && !row?.resolution, row?.status);
+  await col.deliveries(db).deleteOne({ _id: insertedId });
 });
 
 console.log(`orch-state: ${passed} passed, ${failed} failed · db=${db.databaseName}`);

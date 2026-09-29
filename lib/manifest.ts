@@ -580,8 +580,19 @@ export async function autoResolveStaleUnconfirmed(ctx: OpCtx): Promise<{ resolve
   const db = await getDb();
   const rules = dayRulesOf(await getOpsSettings(db));
   const dates = (await col.deliveries(db).distinct('date', { status: 'unconfirmed' })) as string[];
+  // Only days THIS engine closed (a day lock with closedAt). Rows the platform
+  // migration marked unconfirmed (legacy 'scheduled' rows from before the platform)
+  // were never on a rider's manifest: "24 h after the day closed" does not apply to
+  // them, and auto-compensating them would hand out make-up days and credit for
+  // history nobody tracked. They stay unconfirmed for ops to review.
+  const closed = new Set(
+    (await col.dayLocks(db).find({ _id: { $in: dates }, closedAt: { $exists: true } }, { projection: { _id: 1 } }).toArray()).map(
+      d => d._id,
+    ),
+  );
   let resolved = 0;
   for (const date of dates) {
+    if (!closed.has(date)) continue;
     const staleAt = closeInstant(date, rules).getTime() + 24 * MS_PER_HOUR;
     if (ctx.now.getTime() < staleAt) continue;
     const rows = await col.deliveries(db).find({ date, status: 'unconfirmed' }).project<{ _id: ObjectId }>({ _id: 1 }).toArray();
