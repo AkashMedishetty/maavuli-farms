@@ -111,6 +111,9 @@ export interface User {
   email?: string;
   address?: string;
   pincode?: string;
+  /** per-mobile credit-ledger lease (lib/credits.withCreditLock) — wall-clock, self-expiring */
+  creditLockToken?: string;
+  creditLockUntil?: Date;
   /** last-used delivery details, for prefilling a repeat purchase */
   location?: LatLng;
   landmark?: string;
@@ -441,6 +444,8 @@ export interface Delivery {
   compensationDeliveryId?: ObjectId;
   /** the credit entry, when resolution is 'credit' */
   compensationCreditId?: ObjectId;
+  /** lease while compensation for this delivery is being written (lib/compensation) */
+  compensatingUntil?: Date;
 }
 
 /**

@@ -84,6 +84,79 @@ export async function createOrder({ amountPaise, receipt, notes }: CreateOrderIn
   return order;
 }
 
+/** The slice of a Razorpay Refund we read. */
+export interface RazorpayRefund {
+  id: string;
+  entity: 'refund';
+  amount: number; // paise
+  payment_id: string;
+  status: 'pending' | 'processed' | 'failed';
+}
+
+/**
+ * A refund the API refused. `notSupported` is true when Razorpay says this payment
+ * cannot be refunded through it (too old, or the instrument/bank does not support
+ * refunds) — the caller parks the refund for a manual UPI payout instead of retrying.
+ * `code` is Razorpay's error code; the free-text description is never stored or logged.
+ */
+export class RazorpayRefundError extends Error {
+  constructor(
+    public httpStatus: number,
+    public code: string,
+    public notSupported: boolean,
+  ) {
+    super(`Razorpay refund failed (${httpStatus}${code ? ` ${code}` : ''})`);
+    this.name = 'RazorpayRefundError';
+  }
+}
+
+export interface CreateRefundInput {
+  paymentId: string;
+  amountPaise: number;
+  receipt: string;
+  notes?: Record<string, string>;
+}
+
+/**
+ * POST /v1/payments/{paymentId}/refund — speed 'normal' (instant refunds cost extra
+ * and are not part of the published policy). Callers must pre-check razorpayConfig().
+ */
+export async function createRefund({ paymentId, amountPaise, receipt, notes }: CreateRefundInput): Promise<RazorpayRefund> {
+  if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
+    throw new Error('amountPaise must be a positive integer (paise)');
+  }
+  if (!/^pay_[A-Za-z0-9]+$/.test(paymentId)) throw new Error('not a Razorpay payment id');
+  const cfg = razorpayConfig();
+  if (!cfg.ok) throw new Error(`Razorpay not configured — missing: ${cfg.missing.join(', ')}`);
+
+  const res = await fetch(`${API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: authHeader(cfg.value.RAZORPAY_KEY_ID, cfg.value.RAZORPAY_KEY_SECRET),
+    },
+    body: JSON.stringify({ amount: amountPaise, speed: 'normal', receipt, notes: notes ?? {} }),
+  });
+
+  if (!res.ok) {
+    let code = '';
+    let description = '';
+    try {
+      const body = (await res.json()) as { error?: { code?: unknown; description?: unknown } };
+      code = typeof body.error?.code === 'string' ? body.error.code : '';
+      description = typeof body.error?.description === 'string' ? body.error.description : '';
+    } catch {
+      // non-JSON error body — the status alone classifies it
+    }
+    // Classified from the description, never stored: Razorpay phrases these as
+    // "...not supported..." / "...older than 6 months..." / "...cannot be refunded...".
+    const notSupported =
+      res.status === 400 && /not supported|older than|cannot be refunded|not eligible/i.test(description);
+    throw new RazorpayRefundError(res.status, code, notSupported);
+  }
+  return (await res.json()) as RazorpayRefund;
+}
+
 /**
  * Verify a Razorpay webhook signature.
  *
