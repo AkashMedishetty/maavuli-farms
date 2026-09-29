@@ -3,11 +3,12 @@
  * lib/api.handleRouteError — so lib code throws meaning, never status codes.
  */
 
-/** 400 — the input is wrong. `issues` are shown to the user. */
+/** 400 — the input is wrong. `issues` are shown to the user; `code` lets a client route the error without matching message text. */
 export class ValidationError extends Error {
   constructor(
     message: string,
     public issues: string[] = [],
+    public code?: string,
   ) {
     super(message);
     this.name = 'ValidationError';

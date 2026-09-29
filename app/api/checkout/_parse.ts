@@ -49,12 +49,12 @@ export function parsePlan(b: Record<string, unknown>): PlanFields {
 
 function parseAddressParts(v: unknown): AddressParts | undefined {
   if (v === undefined || v === null) return undefined;
-  if (typeof v !== 'object' || Array.isArray(v)) throw new ValidationError('addressParts must be an object');
+  if (typeof v !== 'object' || Array.isArray(v)) throw new ValidationError('addressParts must be an object', [], 'details_incomplete');
   const o = v as Record<string, unknown>;
   const house = str(o.house, 100);
-  if (!house) throw new ValidationError('addressParts.house (flat / house number) is required');
+  if (!house) throw new ValidationError('addressParts.house (flat / house number) is required', [], 'details_incomplete');
   const pincode = str(o.pincode, 6);
-  if (pincode && !/^\d{6}$/.test(pincode)) throw new ValidationError('addressParts.pincode must be 6 digits');
+  if (pincode && !/^\d{6}$/.test(pincode)) throw new ValidationError('addressParts.pincode must be 6 digits', [], 'details_incomplete');
   const out: AddressParts = { house };
   for (const k of ['floor', 'building', 'society', 'area'] as const) {
     const s = str(o[k], 120);
@@ -65,7 +65,7 @@ function parseAddressParts(v: unknown): AddressParts | undefined {
 }
 
 export function parseDetails(v: unknown): DeliveryDetails {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new ValidationError('details is required');
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new ValidationError('details is required', [], 'details_incomplete');
   const o = v as Record<string, unknown>;
   const loc = o.location as Record<string, unknown> | undefined;
   const addressParts = parseAddressParts(o.addressParts);

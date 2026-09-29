@@ -106,11 +106,11 @@ function razorpayKeyId(): string {
 /* ---------------------------------------------------------------- helpers -- */
 
 function quoteOrThrow(kind: MilkKind, quantityId: string, tenureId: string): Quote {
-  if (kind !== 'cow' && kind !== 'buffalo') throw new ValidationError('Invalid milk kind');
+  if (kind !== 'cow' && kind !== 'buffalo') throw new ValidationError('Invalid milk kind', [], 'plan_invalid');
   try {
     return quote(kind, quantityId, tenureId);
   } catch {
-    throw new ValidationError('Invalid plan selection');
+    throw new ValidationError('Invalid plan selection', [], 'plan_invalid');
   }
 }
 
@@ -149,23 +149,25 @@ async function resolveStart(
 ): Promise<ResolvedStart> {
   const firstOpen = await firstOpenDateNow(ctx);
   if (input.purpose === 'renewal') {
-    if (!input.renewsSubscriptionId) throw new ValidationError('renewsSubscriptionId is required for a renewal');
+    if (!input.renewsSubscriptionId) throw new ValidationError('renewsSubscriptionId is required for a renewal', [], 'not_renewable');
     const m = normalizeMobile(input.mobile);
-    if (!m) throw new ValidationError('Sign in to renew a plan');
+    if (!m) throw new ValidationError('Sign in to renew a plan', [], 'not_renewable');
     const target = await renewalTarget(m, input.renewsSubscriptionId, ctx);
     if (!target) {
-      throw new ValidationError('That plan cannot be renewed', [
-        'The plan must be yours, scheduled or active, and not already renewed.',
-      ]);
+      throw new ValidationError(
+        'That plan cannot be renewed',
+        ['The plan must be yours, scheduled or active, and not already renewed.'],
+        'not_renewable',
+      );
     }
     return { startDate: target.renewStartDate, firstOpenDate: firstOpen };
   }
   let startDate = firstOpen;
   if (input.startDate !== undefined) {
-    if (!isYMD(input.startDate)) throw new ValidationError('startDate must be YYYY-MM-DD');
+    if (!isYMD(input.startDate)) throw new ValidationError('startDate must be YYYY-MM-DD', [], 'start_invalid');
     const latest = addDaysYMD(istYMD(ctx.now), MAX_START_DAYS_AHEAD);
     if (input.startDate > latest) {
-      throw new ValidationError(`The first delivery can be at most ${MAX_START_DAYS_AHEAD} days away (${latest}).`);
+      throw new ValidationError(`The first delivery can be at most ${MAX_START_DAYS_AHEAD} days away (${latest}).`, [], 'start_invalid');
     }
     if (input.startDate > firstOpen) startDate = input.startDate;
   }
@@ -255,7 +257,7 @@ function validateDetails(d: DeliveryDetails): { name: string; address: string; l
   if (address.length < 10) issues.push('A delivery address is required (flat or house, street and area)');
   const point = d?.location ? normalizePoint(d.location.lat, d.location.lng) : null;
   if (!point) issues.push('Drop a pin on the map for the exact doorstep');
-  if (issues.length || !point) throw new ValidationError('Delivery details are incomplete', issues);
+  if (issues.length || !point) throw new ValidationError('Delivery details are incomplete', issues, 'details_incomplete');
   return { name, address, location: point };
 }
 
@@ -287,9 +289,11 @@ export async function createCheckoutOrder(input: CheckoutInput, ctx: OpCtx): Pro
   const det = validateDetails(input.details);
   const zone = await zoneForPoint(det.location);
   if (!zone) {
-    throw new ValidationError('That address is outside our delivery area at the moment.', [
-      'The pin is not inside any active delivery zone.',
-    ]);
+    throw new ValidationError(
+      'That address is outside our delivery area at the moment.',
+      ['The pin is not inside any active delivery zone.'],
+      'outside_zone',
+    );
   }
   const { startDate, firstOpenDate } = await resolveStart({ ...input, mobile }, ctx);
 

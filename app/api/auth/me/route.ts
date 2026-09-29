@@ -19,6 +19,8 @@ export async function GET(): Promise<NextResponse> {
       mobile: session.mobile,
       isAdmin: session.isAdmin,
       name: session.user?.name ?? null,
+      // the customer's own consent state, so forms can show it (never another user's)
+      whatsappOptIn: session.user?.whatsappOptIn === true,
       expiresAt: session.expiresAt.toISOString(),
     });
   } catch (err) {

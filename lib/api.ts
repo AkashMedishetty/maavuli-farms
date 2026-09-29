@@ -59,7 +59,9 @@ export async function readJson<T = Record<string, unknown>>(req: Request): Promi
 }
 
 export function handleRouteError(err: unknown): NextResponse {
-  if (err instanceof ValidationError) return jsonError(400, err.message, { issues: err.issues });
+  if (err instanceof ValidationError) {
+    return jsonError(400, err.message, { issues: err.issues, ...(err.code ? { code: err.code } : {}) });
+  }
   if (err instanceof VerifyError) return jsonError(400, err.message);
   if (err instanceof UnauthorizedError) return jsonError(401, err.message);
   if (err instanceof ForbiddenError || err instanceof NotAdminError) return jsonError(403, err.message);
