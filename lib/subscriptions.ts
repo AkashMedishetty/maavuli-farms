@@ -665,6 +665,20 @@ export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: Cancel
     await col.subscriptions(db).updateOne({ _id: id }, { $set: { refundId: refund._id } });
   }
 
+  // What comes back: to the original payment (the refund row) and/or to credit.
+  // A plan paid from credit has no refund row but DOES get its balance back as
+  // credit — the message must say so, not "Refund: ₹0".
+  const toSourcePaise = refund?.amountPaise ?? 0;
+  const toCreditPaise = refund
+    ? refund.breakdown.toCreditPaise
+    : ((await col.credits(db).findOne({ mobile: sub.mobile, kind: 'cancellation_balance', orderId: sub.orderId }))?.amountPaise ?? 0);
+  const refundText =
+    toCreditPaise > 0
+      ? toSourcePaise > 0
+        ? `${formatINR(toSourcePaise)} to your payment method and ${formatINR(toCreditPaise)} to your Maavuli credit`
+        : `${formatINR(toCreditPaise)} to your Maavuli credit`
+      : formatINR(toSourcePaise);
+
   // cancellation_confirmed (never throws).
   await enqueueMessage(
     {
@@ -672,7 +686,7 @@ export async function cancelSubscription(id: ObjectId, ctx: OpCtx, opts?: Cancel
       template: 'cancellation_confirmed',
       params: {
         lastDate: addDays(effective, -1),
-        refund: refund ? formatINR(refund.amountPaise) : formatINR(0),
+        refund: refundText,
       },
       dedupeKey: `cancel:${id.toHexString()}`,
     },
