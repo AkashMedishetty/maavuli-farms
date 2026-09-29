@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server';
 import {
   issueOtp,
+  clientIpFrom,
   InvalidMobileError,
+  OtpDeliveryError,
   RateLimitError,
   SmsNotConfiguredError,
 } from '@/lib/auth';
 import { NotConfiguredError } from '@/lib/db';
+import { handleRouteError } from '@/lib/api';
+
+// Reads cookies/sessions on every request; never prerender or cache.
+export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/auth/request  { mobile }
@@ -29,7 +35,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await issueOtp(mobile);
+    const result = await issueOtp(mobile, { ip: clientIpFrom(req.headers) });
     /*
      * devCode is present when no SMS provider is configured — in development, or in
      * production with OTP_DEMO_MODE explicitly on. `demo` tells the client to show a
@@ -62,9 +68,12 @@ export async function POST(req: Request): Promise<NextResponse> {
     if (err instanceof SmsNotConfiguredError) {
       return NextResponse.json({ error: err.message, missing: err.missing }, { status: 503 });
     }
+    if (err instanceof OtpDeliveryError) {
+      return NextResponse.json({ error: err.message }, { status: 502 });
+    }
     if (err instanceof NotConfiguredError) {
       return NextResponse.json({ error: err.message, missing: err.missing }, { status: 503 });
     }
-    throw err;
+    return handleRouteError(err);
   }
 }

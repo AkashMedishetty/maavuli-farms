@@ -1,0 +1,119 @@
+/*
+ * LocationPicker — self-contained so any page (onboarding, account address change)
+ * can reuse the component. Red ink on white, brand tokens from app/globals.css.
+ * Mobile first: 360 px, tap targets >= 44 px, body text >= 15 px.
+ */
+.lp { display: grid; gap: 0.9rem; max-width: 40rem; font-size: max(15px, 1rem); color: var(--red); }
+
+.lp-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.6em 1.1em;
+  border: 1px solid var(--red);
+  border-radius: 999px;
+  background: var(--milk);
+  color: var(--red);
+  font: inherit;
+  cursor: pointer;
+}
+.lp-btn.is-primary { background: var(--red); color: var(--milk); }
+.lp-btn.is-primary:hover { background: var(--red-deep); }
+.lp-btn.is-ghost { border-color: var(--red-faint, var(--red)); }
+.lp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.lp-btn:focus-visible, .lp-input:focus-visible, .lp-results button:focus-visible { outline: 3px solid var(--red); outline-offset: 2px; }
+
+.lp-geo { display: grid; gap: 0.35rem; }
+.lp-geo .lp-btn { justify-self: start; text-align: left; }
+.lp-help { margin: 0; font-size: max(15px, 0.95rem); color: var(--red-dim, var(--red)); }
+
+.lp-engine { display: grid; gap: 0.6rem; }
+.lp-search { display: grid; gap: 0.35rem; }
+.lp-label { font-size: 15px; letter-spacing: 0.04em; color: var(--red-dim, var(--red)); }
+.lp-search-row { display: flex; gap: 0.5rem; }
+.lp-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0.55em 0.8em;
+  border: 1px solid var(--red-faint, var(--red));
+  border-radius: 8px;
+  background: var(--milk);
+  color: var(--red);
+  font: inherit;
+}
+.lp-gsearch { min-height: 44px; }
+.lp-gsearch > * { width: 100%; }
+
+.lp-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; }
+.lp-results button {
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+  padding: 0.55em 0.8em;
+  border: 1px solid var(--red-faint, var(--red));
+  border-radius: 8px;
+  background: var(--milk);
+  color: var(--red);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lp-maptools { display: flex; justify-content: flex-end; }
+.lp-map {
+  width: 100%;
+  height: clamp(280px, 55vh, 460px);
+  border: 1px solid var(--red-faint, var(--red));
+  border-radius: 12px;
+  overflow: hidden;
+  background: #eee;
+}
+.lp-attrib { margin: 0; font-size: 13px; color: var(--red-dim, var(--red)); }
+.lp-attrib a { color: inherit; }
+
+.lp-msg { margin: 0; padding: 0.55em 0.8em; border-radius: 8px; border: 1px solid var(--red-faint, var(--red)); }
+.lp-msg.is-ok { border-color: #2f7d32; color: #1f5a22; }
+.lp-msg.is-warn { border-color: #b36b00; color: #7a4a00; background: #fff7e6; }
+.lp-msg.is-err { border-color: var(--red); background: #fff1f0; }
+
+.lp-nudge {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  grid-template-areas: '. n .' 'w . e' '. s .';
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.lp-nudge legend { grid-column: 1 / -1; font-size: 15px; margin-bottom: 0.3rem; color: var(--red-dim, var(--red)); }
+.lp-nudge .lp-btn { padding: 0; }
+.lp-nudge .lp-btn:nth-of-type(1) { grid-area: n; }
+.lp-nudge .lp-btn:nth-of-type(2) { grid-area: w; }
+.lp-nudge .lp-btn:nth-of-type(3) { grid-area: e; }
+.lp-nudge .lp-btn:nth-of-type(4) { grid-area: s; }
+
+/* Leaflet divIcon pin */
+.lp-pin { background: none; border: 0; }
+.lp-pin-head {
+  display: block;
+  width: 30px;
+  height: 30px;
+  margin: 0 auto;
+  border-radius: 50% 50% 50% 0;
+  background: var(--red, #8c170e);
+  border: 3px solid #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transform: rotate(-45deg);
+}
+
+.lp-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  vertical-align: -0.15em;
+  animation: lp-spin 0.8s linear infinite;
+}
+@keyframes lp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .lp-spinner { animation: none; } }

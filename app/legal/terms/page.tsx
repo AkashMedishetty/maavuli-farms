@@ -1,10 +1,14 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
+import { dayRulesForDisplay } from '@/lib/settings';
 import { TENURES } from '@/lib/pricing';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Terms & Conditions' };
 
-export default function TermsPage() {
+export default async function TermsPage() {
+  const rules = await dayRulesForDisplay();
   return (
     <LegalPage
       title="Terms & Conditions"
@@ -52,7 +56,7 @@ export default function TermsPage() {
           ],
         },
       ]}
-      toConfirm={assumptionsFor('terms')}
+      toConfirm={assumptionsFor('terms', rules)}
       note="Draft prepared for Razorpay activation in test mode. Razorpay will not activate live keys without published Terms and a published Refund & Cancellation policy; these are drafts pending Maavuli’s confirmation and legal review, not executed terms."
     />
   );

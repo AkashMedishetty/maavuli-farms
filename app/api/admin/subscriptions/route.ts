@@ -1,35 +1,18 @@
-import { NextResponse } from 'next/server';
-import { getDb, NotConfiguredError } from '@/lib/db';
-import { requireAdmin, NotAdminError, activeSubscriptions } from '@/lib/admin';
+import { requireStaff } from '@/lib/roles';
+import { handleRouteError, ok } from '@/lib/api';
+import { activeSubscriptions } from '@/lib/admin';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Every currently-active subscription, as JSON. Admin-gated. Read-only: this
- * surface reports who is on the roll, it does not mutate a subscription's state
- * (that belongs to the payment/lifecycle owner, not the fulfilment panel).
+ * GET /api/admin/subscriptions — every currently-active subscription (read-only).
+ * Staff: owner, ops, support. Lifecycle changes belong to lib/subscriptions.
  */
-export async function GET(): Promise<NextResponse> {
+export async function GET() {
   try {
-    await requireAdmin();
+    await requireStaff(['owner', 'ops', 'support']);
+    return ok({ subscriptions: await activeSubscriptions() });
   } catch (err) {
-    if (err instanceof NotAdminError) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
-    }
-    throw err;
-  }
-
-  try {
-    await getDb();
-    const subscriptions = await activeSubscriptions();
-    return NextResponse.json({ subscriptions });
-  } catch (err) {
-    if (err instanceof NotConfiguredError) {
-      return NextResponse.json(
-        { error: 'Database not configured', missing: err.missing },
-        { status: 503 },
-      );
-    }
-    throw err;
+    return handleRouteError(err);
   }
 }

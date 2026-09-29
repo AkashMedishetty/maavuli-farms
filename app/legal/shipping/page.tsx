@@ -1,9 +1,13 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
+import { dayRulesForDisplay } from '@/lib/settings';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Shipping & Delivery Policy' };
 
-export default function ShippingPage() {
+export default async function ShippingPage() {
+  const rules = await dayRulesForDisplay();
   return (
     <LegalPage
       title="Shipping & Delivery Policy"
@@ -21,25 +25,31 @@ export default function ShippingPage() {
         {
           heading: 'Delivery window and cut-off',
           body: [
-            'Deliveries arrive within a fixed morning window. Changes to your address or schedule, and new subscriptions, take effect from the next morning if confirmed before the daily cut-off; changes made after the cut-off take effect the following morning.',
+            'Deliveries arrive within a fixed morning window. Changes for a delivery day — a pause, extra milk, a cancellation, an address change — close at a daily cut-off the day before; after the cut-off that day’s route is fixed and the change applies from the next open day.',
           ],
         },
         {
           heading: 'Where we deliver',
           body: [
-            'Delivery is limited to confirmed pincodes. We check your pincode before you pay — never after — so you are only charged if we can actually deliver to you.',
+            'When you subscribe you drop a pin on your door. We check that the pin falls inside an area we deliver to before you pay — never after — so you are only charged if we can actually deliver to you.',
           ],
           facts: [
-            'The serviceability check is authoritative by pincode, and the checker declines rather than defaulting to “yes” when an area is not confirmed.',
+            'The check declines rather than defaulting to “yes” when a location is outside every delivery area.',
           ],
           pending: [
-            'The list of serviceable pincodes has not been supplied and is not invented here.',
+            'The list of delivery areas has not been published and is not invented here.',
+          ],
+        },
+        {
+          heading: 'Proof of delivery',
+          body: [
+            'The delivery partner photographs the milk at your door and the phone records its location when the delivery is marked done. You can see the photo in your account; it is deleted after 60 days.',
           ],
         },
         {
           heading: 'Missed or spoiled deliveries',
           body: [
-            'If we miss a delivery, or milk arrives spoiled and you report it the same day, that day is credited — by default your term is extended by a day so you still receive every day you paid for. Full details are in the Refund & Cancellation Policy.',
+            'If we miss a delivery for a reason on our side, one day is added to the end of your plan — or, at your choice in your account, you receive that day’s value as Maavuli credit. Spoiled milk reported the same day is treated the same way. Full details are in the Refund & Cancellation Policy.',
           ],
         },
         {
@@ -49,7 +59,7 @@ export default function ShippingPage() {
           ],
         },
       ]}
-      toConfirm={assumptionsFor('shipping')}
+      toConfirm={assumptionsFor('shipping', rules)}
       note="Draft prepared for Razorpay activation in test mode. The delivery window, cut-off, first-delivery timing and serviceable area are proposed defaults pending Maavuli’s confirmation and legal review; they are not executed terms."
     />
   );

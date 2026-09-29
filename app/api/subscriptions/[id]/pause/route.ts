@@ -1,85 +1,20 @@
-import { ObjectId } from 'mongodb';
-import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
-import { getDb } from '@/lib/db';
-import { col } from '@/lib/models';
+import { ok, readJson, handleRouteError } from '@/lib/api';
+import { ctxFor } from '@/lib/clock';
+import { actorFor, requireSignedIn } from '@/lib/roles';
 import { pauseDates } from '@/lib/pause';
+import { ownSubscription } from '../../_lib';
 
-/**
- * POST /api/subscriptions/[id]/pause
- *
- * Pause individual delivery dates. Request body:
- * {
- *   "dates": ["2026-09-15", "2026-09-16"]
- * }
- *
- * Each date:
- * - Consumes 1 pause day from allowance
- * - Extends subscription end date by 1 day
- * - Must respect 4 PM cutoff (can't pause tomorrow after 4 PM today)
- * - Must be within subscription date range
- */
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ id: string }> }
-) {
+/** POST /api/subscriptions/[id]/pause  { dates: ["YYYY-MM-DD", ...] } — own plan only (404 otherwise). */
+export const dynamic = 'force-dynamic';
+
+export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    const { id } = await context.params;
-    const subscriptionId = new ObjectId(id);
-
-    // Verify subscription belongs to this user
-    const db = await getDb();
-    const sub = await col.subscriptions(db).findOne({ _id: subscriptionId });
-
-    if (!sub) {
-      return NextResponse.json(
-        { error: 'Subscription not found' },
-        { status: 404 }
-      );
-    }
-
-    if (sub.mobile !== session.mobile) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    const body = await request.json();
-    const { dates } = body;
-
-    if (!Array.isArray(dates) || dates.length === 0) {
-      return NextResponse.json(
-        { error: 'dates must be a non-empty array' },
-        { status: 400 }
-      );
-    }
-
-    // Validate date format (YYYY-MM-DD)
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    for (const date of dates) {
-      if (typeof date !== 'string' || !dateRegex.test(date)) {
-        return NextResponse.json(
-          { error: `Invalid date format: ${date}. Use YYYY-MM-DD.` },
-          { status: 400 }
-        );
-      }
-    }
-
-    const result = await pauseDates(subscriptionId, dates);
-
-    if (!result.success) {
-      return NextResponse.json({ error: result.message }, { status: 400 });
-    }
-
-    return NextResponse.json(result);
-  } catch (err: any) {
-    console.error('POST /api/subscriptions/[id]/pause error:', err);
-    return NextResponse.json(
-      { error: err.message || 'Server error' },
-      { status: 500 }
-    );
+    const p = await requireSignedIn();
+    const sub = await ownSubscription(context.params, p);
+    const body = await readJson<{ dates?: unknown }>(req);
+    const result = await pauseDates(sub._id, body.dates as string[], ctxFor(req, actorFor(p, 'customer')));
+    return ok({ ...result });
+  } catch (err) {
+    return handleRouteError(err);
   }
 }

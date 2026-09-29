@@ -1,12 +1,16 @@
 import LegalPage from '@/components/LegalPage';
 import { assumptionsFor } from '@/lib/legal';
-import { TENURES } from '@/lib/pricing';
+import { dayRulesForDisplay } from '@/lib/settings';
+import { TENURES, PRODUCTS, formatINR } from '@/lib/pricing';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = { title: 'Refund & Cancellation Policy' };
 
-const maxDiscount = Math.max(...TENURES.map(t => t.discountPct));
+const rates = PRODUCTS.map(p => `${p.label} ${formatINR(p.baseRatePaise)} per litre`).join(', ');
 
-export default function RefundsPage() {
+export default async function RefundsPage() {
+  const rules = await dayRulesForDisplay();
   return (
     <LegalPage
       title="Refund & Cancellation Policy"
@@ -19,38 +23,43 @@ export default function RefundsPage() {
           ],
           facts: [
             `Terms and their discounts are set in code, not typed by hand: ${TENURES.map(t => `${t.label} (${t.discountPct === 0 ? 'standard rate' : `−${t.discountPct}%`})`).join(', ')}.`,
-            'Payments are processed by Razorpay. Card and UPI credentials are never held by this site, and refunds can only be returned to the original payment method.',
+            `The standard (1-month, no discount) rates used to settle a cancellation: ${rates}.`,
+            'Payments are processed by Razorpay. Card and UPI credentials are never held by this site.',
           ],
         },
         {
           heading: 'Pausing or skipping deliveries',
           body: [
-            'You can pause your subscription or skip a single day. Doing so never forfeits the days you paid for: each paused or skipped day is added back to the end of your term. Your subscription runs later — it is not shortened — so you still receive every delivery you paid for.',
-          ],
-          facts: [
-            'This matches the current build: pausing cancels the scheduled deliveries from the pause date onward and extends the end date by the same number of days; skipping a day marks that day skipped and appends one day to the end. A repeat of the same action does not extend the term twice.',
+            'You can pause single days within your plan’s pause allowance. Doing so never forfeits the days you paid for: each paused day is added back to the end of your term. Your subscription runs later — it is not shortened.',
           ],
         },
         {
           heading: 'Cancelling a prepaid term early',
           body: [
-            'You may cancel at any time. Because the term discount is earned by completing the term, the days already delivered are settled at the standard monthly rate for your milk type, and the remaining balance is refunded pro-rata to your original payment method.',
+            'You may cancel at any time. Deliveries stop from the next day that is still open for changes; days already delivered or already on the delivery route count as charged.',
+            'Because the term discount is earned by completing the term, charged days are settled at the standard 1-month rate for your milk and quantity. Refund = amount paid − (charged days × standard daily rate), never below zero, plus any unspent credit from days we missed.',
+          ],
+          facts: [
+            'Worked example: 1 litre of cow milk a day for a year costs ₹35,190. Cancelled after 60 charged days, 60 × ₹115 = ₹6,900 is charged and ₹28,290 is refunded. The refund reaches ₹0 at day 306.',
           ],
         },
         {
-          heading: 'Missed, spoiled or undeliverable days',
+          heading: 'Days we miss',
           body: [
-            'If we miss a delivery, or milk arrives spoiled, tell us the same day so we can verify it. That day is then credited — by default we extend your term by a day, or refund it pro-rata if you prefer. The same applies if we cannot deliver for reasons on our side, such as weather, animal illness or a supply gap.',
+            'If we miss a delivery for a reason on our side — including weather, animal illness or a supply gap — one day is added to the end of your plan. If you prefer, you can choose in your account to receive that day’s value as Maavuli credit instead, at the price you paid. Credit from missed days that you have not spent is refunded when you cancel.',
+            'Milk that arrives spoiled should be reported the same day so we can verify it; it is then treated as a day we missed.',
           ],
         },
         {
           heading: 'How refunds are paid',
           facts: [
-            'Approved refunds are issued to the original payment method through Razorpay. We do not hold card or UPI details and cannot pay out to any other instrument.',
+            'Refunds go back to the original payment through Razorpay, up to the amount paid by card or UPI. Any part of the plan paid with Maavuli credit is returned as Maavuli credit.',
+            'Razorpay cannot refund a payment more than 6 months old. In that case we ask for your UPI id in your account and send the refund by UPI transfer instead, with the transaction reference.',
+            'Goodwill credit given by our team is not refundable as money.',
           ],
         },
       ]}
-      toConfirm={assumptionsFor('refunds')}
+      toConfirm={assumptionsFor('refunds', rules)}
       note="Draft prepared for Razorpay activation in test mode. Razorpay requires a published refund and cancellation policy before live keys are activated; every term above still needs Maavuli’s confirmation and a lawyer’s review before it is binding."
     />
   );

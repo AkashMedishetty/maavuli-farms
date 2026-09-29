@@ -1,391 +1,92 @@
-import ZoneMap from '@/components/ZoneMap';
-import RidersPanel from '@/components/RidersPanel';
 import Link from 'next/link';
-import { NotConfiguredError } from '@/lib/db';
-import { formatINR } from '@/lib/pricing';
-import {
-  requireAdmin,
-  NotAdminError,
-  adminConfigured,
-  todaysRound,
-  activeSubscriptions,
-  revenueSummary,
-  planRoutes,
-  type TodaysRound,
-  type ActiveSubscriptionRow,
-  type RevenueSummary,
-  type RoutePlan,
-} from '@/lib/admin';
+import { activeRiderOptions, canOperate, loadErrorMessage, pageStaff, systemStatus, type RiderOptionRow, type SystemStatus } from '@/lib/admin';
+import { getManifest, type Manifest } from '@/lib/manifest';
+import { istYMD } from '@/lib/cutoff';
+import { LoadError, pageCtx } from '@/components/admin/ops/server';
+import { countItems, LoadStats, RunCards, UnassignedWarning } from '@/components/admin/ops/ManifestView';
+import SystemHealth from '@/components/admin/ops/SystemHealth';
+import { ymdLabel } from '@/components/admin/ops/format';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * The fulfilment panel — the highest-value screen in the build, and the one thing
- * that turns "read Razorpay at 5am and write on paper" into a real morning round.
- *
- * Server component: the auth check runs on the server before anything renders.
- * There is no client-side gate and no query-parameter gate — an unauthenticated
- * caller sees the "not authorised" state and no data ever leaves the server.
- */
+/** Today: what is going out this morning, and whether it is getting there. */
+export default async function AdminTodayPage() {
+  const p = await pageStaff();
+  if (!p) return null; // the layout shows the sign-in / not-authorised prompt
+  const ctx = await pageCtx(p);
+  const today = istYMD(ctx.now);
+  const operate = canOperate(p.staffRole);
 
-/** YYYY-MM-DD for "today" in Asia/Kolkata — a round is a local-calendar concept. */
-function todayIST(): string {
-  // en-CA yields YYYY-MM-DD; the timeZone makes it the IST calendar day
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-}
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function kindLabel(kind: 'buffalo' | 'cow'): string {
-  return kind === 'cow' ? 'Cow' : 'Buffalo';
-}
-
-function litres(n: number): string {
-  // 0.5 stays "0.5 L", 2 stays "2 L"
-  return `${Number.isInteger(n) ? n : n.toFixed(1)} L`;
-}
-
-/** Metres → a short human distance: "820 m", "3.4 km". */
-function dist(m: number): string {
-  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
-}
-
-export default async function AdminPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ date?: string }>;
-}) {
-  // 1) Empty allowlist => admin is UNREACHABLE. Say so plainly, render no panel.
-  if (!adminConfigured()) {
-    return (
-      <main className="page">
-        <header className="page-head">
-          <p className="eyebrow">Admin</p>
-          <h1>Admin is not configured.</h1>
-          <p>
-            No admin mobile numbers are set, so this panel is intentionally
-            unreachable. Set <code>ADMIN_MOBILES</code> (comma-separated 10-digit
-            numbers) in the environment to enable it.
-          </p>
-        </header>
-      </main>
-    );
-  }
-
-  // 2) Server-side allowlist check. requireAdmin throws unless the session's mobile
-  //    is in ADMIN_MOBILES.
-  try {
-    await requireAdmin();
-  } catch (err) {
-    if (err instanceof NotAdminError) {
-      return (
-        <main className="page">
-          <header className="page-head">
-            <p className="eyebrow">Admin</p>
-            <h1>Not authorised.</h1>
-            <p>
-              This panel is restricted to farm staff. Sign in with an admin mobile
-              number to continue.
-            </p>
-            <Link className="cta" href="/account">
-              Sign in
-            </Link>
-          </header>
-        </main>
-      );
-    }
-    throw err;
-  }
-
-  const params = await searchParams;
-  const date = params.date && DATE_RE.test(params.date) ? params.date : todayIST();
-
-  // 3) Load the round, roster and revenue. If the DB is unreachable, say so — never
-  //    render empty panels that imply "nothing scheduled today".
-  let round: TodaysRound | null = null;
-  let subs: ActiveSubscriptionRow[] = [];
-  let revenue: RevenueSummary | null = null;
-  let routePlan: RoutePlan | null = null;
-  let dbError: string | null = null;
-
-  try {
-    [round, subs, revenue, routePlan] = await Promise.all([
-      todaysRound(date),
-      activeSubscriptions(),
-      revenueSummary(),
-      planRoutes(date),
-    ]);
-  } catch (err) {
-    if (err instanceof NotConfiguredError) {
-      dbError = `Database not configured — missing ${err.missing.join(', ')}.`;
-    } else {
-      dbError =
-        'The database is not reachable, so the round could not be loaded. ' +
-        'This panel is not showing live data right now.';
-    }
-  }
+  // Each block loads independently so one failure never blanks the whole morning.
+  const [mRes, rRes, sRes] = await Promise.allSettled([getManifest(today, ctx), activeRiderOptions(), systemStatus(ctx)]);
+  const manifest: Manifest | null = mRes.status === 'fulfilled' ? mRes.value : null;
+  // null (not []) on a failed read, so the assign controls say "failed to load", not "no riders".
+  const riders: RiderOptionRow[] | null = rRes.status === 'fulfilled' ? rRes.value : null;
+  const system: SystemStatus | null = sRes.status === 'fulfilled' ? sRes.value : null;
+  const counts = manifest ? countItems(manifest.runs) : null;
 
   return (
-    <main className="page admin">
-      <header className="page-head">
-        <p className="eyebrow">Admin · fulfilment</p>
-        <h1>Morning round</h1>
-        <p>Who gets what, in which pincode, on the chosen day.</p>
-
-        {/* GET form: picking a date reloads the server-rendered round. No JS. */}
-        <form className="admin-datebar" method="get">
-          <label htmlFor="date">Round date</label>
-          <input type="date" id="date" name="date" defaultValue={date} />
-          <button className="cta" type="submit">
-            View day
-          </button>
-        </form>
+    <>
+      <header className="ops-head">
+        <p className="ops-eyebrow">Today</p>
+        <h1>{ymdLabel(today)}</h1>
+        {manifest && (
+          <p className="ops-sub">
+            {manifest.locked ? 'Runs are frozen.' : 'Not locked — no deliveries were planned for today.'}{' '}
+            <Link href="/admin/exceptions">Exceptions</Link> · <Link href="/admin/tomorrow">Tomorrow&rsquo;s plan</Link>
+          </p>
+        )}
       </header>
 
-      {dbError && (
-        <section className="panel admin-alert">
-          <p>{dbError}</p>
-        </section>
-      )}
-
-      {/* ---- primary view: the round, pincode-grouped, litres totalled ---- */}
-      {!dbError && <ZoneMap />}
-
-      {/* riders + which zone each one runs */}
-      {!dbError && <RidersPanel />}
-
-      {!dbError && round && (
-        <section className="admin-round">
-          <div className="admin-round-head">
-            <h2>Round for {date}</h2>
-            <p className="admin-grandtotal">
-              <strong>{litres(round.litresTotal)}</strong> total across{' '}
-              {round.pincodes.length} pincode{round.pincodes.length === 1 ? '' : 's'}
-            </p>
-          </div>
-
-          {round.pincodes.length === 0 ? (
-            <p className="pending">No deliveries scheduled for {date}.</p>
-          ) : (
-            round.pincodes.map(group => (
-              <div key={group.pincode} className="panel admin-pincode">
-                <div className="admin-pincode-head">
-                  <h3>{group.pincode}</h3>
-                  <span className="admin-pincode-total">{litres(group.litresTotal)}</span>
-                </div>
-                <div className="plan-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th scope="col">Mobile</th>
-                        <th scope="col">Milk</th>
-                        <th scope="col">Litres</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Note</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.deliveries.map(d => (
-                        <tr key={d.deliveryId}>
-                          <th scope="row">{d.mobile}</th>
-                          <td>{kindLabel(d.kind)}</td>
-                          <td>{litres(d.litres)}</td>
-                          <td>
-                            <span className={`admin-status is-${d.status}`}>{d.status}</span>
-                          </td>
-                          <td>{d.note ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+      {!manifest ? (
+        <LoadError what="today's manifest" message={loadErrorMessage(mRes.status === 'rejected' ? mRes.reason : null)} />
+      ) : (
+        <>
+          <LoadStats m={manifest} />
+          {counts && (
+            <div className="ops-stats" aria-label="Delivery progress">
+              <div className="ops-stat">
+                <strong>{counts.delivered}</strong>
+                <span>Delivered</span>
               </div>
-            ))
-          )}
-          <p className="admin-hint">
-            Deliveries are marked delivered / skipped / failed by{' '}
-            <code>POST /api/admin/delivery</code>. Inline actions are a follow-up —
-            the client has not confirmed a mark-off flow yet.
-          </p>
-        </section>
-      )}
-
-      {/* ---- optimised delivery routes, per rider ---- */}
-      {!dbError && routePlan && (
-        <section className="admin-section admin-routes">
-          <h2>Delivery routes for {date}</h2>
-
-          {routePlan.routes.length === 0 && routePlan.noLocation.length === 0 ? (
-            <p className="pending">No scheduled stops to route for {date}.</p>
-          ) : (
-            <>
-              {routePlan.routes.map((r, i) => (
-                <div key={r.riderId ?? `unassigned-${i}`} className="panel admin-route">
-                  <div className="admin-route-head">
-                    <div>
-                      <h3>
-                        {r.riderName}
-                        {r.riderId === null && (
-                          <span className="admin-route-flag"> · no rider on these zones</span>
-                        )}
-                      </h3>
-                      <p className="admin-route-meta">
-                        {r.stops.length} stop{r.stops.length === 1 ? '' : 's'} · {dist(r.totalM)} total ·
-                        from {r.originLabel}
-                      </p>
-                    </div>
-                    {r.directionsUrl && (
-                      <a className="cta" href={r.directionsUrl} target="_blank" rel="noopener noreferrer">
-                        Open route in Maps
-                      </a>
-                    )}
-                  </div>
-                  <div className="plan-table">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th scope="col">#</th>
-                          <th scope="col">Mobile</th>
-                          <th scope="col">Name</th>
-                          <th scope="col">Litres</th>
-                          <th scope="col">Address</th>
-                          <th scope="col">Leg</th>
-                          <th scope="col">Map</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {r.stops.map(s => (
-                          <tr key={s.deliveryId}>
-                            <th scope="row">{s.seq}</th>
-                            <td>{s.mobile}</td>
-                            <td>{s.name ?? '—'}</td>
-                            <td>{litres(s.litres)}</td>
-                            <td className="admin-route-addr">
-                              {s.address ?? '—'}
-                              {s.landmark ? ` (${s.landmark})` : ''}
-                            </td>
-                            <td>{dist(s.legM)}</td>
-                            <td>
-                              <a href={s.mapsUrl} target="_blank" rel="noopener noreferrer">
-                                pin
-                              </a>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
-
-              {routePlan.noLocation.length > 0 && (
-                <div className="panel admin-route">
-                  <div className="admin-route-head">
-                    <div>
-                      <h3>
-                        No saved location <span className="admin-route-flag"> · route by hand</span>
-                      </h3>
-                      <p className="admin-route-meta">
-                        {routePlan.noLocation.length} stop
-                        {routePlan.noLocation.length === 1 ? '' : 's'} — a pincode but no pin, so they
-                        can't be sequenced.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="plan-table">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th scope="col">Mobile</th>
-                          <th scope="col">Name</th>
-                          <th scope="col">Litres</th>
-                          <th scope="col">Pincode</th>
-                          <th scope="col">Address</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {routePlan.noLocation.map(s => (
-                          <tr key={s.deliveryId}>
-                            <th scope="row">{s.mobile}</th>
-                            <td>{s.name ?? '—'}</td>
-                            <td>{litres(s.litres)}</td>
-                            <td>{s.pincode}</td>
-                            <td>{s.address ?? '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          <p className="admin-hint">
-            Stops are grouped by the zone they fall in and that zone's rider, then ordered
-            nearest-first from the rider's start point — or the farm when{' '}
-            <code>FARM_ORIGIN_LAT</code> / <code>FARM_ORIGIN_LNG</code> are set, otherwise the
-            centre of the cluster. Assign riders to zones in the panel above.
-          </p>
-        </section>
-      )}
-
-      {/* ---- active subscriptions ---- */}
-      {!dbError && (
-        <section className="admin-section">
-          <h2>Active subscriptions</h2>
-          {subs.length === 0 ? (
-            <p className="pending">No active subscriptions.</p>
-          ) : (
-            <div className="plan-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Mobile</th>
-                    <th scope="col">Milk</th>
-                    <th scope="col">Per day</th>
-                    <th scope="col">Pincode</th>
-                    <th scope="col">Window</th>
-                    <th scope="col">Progress</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {subs.map(s => (
-                    <tr key={s.subscriptionId}>
-                      <th scope="row">{s.mobile}</th>
-                      <td>{kindLabel(s.kind)}</td>
-                      <td>{litres(s.litresPerDay)}</td>
-                      <td>{s.pincode}</td>
-                      <td>
-                        {s.startDate} → {s.endDate}
-                      </td>
-                      <td>
-                        {s.daysDelivered} / {s.daysTotal} days
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className={`ops-stat${counts.notDelivered ? ' is-bad' : ''}`}>
+                <strong>{counts.notDelivered}</strong>
+                <span>Not delivered</span>
+              </div>
+              <div className="ops-stat">
+                <strong>{counts.pending}</strong>
+                <span>Pending</span>
+              </div>
+              <div className={`ops-stat${counts.unconfirmed ? ' is-warn' : ''}`}>
+                <strong>{counts.unconfirmed}</strong>
+                <span>
+                  Unconfirmed{counts.unconfirmed > 0 && <> · <Link href={`/admin/exceptions?date=${today}`}>resolve</Link></>}
+                </span>
+              </div>
             </div>
           )}
-        </section>
+
+          {rRes.status === 'rejected' && (
+            <LoadError what="the rider list" message={loadErrorMessage(rRes.reason)} />
+          )}
+          <UnassignedWarning m={manifest} riders={riders} canOperate={operate} />
+
+          <section className="ops-section ops-card" aria-labelledby="runs-h">
+            <h2 id="runs-h">Runs</h2>
+            {manifest.runs.length === 0 ? (
+              <p className="ops-empty">No deliveries today.</p>
+            ) : (
+              <RunCards m={manifest} riders={riders} canOperate={operate} showProgress />
+            )}
+          </section>
+        </>
       )}
 
-      {/* ---- paid-orders total (stored paise, never re-derived) ---- */}
-      {!dbError && revenue && (
-        <section className="admin-section">
-          <h2>Revenue</h2>
-          <div className="panel admin-revenue">
-            <p className="admin-revenue-total">
-              <strong>{formatINR(revenue.totalPaise)}</strong>
-            </p>
-            <p className="admin-revenue-note">
-              across {revenue.paidOrders} paid order{revenue.paidOrders === 1 ? '' : 's'} —
-              summed from the amount stored on each order at purchase time.
-            </p>
-          </div>
-        </section>
+      {system ? (
+        <SystemHealth s={system} />
+      ) : (
+        <LoadError what="system health" message={loadErrorMessage(sRes.status === 'rejected' ? sRes.reason : null)} />
       )}
-    </main>
+    </>
   );
 }

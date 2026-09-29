@@ -1,136 +1,121 @@
-import { NextResponse } from 'next/server';
 import { getDb, NotConfiguredError } from '@/lib/db';
 import { col } from '@/lib/models';
 import { verifyWebhookSignature } from '@/lib/razorpay';
-import { activateSubscriptionForOrder } from '@/lib/subscriptions';
+import { markOrderFailed, markOrderPaid } from '@/lib/orders';
+import { handleRazorpayRefundEvent } from '@/lib/refunds';
+import { systemCtx } from '@/lib/clock';
+import { jsonError, ok } from '@/lib/api';
+
+export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/webhooks/razorpay
  *
- * The order of operations here is the security model, not a style choice:
+ * The order of operations is the security model:
+ *   1. Read the RAW body before any JSON parsing — the HMAC is over exact bytes.
+ *   2. Verify `x-razorpay-signature` FIRST. An unverified webhook lets anyone mark an
+ *      order paid.
+ *   3. Idempotency via webhook_events.eventId (unique). A duplicate of an event that
+ *      was PROCESSED is a no-op 200. If processing fails, the claim row is removed and
+ *      we answer 500, so Razorpay's retry actually re-processes it (otherwise the
+ *      retry would hit the duplicate and be acked with nothing done).
  *
- *   1. Read the RAW body text BEFORE any JSON parsing. The HMAC is over exact
- *      bytes; re-serialising parsed JSON would change them and break the check.
- *   2. Verify `x-razorpay-signature` FIRST. An unverified webhook lets anyone mark
- *      an order paid — a free money-printing bug.
- *   3. Idempotency via webhook_events.eventId (unique index). Razorpay retries, so
- *      a duplicate event must be a no-op 200.
- *
- * We deliberately return 200 for events we ignore, so Razorpay stops retrying them.
- * We never log secrets, signatures, or full payloads.
+ * Ignored events get 200 so Razorpay stops retrying them. Secrets, signatures and
+ * payloads are never logged.
  */
 
-// Minimal shapes of the payload fields we read. Razorpay sends far more.
 interface RazorpayWebhook {
   event?: string;
   payload?: {
     payment?: { entity?: { id?: string; order_id?: string } };
     order?: { entity?: { id?: string } };
+    refund?: { entity?: { id?: string; payment_id?: string; amount?: number; status?: string; receipt?: string | null; notes?: unknown } };
   };
 }
 
+const REFUND_EVENTS = new Set(['refund.created', 'refund.processed', 'refund.failed']);
+
 export async function POST(req: Request) {
-  // (1) raw bytes, before anything touches JSON
   const rawBody = await req.text();
-  const signature = req.headers.get('x-razorpay-signature');
-
-  // (2) verify signature first
-  if (!verifyWebhookSignature(rawBody, signature)) {
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+  if (!verifyWebhookSignature(rawBody, req.headers.get('x-razorpay-signature'))) {
+    return jsonError(400, 'Invalid signature');
   }
-
   const eventId = req.headers.get('x-razorpay-event-id');
-  if (!eventId) {
-    return NextResponse.json({ error: 'Missing event id' }, { status: 400 });
-  }
+  if (!eventId) return jsonError(400, 'Missing event id');
 
   let parsed: RazorpayWebhook;
   try {
     parsed = JSON.parse(rawBody) as RazorpayWebhook;
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    return jsonError(400, 'Invalid JSON');
   }
-  const event = parsed.event ?? 'unknown';
+  const event = typeof parsed.event === 'string' ? parsed.event : 'unknown';
+  const ctx = systemCtx(new Date(), 'razorpay_webhook');
+
+  let db;
+  try {
+    db = await getDb();
+  } catch (err) {
+    if (err instanceof NotConfiguredError) return jsonError(503, 'not configured');
+    return jsonError(500, 'processing error');
+  }
 
   try {
-    const db = await getDb();
-
-    // (3) idempotency — insert first; a duplicate key means we already have it.
-    try {
-      await col.webhookEvents(db).insertOne({
-        eventId,
-        event,
-        receivedAt: new Date(),
-      });
-    } catch (err) {
-      // Duplicate key (11000) => already processed (or in flight). Ack and stop
-      // the retry storm. Any other insert error is a real failure.
-      if (err && typeof err === 'object' && 'code' in err && (err as { code?: number }).code === 11000) {
-        return NextResponse.json({ status: 'duplicate' }, { status: 200 });
-      }
-      throw err;
+    await col.webhookEvents(db).insertOne({ eventId, event, receivedAt: new Date() });
+  } catch (err) {
+    if (err && typeof err === 'object' && (err as { code?: number }).code === 11000) {
+      return ok({ status: 'duplicate' });
     }
+    return jsonError(500, 'processing error');
+  }
 
+  try {
     switch (event) {
       case 'payment.captured':
       case 'order.paid': {
-        const orderId =
-          parsed.payload?.payment?.entity?.order_id ?? parsed.payload?.order?.entity?.id;
+        const rzOrderId = parsed.payload?.payment?.entity?.order_id ?? parsed.payload?.order?.entity?.id;
         const paymentId = parsed.payload?.payment?.entity?.id;
-        if (!orderId) break; // nothing to act on; still ack below
-
-        const updated = await col.orders(db).findOneAndUpdate(
-          // only transition an unpaid order — guards against a stray order.paid
-          // after a manual refund flipping state back
-          { razorpayOrderId: orderId, status: { $in: ['created', 'failed'] } },
-          {
-            $set: {
-              status: 'paid',
-              paidAt: new Date(),
-              ...(paymentId ? { razorpayPaymentId: paymentId } : {}),
-            },
-          },
-          { returnDocument: 'after' },
-        );
-
-        // Only activate once, when we actually moved the order to paid.
-        if (updated && updated._id) {
-          await activateSubscriptionForOrder(updated._id);
-        }
+        if (!rzOrderId) break;
+        const order = await col.orders(db).findOne({ razorpayOrderId: rzOrderId }, { projection: { _id: 1 } });
+        if (!order?._id) break; // not ours — ack
+        await markOrderPaid(order._id, { ...(paymentId ? { razorpayPaymentId: paymentId } : {}), source: 'webhook' }, ctx);
         break;
       }
-
       case 'payment.failed': {
-        const orderId =
-          parsed.payload?.payment?.entity?.order_id ?? parsed.payload?.order?.entity?.id;
-        if (orderId) {
-          await col.orders(db).updateOne(
-            { razorpayOrderId: orderId, status: 'created' },
-            { $set: { status: 'failed' } },
-          );
+        const rzOrderId = parsed.payload?.payment?.entity?.order_id ?? parsed.payload?.order?.entity?.id;
+        if (!rzOrderId) break;
+        const order = await col.orders(db).findOne({ razorpayOrderId: rzOrderId }, { projection: { _id: 1 } });
+        if (order?._id) await markOrderFailed(order._id, ctx);
+        break;
+      }
+      default: {
+        if (REFUND_EVENTS.has(event)) {
+          const r = parsed.payload?.refund?.entity;
+          if (r?.id && r.payment_id && typeof r.amount === 'number') {
+            await handleRazorpayRefundEvent(
+              event as 'refund.created' | 'refund.processed' | 'refund.failed',
+              {
+                id: r.id,
+                payment_id: r.payment_id,
+                amount: r.amount,
+                ...(r.status ? { status: r.status } : {}),
+                ...(typeof r.receipt === 'string' ? { receipt: r.receipt } : {}),
+                ...(r.notes ? { notes: r.notes } : {}),
+              },
+              ctx,
+            );
+          }
         }
         break;
       }
-
-      default:
-        // Deliberately ignored event — ack so Razorpay stops retrying.
-        break;
     }
-
-    await col.webhookEvents(db).updateOne(
-      { eventId },
-      { $set: { processedAt: new Date() } },
-    );
-
-    return NextResponse.json({ status: 'ok' }, { status: 200 });
+    await col.webhookEvents(db).updateOne({ eventId }, { $set: { processedAt: new Date() } });
+    return ok({ status: 'ok' });
   } catch (err) {
-    if (err instanceof NotConfiguredError) {
-      // Cannot process without a DB. Return 5xx so Razorpay retries later — the
-      // event id was not durably stored, so the retry is safe.
-      return NextResponse.json({ error: 'not configured' }, { status: 503 });
-    }
-    // A genuine processing error: 500 so Razorpay retries. We do not log the
-    // payload or signature.
-    return NextResponse.json({ error: 'processing error' }, { status: 500 });
+    // release the claim so the retry re-processes; never log the payload
+    await col.webhookEvents(db).deleteOne({ eventId, processedAt: { $exists: false } }).catch(() => undefined);
+    // eslint-disable-next-line no-console
+    console.error('[webhook/razorpay] processing failed', event, err instanceof Error ? err.name : 'error');
+    return jsonError(500, 'processing error');
   }
 }

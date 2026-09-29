@@ -22,6 +22,7 @@ import { cookies } from 'next/headers';
 import { getDb } from './db';
 import { col, normalizeMobile, type Session, type User } from './models';
 import { requireEnv, adminMobiles, smsConfig, isProd, otpDemoMode } from './env';
+import { sendAuthCode } from './notify';
 
 export const SESSION_COOKIE = 'mv_session';
 
@@ -29,6 +30,7 @@ const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes; TTL index on expiresAt removes t
 const OTP_MAX_ATTEMPTS = 5; // per otp doc, then it is dead
 const ISSUE_WINDOW_MS = 15 * 60 * 1000; // rolling window for the issue-rate limit
 const ISSUE_MAX = 3; // max issues per mobile per window
+const ISSUE_MAX_PER_IP = 20; // per client IP per window — generous for a shared NAT (a society's wifi), fatal to a spray
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /** sha256(value + SESSION_SECRET) as lowercase hex. The secret is the pepper. */
@@ -45,6 +47,31 @@ function sha256Hex(value: string): string {
 export function isAdminMobile(mobile: string): boolean {
   const normalized = normalizeMobile(mobile);
   return normalized !== null && adminMobiles().includes(normalized);
+}
+
+/**
+ * The requesting client's IP for rate limiting. On Vercel the edge sets x-real-ip /
+ * x-forwarded-for itself (client-supplied values are not passed through as the first
+ * hop), so the first entry is the client. Returns undefined when absent or garbled —
+ * the per-mobile limit still applies.
+ */
+export function clientIpFrom(h: Pick<Headers, 'get'>): string | undefined {
+  const raw = h.get('x-real-ip') ?? h.get('x-forwarded-for')?.split(',')[0] ?? '';
+  const ip = raw.trim();
+  return ip && ip.length <= 45 && /^[0-9a-fA-F:.]+$/.test(ip) ? ip : undefined;
+}
+
+/**
+ * True when the WhatsApp auth channel is configured well enough to deliver a code:
+ * provider is 'meta' AND the token + phone number id are present. Detected without
+ * sending, so issueOtp can gate delivery on it before minting a code.
+ */
+function whatsappAuthConfigured(): boolean {
+  const provider = (process.env.WHATSAPP_PROVIDER ?? '').trim().toLowerCase();
+  if (provider !== 'meta') return false;
+  const token = (process.env.WHATSAPP_TOKEN ?? '').trim();
+  const phoneId = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? '').trim();
+  return token !== '' && phoneId !== '';
 }
 
 export interface IssueResult {
@@ -80,6 +107,14 @@ export class InvalidMobileError extends Error {
   }
 }
 
+/** A delivery channel is configured but the code could not be sent (→ 502). Nothing was echoed. */
+export class OtpDeliveryError extends Error {
+  constructor() {
+    super('We could not send your code just now. Please try again in a minute.');
+    this.name = 'OtpDeliveryError';
+  }
+}
+
 /**
  * Issue a one-time code for `mobile`.
  *
@@ -87,7 +122,7 @@ export class InvalidMobileError extends Error {
  * Throws RateLimitError (-> 429) when the mobile is over its issue budget, and
  * SmsNotConfiguredError (-> 503) in production with no SMS provider set.
  */
-export async function issueOtp(mobile: string): Promise<IssueResult> {
+export async function issueOtp(mobile: string, opts: { ip?: string } = {}): Promise<IssueResult> {
   const normalized = normalizeMobile(mobile);
   if (!normalized) throw new InvalidMobileError();
 
@@ -126,26 +161,74 @@ export async function issueOtp(mobile: string): Promise<IssueResult> {
    * response, so a demo visitor cannot walk into the fulfilment panel and the zone
    * editor. Whoever runs the demo can read that code from the server logs.
    */
+  /*
+   * Delivery seam order:
+   *   1. WhatsApp (Cloud API) — the primary channel now that the platform is
+   *      WhatsApp-first. When WHATSAPP_PROVIDER=meta, sendAuthCode delivers the code
+   *      via the approved authentication template.
+   *   2. SMS — kept as a fallback seam for numbers/regions where WhatsApp fails or
+   *      is not desired. Unimplemented provider wire call (see sendSms).
+   *   3. Dev/demo — no provider configured: dev-log the code, and echo it outside
+   *      production (or in production only under OTP_DEMO_MODE), except for admins.
+   *
+   * We decide whether a real channel WILL deliver before minting, so a production
+   * 503 does not leave a live OTP behind. WhatsApp being configured is detected
+   * without sending, so we can gate on it here.
+   */
   const sms = smsConfig();
   const demo = otpDemoMode();
-  if (!sms.ok && isProd() && !demo) {
+  const whatsappReady = whatsappAuthConfigured();
+  if (!whatsappReady && !sms.ok && isProd() && !demo) {
     throw new SmsNotConfiguredError(sms.missing);
   }
 
   // 6-digit code, cryptographically random, uniform over [100000, 999999].
   const code = String(randomInt(100000, 1000000));
 
-  await otps.insertOne({
+  const inserted = await otps.insertOne({
     mobile: normalized,
     codeHash: pepperedHash(code),
     expiresAt: new Date(now.getTime() + OTP_TTL_MS),
     attempts: 0,
     createdAt: now,
+    ...(opts.ip ? { ip: opts.ip } : {}),
   });
+
+  // Enforce the limits AFTER inserting, counting our own row. Counting first and
+  // inserting second lets N parallel requests all see "under the limit"; this way
+  // every request that pushes a window over the limit removes itself.
+  const overMobile = (await otps.countDocuments({ mobile: normalized, createdAt: { $gte: windowStart } })) > ISSUE_MAX;
+  const overIp = opts.ip
+    ? (await otps.countDocuments({ ip: opts.ip, createdAt: { $gte: windowStart } })) > ISSUE_MAX_PER_IP
+    : false;
+  if (overMobile || overIp) {
+    await otps.deleteOne({ _id: inserted.insertedId });
+    throw new RateLimitError(Math.ceil(ISSUE_WINDOW_MS / 1000));
+  }
+
+  // Primary: WhatsApp. 'sent' means the code left the building; nothing is echoed.
+  if (whatsappReady) {
+    const delivered = await sendAuthCode(normalized, code);
+    if (delivered === 'sent') return { ok: true };
+    // The send failed (provider error / outage). Fall through to SMS if there is one.
+  }
 
   if (sms.ok) {
     await sendSms(normalized, code, sms.value);
     return { ok: true };
+  }
+
+  /*
+   * No channel delivered the code. In PRODUCTION without demo mode this must end
+   * here: falling through to the dev branch below would put the code in the HTTP
+   * response, and a failed WhatsApp send (a Meta outage, an undeliverable number)
+   * would become "request anyone's code and read it back" — account takeover.
+   * The minted OTP is killed (attempts maxed) rather than deleted, so the attempt
+   * still counts toward the issue-rate limit and cannot be used to spam the provider.
+   */
+  if (isProd() && !demo) {
+    await otps.updateOne({ _id: inserted.insertedId }, { $set: { attempts: OTP_MAX_ATTEMPTS } });
+    throw new OtpDeliveryError();
   }
 
   // No provider: either local development, or production with demo mode explicitly
@@ -153,12 +236,28 @@ export async function issueOtp(mobile: string): Promise<IssueResult> {
   // eslint-disable-next-line no-console
   console.log(`[otp] ${normalized}: ${code}`);
 
-  // Admin codes are never echoed to the browser. In demo mode the response is the
-  // public internet, and an echoed admin code is admin access for any visitor.
-  if (isAdminMobile(normalized)) {
+  // Codes are never echoed to the browser for privileged numbers in the situations
+  // where the echo is a real hole:
+  //   · An OWNER (env allowlist) is ALWAYS withheld — dev or prod. An echoed owner
+  //     code is the fulfilment panel and zone editor for anyone who can read it.
+  //   · In PRODUCTION DEMO MODE the response is the public internet, so ANY
+  //     privileged mobile (staff or rider — isPrivilegedMobile) is also withheld so
+  //     a demo visitor cannot walk into a staff or rider surface.
+  // In plain development the response is local, so a rider/staff dev code is still
+  // echoed (current behaviour) — only owners are held back.
+  const prodDemo = demo && isProd();
+  // roles.ts imports this module, so a static import would be a cycle; load it
+  // lazily only in the prod-demo branch that actually needs the DB-backed check.
+  let privileged = false;
+  if (prodDemo && !isAdminMobile(normalized)) {
+    const { isPrivilegedMobile } = await import('./roles');
+    privileged = await isPrivilegedMobile(normalized);
+  }
+  const withhold = isAdminMobile(normalized) || (prodDemo && privileged);
+  if (withhold) {
     return { ok: true, adminCodeWithheld: true };
   }
-  return { ok: true, devCode: code, demo: demo && isProd() };
+  return { ok: true, devCode: code, demo: prodDemo };
 }
 
 /**
@@ -200,23 +299,22 @@ export async function verifyOtp(mobile: string, code: string): Promise<string> {
   const otps = col.otps(db);
   const now = new Date();
 
-  // newest un-expired, not-yet-dead OTP for this mobile
-  const otp = await otps.findOne(
+  // Consume an attempt ATOMICALLY before comparing. A read-then-compare-then-increment
+  // lets N parallel guesses all see "attempts < 5" and all be compared; with the
+  // increment in the same findOneAndUpdate, at most OTP_MAX_ATTEMPTS requests ever get
+  // this document back, however many arrive at once.
+  const otp = await otps.findOneAndUpdate(
     { mobile: normalized, expiresAt: { $gt: now }, attempts: { $lt: OTP_MAX_ATTEMPTS } },
-    { sort: { createdAt: -1 } },
+    { $inc: { attempts: 1 } },
+    { sort: { createdAt: -1 }, returnDocument: 'after' },
   );
   if (!otp?._id) throw new VerifyError();
 
   const matches = timingSafeEqualHex(otp.codeHash, pepperedHash(code));
 
   if (!matches) {
-    const updated = await otps.findOneAndUpdate(
-      { _id: otp._id },
-      { $inc: { attempts: 1 } },
-      { returnDocument: 'after' },
-    );
-    // when the 5th attempt lands, kill the doc so it cannot be brute-forced further
-    if (updated && updated.attempts >= OTP_MAX_ATTEMPTS) {
+    // the last allowed attempt failed: kill the doc so it cannot be tried again
+    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
       await otps.deleteOne({ _id: otp._id });
     }
     throw new VerifyError();

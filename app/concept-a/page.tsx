@@ -4,6 +4,9 @@ import { BRAND, CONTACT, PENDING, SERVICEABLE_PINCODES } from '@/lib/content';
 import { PRODUCTS, quote, formatINR } from '@/lib/pricing';
 import NavPanel from '@/components/NavPanel';
 
+/** A design-exploration route: reachable, but kept out of search results. */
+export const metadata = { robots: { index: false, follow: false } };
+
 /**
  * The plan chooser deliberately does NOT open with a price table. The client was
  * explicit: "this table feels more like just providing them an excel — they don't
@@ -15,6 +18,8 @@ import NavPanel from '@/components/NavPanel';
  */
 export default function Page() {
   return (
+    <>
+    <NavPanel />
     <main>
       <Hero />
       <StoryPath />
@@ -30,7 +35,7 @@ export default function Page() {
             const best = quote(p.kind, 'one', '1y');
             const entry = quote(p.kind, 'one', '1m');
             return (
-              <a key={p.kind} className="plan-card" href={`/subscribe/${p.kind}`}>
+              <a key={p.kind} className="plan-card" href="/subscribe">
                 <h3>{p.label}</h3>
                 {/* breedClaim is null until the client confirms it. A2/desi would be a
                     headline, but asserting it unconfirmed would be inventing a fact. */}
@@ -53,7 +58,6 @@ export default function Page() {
             <>We deliver to {SERVICEABLE_PINCODES.length} pincodes across Hyderabad.</>
           ) : (
             <>
-      <NavPanel />
               Delivery area:{' '}
               <span className="pending">pincode list to be confirmed</span> — we check
               serviceability before you pay, never after.
@@ -94,5 +98,6 @@ export default function Page() {
         </div>
       </footer>
     </main>
+    </>
   );
 }

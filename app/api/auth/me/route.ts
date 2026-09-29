@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { NotConfiguredError } from '@/lib/db';
+import { handleRouteError } from '@/lib/api';
+
+// Reads cookies/sessions on every request; never prerender or cache.
+export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/auth/me
@@ -19,12 +23,14 @@ export async function GET(): Promise<NextResponse> {
       mobile: session.mobile,
       isAdmin: session.isAdmin,
       name: session.user?.name ?? null,
+      // the customer's own consent state, so forms can show it (never another user's)
+      whatsappOptIn: session.user?.whatsappOptIn === true,
       expiresAt: session.expiresAt.toISOString(),
     });
   } catch (err) {
     if (err instanceof NotConfiguredError) {
       return NextResponse.json({ error: err.message, missing: err.missing }, { status: 503 });
     }
-    throw err;
+    return handleRouteError(err);
   }
 }

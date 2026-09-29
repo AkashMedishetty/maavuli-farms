@@ -13,6 +13,8 @@ import {
   pathLengthM,
   centroid,
   directionsUrl,
+  cheapestInsertion,
+  insertAllCheapest,
   type Waypoint,
 } from '../lib/routing.ts';
 import type { GeoPoint } from '../lib/geo.ts';
@@ -125,6 +127,38 @@ function isPermutation(input: readonly Stop[], out: readonly Stop[]): boolean {
   ok('dir url includes each stop', url.includes('17.480000,78.550000') && url.includes('17.490000,78.560000'));
   // path after /maps/dir/ is origin + 2 stops = 3 coordinate segments
   ok('dir url segment count = origin + stops', url.split('/dir/')[1]!.split('/').length === 3);
+}
+
+/* ---- cheapest insertion ---- */
+{
+  const origin: GeoPoint = { lat: 17.0, lng: 78.0 };
+  // three stops on a straight line going north
+  const line = [stop('a', 17.01, 78.0), stop('b', 17.02, 78.0), stop('c', 17.03, 78.0)];
+
+  const mid = cheapestInsertion(origin, line, stop('m', 17.015, 78.0));
+  ok('insertion: a midpoint goes between its neighbours', mid.map(s => s.id).join('') === 'ambc');
+
+  const far = cheapestInsertion(origin, line, stop('z', 17.05, 78.0));
+  ok('insertion: a point past the end is appended', far.map(s => s.id).join('') === 'abcz');
+
+  const near = cheapestInsertion(origin, line, stop('o', 17.004, 78.0));
+  ok('insertion: a point next to the origin goes first', near.map(s => s.id).join('') === 'oabc');
+
+  ok('insertion: into empty', cheapestInsertion(origin, [], stop('x', 17.1, 78.1)).map(s => s.id).join('') === 'x');
+  ok('insertion: does not mutate the input', line.map(s => s.id).join('') === 'abc');
+
+  const added = [stop('m', 17.015, 78.0), stop('z', 17.05, 78.0)];
+  const all = insertAllCheapest(origin, line, added);
+  ok('insertAll: every stop present once', isPermutation([...line, ...added], all));
+  ok('insertAll: order is sensible', all.map(s => s.id).join('') === 'ambcz');
+
+  // insertion never costs more than appending
+  const random = Array.from({ length: 12 }, (_, i) => stop(`r${i}`, 17 + ((i * 37) % 11) / 400, 78 + ((i * 53) % 13) / 400));
+  const base = optimizeRoute(origin, random.slice(0, 10)).order;
+  for (const extra of random.slice(10)) {
+    const inserted = cheapestInsertion(origin, base, extra);
+    ok(`insertion ${extra.id} ≤ append`, pathLengthM(origin, inserted) <= pathLengthM(origin, [...base, extra]) + 1e-6);
+  }
 }
 
 console.log(`\nrouting: ${pass} passed, ${fails.length} failed`);
