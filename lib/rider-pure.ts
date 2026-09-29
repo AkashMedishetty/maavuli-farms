@@ -70,7 +70,7 @@ export function validateAction(a: {
     return { ok: true };
   }
   if (a.type === 'not_delivered') {
-    if (!a.reason || !(a.reason in REASON_FAULT)) return { ok: false, error: 'valid reason required' };
+    if (!a.reason || !Object.hasOwn(REASON_FAULT, a.reason)) return { ok: false, error: 'valid reason required' };
     return { ok: true };
   }
   return { ok: false, error: 'unknown action type' };

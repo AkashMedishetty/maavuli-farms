@@ -18,6 +18,7 @@ import { col, stopKeyOf, type Delivery, type RiderRun } from '@/lib/models';
 import { riderActor, type OpCtx } from '@/lib/clock';
 import { istYMD } from '@/lib/cutoff';
 import { getRiderToday, startRun, applyActions, closeRun } from '@/lib/rider';
+import { putObject } from '@/lib/storage';
 
 let passed = 0;
 let failed = 0;
@@ -135,6 +136,14 @@ await col.photos(db).updateOne(
   { $setOnInsert: { key: photoKey, deliveryId: d1, riderId: rid, mobile: '9000000000', date, createdAt: now } },
   { upsert: true },
 );
+// a record alone is not a photo: before the bytes exist the mark is refused as RETRYABLE
+const early = await applyActions(
+  rid,
+  [{ actionId: 'it-b5-early-photo', type: 'delivered', deliveryId: String(d1), proof: { photoKey, lat: loc.lat, lng: loc.lng } }],
+  ctx,
+);
+t('photo record without bytes → refused, retryable', early[0]!.ok === false && early[0]!.retryable === true);
+await putObject(photoKey, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), 'image/jpeg');
 const deliverAction = {
   actionId: 'it-b5-deliver-1',
   type: 'delivered' as const,
@@ -178,7 +187,7 @@ try {
 void missOk;
 
 // ---- another rider is denied the first rider's delivery ----
-const res2 = await applyActions(rid2, [{ actionId: 'it-b5-other-1', type: 'delivered', deliveryId: String(d1), proof: { photoKey: 'x' } }], ctx);
+const res2 = await applyActions(rid2, [{ actionId: 'it-b5-other-1', type: 'delivered', deliveryId: String(d1), proof: { photoKey: 'photos/x.jpg' } }], ctx);
 t('other rider denied (not owner)', res2[0]!.ok === false && /not your delivery/i.test(res2[0]!.error ?? ''));
 
 // ---- close run ----
@@ -188,6 +197,41 @@ try {
 } catch (e) {
   notVerified.push(`closeRun threw: ${e instanceof Error ? e.message : e}`);
 }
+
+// ---- a rider cannot change a past day's delivery (it would mint compensation) ----
+const pastId = (
+  await col.deliveries(db).insertOne({
+    subscriptionId: new ObjectId(),
+    mobile: custMobile,
+    date: '2026-05-20',
+    kind: 'cow',
+    litres: 1,
+    pincode: '500047',
+    status: 'delivered',
+    source: 'plan',
+    riderId: rid,
+    runId,
+  })
+).insertedId;
+const past = await applyActions(rid, [{ actionId: 'it-b5-past-1', type: 'not_delivered', deliveryId: String(pastId), reason: 'out_of_stock' }], ctx);
+t('past day refused from the phone', past[0]!.ok === false && /today/.test(past[0]!.error ?? ''));
+t('past delivery untouched', (await col.deliveries(db).findOne({ _id: pastId }))?.status === 'delivered');
+
+// ---- hostile input is refused before it reaches the database ----
+const hostile = await applyActions(
+  rid,
+  [
+    { actionId: 'it-b5-proto-1', type: 'not_delivered', deliveryId: String(d2), reason: 'constructor' },
+    { actionId: 'it-b5-op-1', type: 'delivered', deliveryId: String(d1), proof: { photoKey: { $ne: null } } },
+    { actionId: 'it-b5-gps-1', type: 'delivered', deliveryId: String(d1), proof: { lat: 999, lng: 0 } },
+    { actionId: 'short', type: 'delivered', deliveryId: String(d1) },
+  ],
+  ctx,
+);
+t('prototype-key reason refused', hostile[0]!.ok === false);
+t('operator as photoKey refused', hostile[1]!.ok === false);
+t('out-of-range GPS refused', hostile[2]!.ok === false);
+t('too-short actionId refused', hostile[3]!.ok === false);
 
 // ---- cleanup ----
 await col.riders(db).deleteMany({ _id: { $in: [rid, rid2] } });

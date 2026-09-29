@@ -30,6 +30,7 @@ const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes; TTL index on expiresAt removes t
 const OTP_MAX_ATTEMPTS = 5; // per otp doc, then it is dead
 const ISSUE_WINDOW_MS = 15 * 60 * 1000; // rolling window for the issue-rate limit
 const ISSUE_MAX = 3; // max issues per mobile per window
+const ISSUE_MAX_PER_IP = 20; // per client IP per window — generous for a shared NAT (a society's wifi), fatal to a spray
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /** sha256(value + SESSION_SECRET) as lowercase hex. The secret is the pepper. */
@@ -46,6 +47,18 @@ function sha256Hex(value: string): string {
 export function isAdminMobile(mobile: string): boolean {
   const normalized = normalizeMobile(mobile);
   return normalized !== null && adminMobiles().includes(normalized);
+}
+
+/**
+ * The requesting client's IP for rate limiting. On Vercel the edge sets x-real-ip /
+ * x-forwarded-for itself (client-supplied values are not passed through as the first
+ * hop), so the first entry is the client. Returns undefined when absent or garbled —
+ * the per-mobile limit still applies.
+ */
+export function clientIpFrom(h: Pick<Headers, 'get'>): string | undefined {
+  const raw = h.get('x-real-ip') ?? h.get('x-forwarded-for')?.split(',')[0] ?? '';
+  const ip = raw.trim();
+  return ip && ip.length <= 45 && /^[0-9a-fA-F:.]+$/.test(ip) ? ip : undefined;
 }
 
 /**
@@ -109,7 +122,7 @@ export class OtpDeliveryError extends Error {
  * Throws RateLimitError (-> 429) when the mobile is over its issue budget, and
  * SmsNotConfiguredError (-> 503) in production with no SMS provider set.
  */
-export async function issueOtp(mobile: string): Promise<IssueResult> {
+export async function issueOtp(mobile: string, opts: { ip?: string } = {}): Promise<IssueResult> {
   const normalized = normalizeMobile(mobile);
   if (!normalized) throw new InvalidMobileError();
 
@@ -178,7 +191,20 @@ export async function issueOtp(mobile: string): Promise<IssueResult> {
     expiresAt: new Date(now.getTime() + OTP_TTL_MS),
     attempts: 0,
     createdAt: now,
+    ...(opts.ip ? { ip: opts.ip } : {}),
   });
+
+  // Enforce the limits AFTER inserting, counting our own row. Counting first and
+  // inserting second lets N parallel requests all see "under the limit"; this way
+  // every request that pushes a window over the limit removes itself.
+  const overMobile = (await otps.countDocuments({ mobile: normalized, createdAt: { $gte: windowStart } })) > ISSUE_MAX;
+  const overIp = opts.ip
+    ? (await otps.countDocuments({ ip: opts.ip, createdAt: { $gte: windowStart } })) > ISSUE_MAX_PER_IP
+    : false;
+  if (overMobile || overIp) {
+    await otps.deleteOne({ _id: inserted.insertedId });
+    throw new RateLimitError(Math.ceil(ISSUE_WINDOW_MS / 1000));
+  }
 
   // Primary: WhatsApp. 'sent' means the code left the building; nothing is echoed.
   if (whatsappReady) {
@@ -273,23 +299,22 @@ export async function verifyOtp(mobile: string, code: string): Promise<string> {
   const otps = col.otps(db);
   const now = new Date();
 
-  // newest un-expired, not-yet-dead OTP for this mobile
-  const otp = await otps.findOne(
+  // Consume an attempt ATOMICALLY before comparing. A read-then-compare-then-increment
+  // lets N parallel guesses all see "attempts < 5" and all be compared; with the
+  // increment in the same findOneAndUpdate, at most OTP_MAX_ATTEMPTS requests ever get
+  // this document back, however many arrive at once.
+  const otp = await otps.findOneAndUpdate(
     { mobile: normalized, expiresAt: { $gt: now }, attempts: { $lt: OTP_MAX_ATTEMPTS } },
-    { sort: { createdAt: -1 } },
+    { $inc: { attempts: 1 } },
+    { sort: { createdAt: -1 }, returnDocument: 'after' },
   );
   if (!otp?._id) throw new VerifyError();
 
   const matches = timingSafeEqualHex(otp.codeHash, pepperedHash(code));
 
   if (!matches) {
-    const updated = await otps.findOneAndUpdate(
-      { _id: otp._id },
-      { $inc: { attempts: 1 } },
-      { returnDocument: 'after' },
-    );
-    // when the 5th attempt lands, kill the doc so it cannot be brute-forced further
-    if (updated && updated.attempts >= OTP_MAX_ATTEMPTS) {
+    // the last allowed attempt failed: kill the doc so it cannot be tried again
+    if (otp.attempts >= OTP_MAX_ATTEMPTS) {
       await otps.deleteOne({ _id: otp._id });
     }
     throw new VerifyError();

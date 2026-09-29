@@ -10,6 +10,7 @@ import { customerActor, pageNow } from '@/lib/clock';
 import {
   getSession,
   issueOtp,
+  clientIpFrom,
   verifyOtp,
   InvalidMobileError,
   OtpDeliveryError,
@@ -58,7 +59,8 @@ async function requestCodeAction(formData: FormData): Promise<void> {
   const next = safeNext(String(formData.get('next') ?? ''));
   let target: string;
   try {
-    const result = await issueOtp(mobile);
+    const { headers } = await import('next/headers');
+    const result = await issueOtp(mobile, { ip: clientIpFrom(await headers()) });
     // Dev (or explicit demo mode) with no provider: issueOtp returns the code so it
     // can be shown. Unreachable in normal production (it throws instead).
     const dev = result.devCode ? `&dev=${result.devCode}${result.demo ? '&demo=1' : ''}` : '';

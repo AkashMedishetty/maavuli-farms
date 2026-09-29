@@ -179,7 +179,7 @@ export async function markDelivered(
     let mediaUrl: string | undefined;
     if (proofToStore.photoKey) {
       try {
-        mediaUrl = await signedPhotoUrl(proofToStore.photoKey, 7 * 24 * 3600);
+        mediaUrl = await signedPhotoUrl(proofToStore.photoKey, 24 * 3600);
       } catch {
         // A missing NEXT_PUBLIC_SITE_URL must not fail the delivery — send text-only.
         mediaUrl = undefined;
@@ -213,7 +213,7 @@ export async function markNotDelivered(
   const db = await getDb();
   const delivery = await loadDelivery(db, deliveryId);
 
-  if (!(input.reason in REASON_FAULT)) {
+  if (typeof input.reason !== 'string' || !Object.hasOwn(REASON_FAULT, input.reason)) {
     throw new ValidationError(`Unknown reason "${input.reason}"`);
   }
 

@@ -50,7 +50,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (action === 'not_delivered') {
       const reason = body.reason;
-      if (typeof reason !== 'string' || !(reason in REASON_FAULT)) {
+      if (typeof reason !== 'string' || !Object.hasOwn(REASON_FAULT, reason)) {
         throw new ValidationError('a valid reason is required');
       }
       const fault = typeof body.fault === 'string' ? (body.fault as Fault) : undefined;

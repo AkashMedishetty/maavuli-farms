@@ -9,6 +9,7 @@
 import type { Db, ObjectId } from 'mongodb';
 import {
   col,
+  REASON_FAULT,
   type Delivery,
   type DeliveryProof,
   type Fault,
@@ -26,6 +27,7 @@ import { assertTransition, RUN_TRANSITIONS } from './transitions';
 import { recordEvent } from './events';
 import { navigationLinks, stopNavigationUrl } from './maps-links';
 import { markDelivered, markNotDelivered } from './outcomes';
+import { objectExists } from './storage';
 import { ConflictError, NotFoundError, ValidationError } from './errors';
 import { IllegalTransitionError } from './transitions';
 
@@ -266,30 +268,90 @@ async function ownsDelivery(db: Db, riderId: ObjectId, deliveryId: ObjectId): Pr
   return d ?? null;
 }
 
+const OBJECT_ID_RE = /^[a-f0-9]{24}$/i;
+const finite = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+
+/**
+ * The phone's input is untrusted: every field is type-checked and bounded before it
+ * reaches the database. Returns a clean action or the reason it was refused.
+ * (Objects where strings are expected would otherwise become Mongo operators, and
+ * `reason in REASON_FAULT` would accept prototype keys like "constructor".)
+ */
+export function sanitizeAction(raw: unknown): { ok: true; action: RiderActionInput } | { ok: false; error: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'action must be an object' };
+  const r = raw as Record<string, unknown>;
+  if (typeof r.actionId !== 'string' || r.actionId.length < 8 || r.actionId.length > 100) {
+    return { ok: false, error: 'actionId must be a string of 8–100 characters' };
+  }
+  if (r.type !== 'delivered' && r.type !== 'not_delivered') return { ok: false, error: 'unknown action type' };
+  if (typeof r.deliveryId !== 'string' || !OBJECT_ID_RE.test(r.deliveryId)) return { ok: false, error: 'invalid deliveryId' };
+  if (r.note !== undefined && typeof r.note !== 'string') return { ok: false, error: 'note must be text' };
+  const note = typeof r.note === 'string' && r.note.trim() ? r.note.trim().slice(0, 500) : undefined;
+  const out: RiderActionInput = { actionId: r.actionId, type: r.type, deliveryId: r.deliveryId, ...(note ? { note } : {}) };
+
+  if (r.type === 'not_delivered') {
+    if (typeof r.reason !== 'string' || !Object.hasOwn(REASON_FAULT, r.reason)) return { ok: false, error: 'a valid reason is required' };
+    out.reason = r.reason as NotDeliveredReason;
+    return { ok: true, action: out };
+  }
+
+  if (r.proof !== undefined) {
+    if (!r.proof || typeof r.proof !== 'object' || Array.isArray(r.proof)) return { ok: false, error: 'proof must be an object' };
+    const p = r.proof as Record<string, unknown>;
+    const proof: NonNullable<RiderActionInput['proof']> = {};
+    if (p.photoKey !== undefined) {
+      if (typeof p.photoKey !== 'string' || p.photoKey.length > 200 || !p.photoKey.startsWith('photos/')) {
+        return { ok: false, error: 'invalid photoKey' };
+      }
+      proof.photoKey = p.photoKey;
+    }
+    if (p.lat !== undefined || p.lng !== undefined) {
+      if (!finite(p.lat, -90, 90) || !finite(p.lng, -180, 180)) return { ok: false, error: 'invalid GPS position' };
+      proof.lat = p.lat;
+      proof.lng = p.lng;
+    }
+    if (p.accuracyM !== undefined && finite(p.accuracyM, 0, 100_000)) proof.accuracyM = p.accuracyM;
+    if (typeof p.capturedAt === 'string' && Number.isFinite(Date.parse(p.capturedAt))) proof.capturedAt = p.capturedAt;
+    out.proof = proof;
+  }
+  return { ok: true, action: out };
+}
+
 /**
  * Apply a batch of outcome actions from the phone. Every action carries a client
  * UUID; a replay of the same actionId is a no-op that reports the prior result, so
  * the offline queue can retry safely. Actions are independent — one failing does
  * not fail the batch.
+ *
+ * A rider may only act on TODAY's stops in a run that is not closed. Past days —
+ * and any day once it has closed — are corrected by ops in the admin console, never
+ * from the phone: otherwise a rider could flip an old delivery to "not delivered,
+ * our fault" and mint compensation for it, or strip a customer's make-up day.
  */
 export async function applyActions(
   riderId: ObjectId,
-  actions: RiderActionInput[],
+  rawActions: unknown[],
   ctx: OpCtx,
 ): Promise<RiderActionResult[]> {
-  if (actions.length > 50) throw new ValidationError('Too many actions in one batch (max 50).');
+  if (rawActions.length > 50) throw new ValidationError('Too many actions in one batch (max 50).');
   const db = await getDb();
   const { ObjectId } = await import('mongodb');
   const results: RiderActionResult[] = [];
+  const today = istYMD(ctx.now);
 
-  for (const a of actions) {
-    if (!a.actionId || typeof a.actionId !== 'string') {
-      results.push({ actionId: String(a.actionId), ok: false, error: 'actionId required' });
+  for (const raw of rawActions) {
+    const clean = sanitizeAction(raw);
+    if (!clean.ok) {
+      const id = raw && typeof raw === 'object' && typeof (raw as { actionId?: unknown }).actionId === 'string'
+        ? ((raw as { actionId: string }).actionId).slice(0, 100)
+        : 'invalid';
+      results.push({ actionId: id, ok: false, error: clean.error });
       continue;
     }
+    const a = clean.action;
 
     // Idempotency: a seen actionId short-circuits with its recorded result.
-    const seen = await col.riderActions(db).findOne({ actionId: a.actionId });
+    const seen = await col.riderActions(db).findOne({ actionId: a.actionId, riderId });
     if (seen) {
       results.push({
         actionId: a.actionId,
@@ -300,15 +362,7 @@ export async function applyActions(
       continue;
     }
 
-    let deliveryId: ObjectId;
-    try {
-      deliveryId = new ObjectId(a.deliveryId);
-    } catch {
-      await recordAction(db, riderId, a, 'rejected', 'invalid deliveryId', ctx);
-      results.push({ actionId: a.actionId, ok: false, error: 'invalid deliveryId' });
-      continue;
-    }
-
+    const deliveryId = new ObjectId(a.deliveryId);
     const owned = await ownsDelivery(db, riderId, deliveryId);
     if (!owned) {
       await recordAction(db, riderId, a, 'rejected', 'not your delivery', ctx);
@@ -316,14 +370,27 @@ export async function applyActions(
       continue;
     }
 
+    const run = owned.runId ? await col.riderRuns(db).findOne({ _id: owned.runId, riderId }) : null;
+    if (owned.date !== today || !run || run.status === 'closed') {
+      const error = 'Only today’s stops can be changed from the app. Ask ops to correct an earlier day.';
+      await recordAction(db, riderId, a, 'rejected', error, ctx, deliveryId);
+      results.push({ actionId: a.actionId, ok: false, error });
+      continue;
+    }
+
     try {
       let updated: Delivery;
       if (a.type === 'delivered') {
         // The photo must be one uploaded for THIS delivery — a rider cannot prove one
-        // doorstep with another doorstep's picture.
+        // doorstep with another doorstep's picture — and its bytes must really exist
+        // (a blob upload is indexed when the phone asks for a token, before it uploads).
         if (a.proof?.photoKey) {
           const photo = await col.photos(db).findOne({ key: a.proof.photoKey, deliveryId, riderId });
           if (!photo) throw new ValidationError('That photo was not uploaded for this delivery.');
+          if (!(await objectExists(a.proof.photoKey))) {
+            // transient, so NOT a permanent rejection: the phone retries this action
+            throw new ConflictError('The photo has not finished uploading. Try again in a moment.');
+          }
         }
         const proof: DeliveryProof = {
           ...(a.proof?.photoKey ? { photoKey: a.proof.photoKey } : {}),

@@ -139,6 +139,8 @@ export interface Otp {
   expiresAt: Date;             // TTL index removes it
   attempts: number;            // lock out after 5
   createdAt: Date;
+  /** requesting client IP, for the per-IP issue limit */
+  ip?: string;
 }
 
 export interface Session {
@@ -884,6 +886,7 @@ export const col = {
 export const INDEXES = [
   { col: COL.users, spec: { mobile: 1 }, options: { unique: true } },
   { col: COL.otps, spec: { mobile: 1 }, options: {} },
+  { col: COL.otps, spec: { ip: 1, createdAt: 1 }, options: { sparse: true } },
   { col: COL.otps, spec: { expiresAt: 1 }, options: { expireAfterSeconds: 0 } },
   { col: COL.sessions, spec: { token: 1 }, options: { unique: true } },
   { col: COL.sessions, spec: { expiresAt: 1 }, options: { expireAfterSeconds: 0 } },

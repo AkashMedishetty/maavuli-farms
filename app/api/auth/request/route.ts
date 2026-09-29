@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   issueOtp,
+  clientIpFrom,
   InvalidMobileError,
   OtpDeliveryError,
   RateLimitError,
@@ -30,7 +31,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await issueOtp(mobile);
+    const result = await issueOtp(mobile, { ip: clientIpFrom(req.headers) });
     /*
      * devCode is present when no SMS provider is configured — in development, or in
      * production with OTP_DEMO_MODE explicitly on. `demo` tells the client to show a

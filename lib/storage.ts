@@ -62,9 +62,9 @@ export async function putObject(key: string, body: Uint8Array, contentType: stri
   if (driver === 'vercel-blob') {
     const { put } = await import('@vercel/blob');
     const res = await put(key, Buffer.from(body), {
-      access: 'public', // "public" here is the Blob access mode; the STORE is private and
-      // the URL is unguessable — but we never hand the URL out. Reads go through
-      // /api/photos, so effective access is authorised-only regardless.
+      // PRIVATE: doorstep photos must never have a public CDN URL. Reads go through
+      // /api/photos, which checks who is asking.
+      access: 'private',
       contentType,
       token: blobToken(),
       addRandomSuffix: false,
@@ -210,10 +210,16 @@ export async function purgeOldPhotos(ctx: OpCtx): Promise<{ deleted: number }> {
  * The URL points at /api/photos/signed/<token>, which does NOT require a session —
  * possession of the signature is the authorisation, so the TTL is kept short.
  */
+export const SIGNED_URL_MAX_TTL_SEC = 24 * 3600;
+
 export async function signedPhotoUrl(key: string, ttlSec: number): Promise<string> {
   const base = (process.env.NEXT_PUBLIC_SITE_URL ?? '').trim().replace(/\/$/, '');
   if (!base) throw new ServiceNotConfiguredError('Signed photo URLs', ['NEXT_PUBLIC_SITE_URL']);
-  const expiry = Math.floor(Date.now() / 1000) + Math.max(1, Math.floor(ttlSec));
+  // Capped at 24 h: the URL is handed to the WhatsApp provider (which fetches the
+  // image when it sends, within the outbox retry window) and sits in the chat, where
+  // it can be forwarded. A doorstep photo link must not stay live for a week.
+  const ttl = Math.min(SIGNED_URL_MAX_TTL_SEC, Math.max(1, Math.floor(ttlSec)));
+  const expiry = Math.floor(Date.now() / 1000) + ttl;
   const sig = signPhotoToken(key, expiry);
   const token = Buffer.from(`${key}.${expiry}.${sig}`, 'utf8').toString('base64url');
   return `${base}/api/photos/signed/${token}`;
@@ -253,4 +259,27 @@ export function verifySignedPhotoToken(token: string, nowMs = Date.now()): strin
     return null;
   }
   return key;
+}
+
+/**
+ * Do the bytes for `key` actually exist in storage? A photo record is created when
+ * the phone ASKS to upload (blob client-upload), so the record alone does not prove
+ * a photo was taken — proof of delivery must check the object itself.
+ */
+export async function objectExists(key: string): Promise<boolean> {
+  if (storageDriver() === 'vercel-blob') {
+    const { head } = await import('@vercel/blob');
+    try {
+      await head(key, { token: blobToken() });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    await fs.stat(path.join(LOCAL_ROOT, key));
+    return true;
+  } catch {
+    return false;
+  }
 }

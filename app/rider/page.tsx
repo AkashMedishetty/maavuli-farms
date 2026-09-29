@@ -4,8 +4,10 @@ import { getPrincipal } from '@/lib/roles';
 import { NotConfiguredError } from '@/lib/db';
 import {
   issueOtp,
+  clientIpFrom,
   verifyOtp,
   InvalidMobileError,
+  OtpDeliveryError,
   RateLimitError,
   SmsNotConfiguredError,
   VerifyError,
@@ -25,13 +27,15 @@ async function requestCodeAction(formData: FormData): Promise<void> {
   const mobile = String(formData.get('mobile') ?? '');
   let target: string;
   try {
-    const result = await issueOtp(mobile);
+    const { headers } = await import('next/headers');
+    const result = await issueOtp(mobile, { ip: clientIpFrom(await headers()) });
     const dev = result.devCode ? `&dev=${result.devCode}` : '';
     target = `/rider?step=code&m=${encodeURIComponent(mobile)}${dev}`;
   } catch (err) {
     if (err instanceof InvalidMobileError) target = '/rider?err=mobile';
     else if (err instanceof RateLimitError) target = `/rider?err=rate&retry=${err.retryAfterSeconds}`;
     else if (err instanceof SmsNotConfiguredError) target = '/rider?err=sms';
+    else if (err instanceof OtpDeliveryError) target = '/rider?err=send';
     else if (err instanceof NotConfiguredError) target = '/rider?err=db';
     else throw err;
   }
@@ -57,6 +61,7 @@ const ERR_COPY: Record<string, string> = {
   mobile: 'Enter a valid 10-digit mobile number.',
   code: 'That code is not valid or has expired. Request a fresh one.',
   sms: 'Sign-in codes are not switched on yet. Ask ops to enable SMS.',
+  send: 'We could not send your code just now. Wait a minute and try again.',
   db: 'Could not reach the service just now. Try again shortly.',
   rate: 'Too many code requests. Wait a little before trying again.',
   notrider: 'This number is not registered as a delivery partner. Ask ops to add you.',

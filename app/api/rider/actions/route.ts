@@ -2,7 +2,7 @@ import { ctxFor } from '@/lib/clock';
 import { actorFor, requireRider } from '@/lib/roles';
 import { handleRouteError, ok, readJson } from '@/lib/api';
 import { ValidationError } from '@/lib/errors';
-import { applyActions, closeRun, startRun, type RiderActionInput } from '@/lib/rider';
+import { applyActions, closeRun, startRun } from '@/lib/rider';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
 
     if (op === 'actions') {
       if (!Array.isArray(body.actions)) throw new ValidationError('actions must be an array');
-      const results = await applyActions(p.riderId, body.actions as RiderActionInput[], ctx);
+      const results = await applyActions(p.riderId, body.actions as unknown[], ctx);
       return ok({ op, results });
     }
 
