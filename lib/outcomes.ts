@@ -76,8 +76,17 @@ function distanceFromPin(delivery: Delivery, proof: DeliveryProof): number | und
  * Proof rules (contract §4): a photo is required; if there is no photo a note must
  * be present instead and the stop is flagged. A tap further than proofDistanceFlagM
  * from the pin is also flagged. Re-marking a delivery already delivered is a no-op.
+ *
+ * `opts.note` is stored in the SAME conditional update as the status change, so a
+ * rejected mark never leaves a stray note behind. A staff correction from the desk
+ * (a phone call with the customer) is not flagged: the staff note is the proof.
  */
-export async function markDelivered(deliveryId: ObjectId, proof: DeliveryProof, ctx: OpCtx): Promise<Delivery> {
+export async function markDelivered(
+  deliveryId: ObjectId,
+  proof: DeliveryProof,
+  ctx: OpCtx,
+  opts: { note?: string } = {},
+): Promise<Delivery> {
   const db = await getDb();
   const delivery = await loadDelivery(db, deliveryId);
 
@@ -91,15 +100,19 @@ export async function markDelivered(deliveryId: ObjectId, proof: DeliveryProof, 
   const settings = await getOpsSettings(db);
   const distance = distanceFromPin(delivery, proof);
   const hasPhoto = typeof proof.photoKey === 'string' && proof.photoKey.length > 0;
+  const newNote = opts.note?.trim() ? opts.note.trim().slice(0, 500) : undefined;
+  const note = newNote ?? delivery.note;
 
   // No camera → the rider must type a note, and the stop is flagged.
-  if (!deliveredProofOk(hasPhoto, delivery.note)) {
+  if (!deliveredProofOk(hasPhoto, note)) {
     throw new ValidationError('A photo or a note is required to mark this delivery as done.');
   }
 
-  const flagged = isDeliveryFlagged({
-    hasPhoto,
-    distanceM: distance ?? null,
+  const flagged =
+    ctx.actor.kind !== 'staff' &&
+    isDeliveryFlagged({
+      hasPhoto,
+      distanceM: distance ?? null,
     flagThresholdM: settings.proofDistanceFlagM,
   });
 
@@ -122,6 +135,7 @@ export async function markDelivered(deliveryId: ObjectId, proof: DeliveryProof, 
         deliveredAt: ctx.now,
         proof: proofToStore,
         updatedAt: ctx.now,
+        ...(newNote ? { note: newNote } : {}),
       },
     },
   );
@@ -321,5 +335,42 @@ export async function setFault(deliveryId: ObjectId, fault: Exclude<Fault, 'unkn
     );
   }
 
+  return loadDelivery(db, deliveryId);
+}
+
+/**
+ * Staff: accept a flagged proof ("checked with the customer, it was delivered").
+ * The delivery stays delivered; the flag is cleared (so it leaves the exceptions
+ * queue) with who/when/why recorded on the proof and in the event log.
+ */
+export async function clearProofFlag(deliveryId: ObjectId, note: string, ctx: OpCtx): Promise<Delivery> {
+  if (ctx.actor.kind !== 'staff') throw new ValidationError('Only staff may clear a proof flag.');
+  const why = note.trim();
+  if (why.length < 3 || why.length > 300) throw new ValidationError('Say why the proof is accepted (3–300 characters).');
+  const db = await getDb();
+  const delivery = await loadDelivery(db, deliveryId);
+  if (delivery.status !== 'delivered') {
+    throw new ConflictError('Only a delivered stop has a proof flag to clear.', { status: delivery.status });
+  }
+  if (!delivery.proof?.flagged) return delivery; // already cleared: idempotent
+  const res = await col.deliveries(db).updateOne(
+    { _id: deliveryId, status: 'delivered', 'proof.flagged': true },
+    {
+      $set: {
+        'proof.flagged': false,
+        'proof.flagClearedAt': ctx.now,
+        'proof.flagClearedBy': ctx.actor.id,
+        'proof.flagClearNote': why,
+        updatedAt: ctx.now,
+      },
+    },
+  );
+  if (res.matchedCount === 1) {
+    await recordEvent(
+      ctx,
+      { entity: 'delivery', entityId: String(deliveryId), type: 'delivery.flag_cleared', mobile: delivery.mobile, reason: why },
+      db,
+    );
+  }
   return loadDelivery(db, deliveryId);
 }

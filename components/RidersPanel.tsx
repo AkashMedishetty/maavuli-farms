@@ -1,15 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 /**
  * Admin: riders and which zone each one runs.
  *
- * The route planner (lib/admin.planRoutes) buckets each day's stops by the zone
- * they fall in and that zone's rider, so this panel is where the two are wired
- * together: create riders, and assign a rider to each delivery zone. Everything
- * here is admin-gated at the API — this component only renders inside the
- * server-gated admin page, and every write goes through /api/admin/*.
+ * The day lock buckets each date's stops by the zone they fall in and that zone's
+ * rider, so this panel is where the two are wired together. Reads are open to all
+ * staff; writes (canEdit) are owner/ops, and the API enforces that regardless.
+ * A rider's phone is their LOGIN for the rider app (/rider, OTP to that number).
  */
 
 interface Rider {
@@ -28,244 +27,264 @@ interface Zone {
   riderId: string | null;
 }
 
-export default function RidersPanel() {
+async function errorOf(r: Response, fallback: string): Promise<string> {
+  const b = (await r.json().catch(() => null)) as { error?: unknown; issues?: unknown } | null;
+  const msg = b && typeof b.error === 'string' ? b.error : `${fallback} (HTTP ${r.status})`;
+  const issues = b && Array.isArray(b.issues) ? b.issues.filter((i): i is string => typeof i === 'string') : [];
+  return issues.length ? `${msg}: ${issues.join('; ')}` : msg;
+}
+
+export default function RidersPanel({ canEdit = false, refreshKey = 0 }: { canEdit?: boolean; refreshKey?: number }) {
   const [riders, setRiders] = useState<Rider[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', phone: '', lat: '', lng: '' });
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async () => {
+    setLoadError(null);
     try {
-      const [rr, zr] = await Promise.all([fetch('/api/admin/riders'), fetch('/api/admin/zones')]);
-      if (!rr.ok) throw new Error((await rr.json().catch(() => ({}))).error || 'Could not load riders.');
-      if (!zr.ok) throw new Error((await zr.json().catch(() => ({}))).error || 'Could not load zones.');
-      const rb = (await rr.json()) as { riders: Rider[] };
-      const zb = (await zr.json()) as { zones: Zone[] };
+      const [rr, zr] = await Promise.all([
+        fetch('/api/admin/riders', { cache: 'no-store' }),
+        fetch('/api/admin/zones', { cache: 'no-store' }),
+      ]);
+      if (!rr.ok) throw new Error(await errorOf(rr, 'Could not load riders'));
+      if (!zr.ok) throw new Error(await errorOf(zr, 'Could not load zones'));
+      const rb = (await rr.json()) as { riders?: Rider[] };
+      const zb = (await zr.json()) as { zones?: Zone[] };
       setRiders(rb.riders ?? []);
       setZones(zb.zones ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load.');
+      setLoadError(e instanceof Error ? e.message : 'Could not load riders.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load, refreshKey]);
+
+  async function mutate(tag: string, url: string, init: RequestInit, fallback: string, success: string): Promise<boolean> {
+    setBusy(tag);
+    setActionError(null);
+    setNotice(null);
+    try {
+      const r = await fetch(url, init);
+      if (!r.ok) {
+        setActionError(await errorOf(r, fallback));
+        return false;
+      }
+      setNotice(success);
+      await load();
+      return true;
+    } catch {
+      setActionError(`${fallback}: the network request did not complete.`);
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const json = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 
   const addRider = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const body: Record<string, string> = { name: form.name.trim() };
-      if (form.phone.trim()) body.phone = form.phone.trim();
-      if (form.lat.trim() && form.lng.trim()) {
-        body.lat = form.lat.trim();
-        body.lng = form.lng.trim();
-      }
-      const r = await fetch('/api/admin/riders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not add rider.');
-      setForm({ name: '', phone: '', lat: '', lng: '' });
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not add rider.');
-    } finally {
-      setBusy(false);
+    const body: Record<string, string> = { name: form.name.trim() };
+    if (form.phone.trim()) body.phone = form.phone.trim();
+    if (form.lat.trim() && form.lng.trim()) {
+      body.lat = form.lat.trim();
+      body.lng = form.lng.trim();
     }
+    const okd = await mutate('add', '/api/admin/riders', json('POST', body), 'Could not add the rider', `Added ${body.name}.`);
+    if (okd) setForm({ name: '', phone: '', lat: '', lng: '' });
   };
 
-  const patchRider = async (id: string, patch: Record<string, unknown>) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await fetch('/api/admin/riders', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, ...patch }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not update rider.');
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not update rider.');
-    } finally {
-      setBusy(false);
-    }
+  const editPhone = async (rider: Rider) => {
+    const next = window.prompt(
+      `Sign-in phone for ${rider.name} (10 digits). Leave empty to remove — they will not be able to sign in.`,
+      rider.phone ?? '',
+    );
+    if (next === null) return;
+    await mutate(`phone-${rider.id}`, '/api/admin/riders', json('PATCH', { id: rider.id, phone: next.trim() }), 'Could not update the phone', 'Phone updated.');
   };
 
-  const deleteRider = async (id: string, name: string) => {
-    if (!window.confirm(`Remove rider "${name}"? Their zones become unassigned.`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await fetch(`/api/admin/riders?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not remove rider.');
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not remove rider.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const assignZone = async (zoneId: string, riderId: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await fetch('/api/admin/zones', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: zoneId, riderId: riderId === '' ? null : riderId }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not assign zone.');
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not assign zone.');
-    } finally {
-      setBusy(false);
-    }
+  const deleteRider = async (rider: Rider) => {
+    if (!window.confirm(`Remove rider "${rider.name}"? Their zones become unassigned. Turning them off keeps history instead.`)) return;
+    await mutate(`del-${rider.id}`, `/api/admin/riders?id=${encodeURIComponent(rider.id)}`, { method: 'DELETE' }, 'Could not remove the rider', `Removed ${rider.name}.`);
   };
 
   return (
-    <section className="admin-section riders-panel">
-      <h2>Riders &amp; zones</h2>
-      <p className="riders-lead">
-        Create your riders, then hand each delivery zone to one of them. The route planner below
-        splits the day&rsquo;s stops by zone and sequences each rider&rsquo;s run.
+    <section className="ops-card" aria-labelledby="riders-h">
+      <h2 id="riders-h">Riders</h2>
+      <p className="ops-muted">
+        The phone is the number the rider signs in with at <code>/rider</code> (a one-time code is sent to it). Each zone
+        below goes to one rider; the day lock gives that rider every stop in the zone.
       </p>
 
-      {error && <p className="riders-error">{error}</p>}
+      {actionError && (
+        <p className="ops-error" role="alert">
+          {actionError}
+        </p>
+      )}
+      {notice && (
+        <p className="ops-ok" role="status">
+          {notice}
+        </p>
+      )}
 
-      <form className="riders-form" onSubmit={addRider}>
-        <input
-          type="text"
-          placeholder="Rider name"
-          value={form.name}
-          onChange={e => setForm({ ...form, name: e.target.value })}
-          required
-        />
-        <input
-          type="tel"
-          placeholder="Phone (optional)"
-          value={form.phone}
-          onChange={e => setForm({ ...form, phone: e.target.value })}
-        />
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder="Start lat (optional)"
-          value={form.lat}
-          onChange={e => setForm({ ...form, lat: e.target.value })}
-        />
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder="Start lng (optional)"
-          value={form.lng}
-          onChange={e => setForm({ ...form, lng: e.target.value })}
-        />
-        <button className="cta" type="submit" disabled={busy || !form.name.trim()}>
-          Add rider
-        </button>
-      </form>
+      {canEdit && (
+        <form onSubmit={addRider} className="ops-card" style={{ background: 'var(--ops-soft)' }}>
+          <h3>Add a rider</h3>
+          <div className="ops-form-grid">
+            <label className="ops-field">
+              <span>Name</span>
+              <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required maxLength={80} />
+            </label>
+            <label className="ops-field">
+              <span>Sign-in phone</span>
+              <input
+                type="tel"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="10-digit mobile"
+                value={form.phone}
+                onChange={e => setForm({ ...form, phone: e.target.value })}
+              />
+              <small>Without a phone the rider cannot use the rider app.</small>
+            </label>
+            <label className="ops-field">
+              <span>Start point lat (optional)</span>
+              <input type="text" inputMode="decimal" value={form.lat} onChange={e => setForm({ ...form, lat: e.target.value })} />
+            </label>
+            <label className="ops-field">
+              <span>Start point lng (optional)</span>
+              <input type="text" inputMode="decimal" value={form.lng} onChange={e => setForm({ ...form, lng: e.target.value })} />
+              <small>Blank = routes start at the farm.</small>
+            </label>
+          </div>
+          <button className="ops-btn ops-btn-primary" type="submit" disabled={busy !== null || !form.name.trim()}>
+            {busy === 'add' ? 'Adding…' : 'Add rider'}
+          </button>
+        </form>
+      )}
 
       {loading ? (
-        <p className="pending">Loading riders…</p>
+        <p className="ops-pending" role="status">
+          Loading riders…
+        </p>
+      ) : loadError ? (
+        <div className="ops-error" role="alert">
+          {loadError}
+          <div className="ops-actions">
+            <button type="button" className="ops-btn" onClick={() => void load()}>
+              Retry
+            </button>
+          </div>
+        </div>
       ) : (
         <>
           {riders.length === 0 ? (
-            <p className="pending">No riders yet. Add one above.</p>
+            <p className="ops-empty">No riders yet.{canEdit ? ' Add one above.' : ''}</p>
           ) : (
-            <div className="plan-table riders-list">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Rider</th>
-                    <th scope="col">Phone</th>
-                    <th scope="col">Start point</th>
-                    <th scope="col">Zones</th>
-                    <th scope="col">Status</th>
-                    <th scope="col" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {riders.map(rider => {
-                    const owned = zones.filter(z => z.riderId === rider.id);
-                    return (
-                      <tr key={rider.id}>
-                        <th scope="row">{rider.name}</th>
-                        <td>{rider.phone ?? '—'}</td>
-                        <td>
-                          {rider.startLocation
-                            ? `${rider.startLocation.lat.toFixed(4)}, ${rider.startLocation.lng.toFixed(4)}`
-                            : 'farm default'}
-                        </td>
-                        <td>{owned.length ? owned.map(z => z.name).join(', ') : '—'}</td>
-                        <td>
-                          <span className={`admin-status is-${rider.active ? 'delivered' : 'skipped'}`}>
-                            {rider.active ? 'active' : 'off'}
-                          </span>
-                        </td>
-                        <td className="riders-actions">
-                          <button
-                            type="button"
-                            onClick={() => patchRider(rider.id, { active: !rider.active })}
-                            disabled={busy}
-                          >
-                            {rider.active ? 'Turn off' : 'Turn on'}
-                          </button>
-                          <button
-                            type="button"
-                            className="riders-danger"
-                            onClick={() => deleteRider(rider.id, rider.name)}
-                            disabled={busy}
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <ul className="ops-list">
+              {riders.map(rider => {
+                const owned = zones.filter(z => z.riderId === rider.id);
+                return (
+                  <li key={rider.id}>
+                    <div className="ops-card-head">
+                      <h3>{rider.name}</h3>
+                      <span className={`ops-badge ${rider.active ? 'is-ok' : 'is-warn'}`}>{rider.active ? 'Active' : 'Off'}</span>
+                    </div>
+                    <dl className="ops-kv" style={{ margin: '0.4rem 0' }}>
+                      <dt>Sign-in phone</dt>
+                      <dd>{rider.phone ?? <span className="ops-badge is-warn">none — cannot sign in</span>}</dd>
+                      <dt>Start point</dt>
+                      <dd>
+                        {rider.startLocation
+                          ? `${rider.startLocation.lat.toFixed(4)}, ${rider.startLocation.lng.toFixed(4)}`
+                          : 'farm (default)'}
+                      </dd>
+                      <dt>Zones</dt>
+                      <dd>{owned.length ? owned.map(z => z.name).join(', ') : '—'}</dd>
+                    </dl>
+                    {canEdit && (
+                      <div className="ops-actions">
+                        <button
+                          type="button"
+                          className="ops-btn ops-btn-small"
+                          disabled={busy !== null}
+                          onClick={() =>
+                            void mutate(
+                              `act-${rider.id}`,
+                              '/api/admin/riders',
+                              json('PATCH', { id: rider.id, active: !rider.active }),
+                              'Could not update the rider',
+                              rider.active ? `${rider.name} is off.` : `${rider.name} is active.`,
+                            )
+                          }
+                        >
+                          {busy === `act-${rider.id}` ? 'Saving…' : rider.active ? 'Turn off' : 'Turn on'}
+                        </button>
+                        <button type="button" className="ops-btn ops-btn-small" disabled={busy !== null} onClick={() => void editPhone(rider)}>
+                          {busy === `phone-${rider.id}` ? 'Saving…' : 'Change phone'}
+                        </button>
+                        <button type="button" className="ops-btn ops-btn-small ops-btn-danger" disabled={busy !== null} onClick={() => void deleteRider(rider)}>
+                          {busy === `del-${rider.id}` ? 'Removing…' : 'Remove'}
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
 
-          <h3 className="riders-subhead">Zone assignment</h3>
+          <h3 style={{ marginTop: '1rem' }}>Who runs each zone</h3>
           {zones.length === 0 ? (
-            <p className="pending">No zones yet — draw delivery zones on the map above first.</p>
+            <p className="ops-empty">No zones yet — draw one on the map below.</p>
           ) : (
-            <ul className="riders-zones">
+            <ul className="ops-list">
               {zones.map(z => (
-                <li key={z.id}>
-                  <span className="riders-zone-name">
-                    {z.name}
-                    {!z.active && <em> (off)</em>}
+                <li key={z.id} style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>
+                    <strong>{z.name}</strong>
+                    {!z.active && <span className="ops-badge is-warn"> off</span>}
                   </span>
-                  <select
-                    value={z.riderId ?? ''}
-                    onChange={e => assignZone(z.id, e.target.value)}
-                    disabled={busy}
-                    aria-label={`Rider for ${z.name}`}
-                  >
-                    <option value="">— unassigned —</option>
-                    {riders.map(r => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                        {r.active ? '' : ' (off)'}
-                      </option>
-                    ))}
-                  </select>
+                  {canEdit ? (
+                    <select
+                      value={z.riderId ?? ''}
+                      disabled={busy !== null}
+                      aria-label={`Rider for ${z.name}`}
+                      onChange={e =>
+                        void mutate(
+                          `zone-${z.id}`,
+                          '/api/admin/zones',
+                          json('PATCH', { id: z.id, riderId: e.target.value === '' ? null : e.target.value }),
+                          'Could not assign the zone',
+                          `${z.name} updated. Changes apply from the next day that locks.`,
+                        )
+                      }
+                    >
+                      <option value="">— unassigned —</option>
+                      {riders.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                          {r.active ? '' : ' (off)'}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span>{riders.find(r => r.id === z.riderId)?.name ?? <span className="ops-badge is-warn">unassigned</span>}</span>
+                  )}
                 </li>
               ))}
             </ul>

@@ -403,6 +403,10 @@ export interface DeliveryProof {
   capturedAt?: Date;
   /** needs an ops look: no photo (note instead), or the tap was far from the pin */
   flagged?: boolean;
+  /** ops checked a flagged proof and accepted it */
+  flagClearedAt?: Date;
+  flagClearedBy?: string;
+  flagClearNote?: string;
 }
 
 /** One row per subscription per date per source — the morning round is read from these. */

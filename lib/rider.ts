@@ -332,11 +332,9 @@ export async function applyActions(
           ...(typeof a.proof?.accuracyM === 'number' ? { accuracyM: a.proof.accuracyM } : {}),
           ...(a.proof?.capturedAt ? { capturedAt: new Date(a.proof.capturedAt) } : {}),
         };
-        // A no-camera delivery must carry a note; persist it so outcomes can require it.
-        if (!proof.photoKey && a.note) {
-          await col.deliveries(db).updateOne({ _id: deliveryId }, { $set: { note: a.note } });
-        }
-        updated = await markDelivered(deliveryId, proof, ctx);
+        // A no-camera delivery must carry a note; markDelivered stores it in the same
+        // conditional update as the status change (never ahead of it).
+        updated = await markDelivered(deliveryId, proof, ctx, a.note ? { note: a.note } : {});
       } else if (a.type === 'not_delivered') {
         if (!a.reason) throw new ValidationError('reason required for not_delivered');
         updated = await markNotDelivered(

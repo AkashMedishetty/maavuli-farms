@@ -3,13 +3,13 @@ import { actorFor, requireStaff } from '@/lib/roles';
 import { handleRouteError, ok, readJson } from '@/lib/api';
 import { ValidationError } from '@/lib/errors';
 import { REASON_FAULT, type Fault, type NotDeliveredReason } from '@/lib/models';
-import { markDelivered, markNotDelivered, setFault } from '@/lib/outcomes';
+import { clearProofFlag, markDelivered, markNotDelivered, setFault } from '@/lib/outcomes';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/admin/deliveries/[id]/outcome — owner/ops resolve a delivery.
- * Body: { action: 'delivered' | 'not_delivered' | 'set_fault', reason?, fault?, note? }
+ * Body: { action: 'delivered' | 'not_delivered' | 'set_fault' | 'clear_flag', reason?, fault?, note? }
  *  · delivered      — an ops correction; a note is enough (no camera at a desk).
  *  · not_delivered  — reason required; ops MAY set an explicit fault.
  *  · set_fault      — resolve a not_delivered(unknown); fault ours|customer.
@@ -33,17 +33,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const note = typeof body.note === 'string' ? body.note : undefined;
 
     if (action === 'delivered') {
-      // A desk correction has no doorstep photo, so a note is required and stored on
-      // the delivery first — markDelivered's proof rule then accepts the note.
+      // A desk correction has no doorstep photo, so a note is required; markDelivered
+      // stores it in the same update as the status change.
       if (!note || note.trim() === '') {
         throw new ValidationError('A note is required when marking delivered from the admin console.');
       }
-      const { getDb } = await import('@/lib/db');
-      const { col } = await import('@/lib/models');
-      const db = await getDb();
-      await col.deliveries(db).updateOne({ _id: deliveryId }, { $set: { note } });
-      const updated = await markDelivered(deliveryId, { capturedAt: ctx.now }, ctx);
+      const updated = await markDelivered(deliveryId, { capturedAt: ctx.now }, ctx, { note });
       return ok({ status: updated.status });
+    }
+
+    if (action === 'clear_flag') {
+      if (!note || note.trim() === '') throw new ValidationError('Say why the proof is accepted.');
+      const updated = await clearProofFlag(deliveryId, note, ctx);
+      return ok({ status: updated.status, flagged: updated.proof?.flagged === true });
     }
 
     if (action === 'not_delivered') {
@@ -72,7 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return ok({ status: updated.status, fault: updated.fault });
     }
 
-    throw new ValidationError('action must be delivered | not_delivered | set_fault');
+    throw new ValidationError('action must be delivered | not_delivered | set_fault | clear_flag');
   } catch (err) {
     return handleRouteError(err);
   }

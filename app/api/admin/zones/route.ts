@@ -1,75 +1,55 @@
-import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
-import { getDb, NotConfiguredError } from '@/lib/db';
+import { getDb } from '@/lib/db';
 import { col, type Zone } from '@/lib/models';
-import { requireAdmin, NotAdminError } from '@/lib/admin';
+import { actorFor, requireStaff } from '@/lib/roles';
+import { handleRouteError, ok, readJson } from '@/lib/api';
+import { ctxFor } from '@/lib/clock';
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/errors';
+import { recordEvent } from '@/lib/events';
+import { markRouteDirty } from '@/lib/route-plan';
 import { circleToPolygon, pointsToPolygon, normalizePoint } from '@/lib/geo';
 import { listZones } from '@/lib/serviceability';
 
 /**
- * Delivery zones — the admin-configurable replacement for the pincode list.
+ * Delivery zones — the admin-configurable service area.
  *
- * GET    list every zone (active and not), for the admin map
- * POST   create a circle ({ name, lat, lng, radiusM }) or a polygon ({ name, points })
- * PATCH  { id, active }  toggle a zone on or off
- * DELETE ?id=…           remove a zone
+ * GET    list every zone (active and not) — staff: owner, ops, support
+ * POST   create a circle ({ name, lat, lng, radiusM, note?, riderId? }) or a polygon
+ *        ({ name, points, ... }) — owner, ops
+ * PATCH  { id, active?, riderId? (null clears) } — owner, ops
+ * DELETE ?id=… — owner, ops
  *
- * Two deliberate properties:
+ * The GeoJSON `geometry` is DERIVED here from the operator's input, never accepted
+ * from the client: a reversed ring makes MongoDB match the complement of the zone
+ * ("everywhere except here"), which fails OPEN.
  *
- *  · The GeoJSON `geometry` is DERIVED here on the server from the operator's
- *    input, never accepted from the client. A client-supplied polygon could be
- *    wound the wrong way, and a reversed ring makes MongoDB match the COMPLEMENT
- *    of the intended area — "everywhere except this zone" — which fails OPEN. A
- *    delivery-area check must never fail open.
- *
- *  · Creating a zone is the act that makes us promise delivery somewhere, so it is
- *    admin-gated by the mobile allowlist, exactly like the fulfilment panel.
+ * A change to a zone's rider or active flag moves stops between riders, so the
+ * affected standing routes are marked dirty (contract §4 Routing).
  */
 
 export const dynamic = 'force-dynamic';
 
-const MAX_RADIUS_M = 60_000; // a 60km circle already covers greater Hyderabad
+const MAX_RADIUS_M = 60_000;
 const MIN_RADIUS_M = 100;
 
-async function gate(): Promise<NextResponse | null> {
-  try {
-    await requireAdmin();
-    return null;
-  } catch (err) {
-    if (err instanceof NotAdminError) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
-    }
-    throw err;
-  }
+function zoneJson(z: Zone) {
+  return {
+    id: z._id?.toHexString(),
+    name: z.name,
+    active: z.active,
+    shape: z.shape,
+    note: z.note ?? null,
+    riderId: z.riderId ? z.riderId.toHexString() : null,
+  };
 }
 
-function notConfigured(err: unknown): NextResponse | null {
-  if (err instanceof NotConfiguredError) {
-    return NextResponse.json(
-      { error: 'Database not configured', missing: err.missing },
-      { status: 503 },
-    );
-  }
-  return null;
-}
-
-export async function GET(): Promise<NextResponse> {
-  const denied = await gate();
-  if (denied) return denied;
+export async function GET() {
   try {
+    await requireStaff(['owner', 'ops', 'support']);
     const zones = await listZones();
-    return NextResponse.json({
-      zones: zones.map(z => ({
-        id: z._id?.toHexString(),
-        name: z.name,
-        active: z.active,
-        shape: z.shape,
-        note: z.note ?? null,
-        riderId: z.riderId ? z.riderId.toHexString() : null,
-      })),
-    });
+    return ok({ zones: zones.map(zoneJson) });
   } catch (err) {
-    return notConfigured(err) ?? NextResponse.json({ error: 'Could not list zones.' }, { status: 503 });
+    return handleRouteError(err);
   }
 }
 
@@ -83,142 +63,142 @@ interface PostBody {
   riderId?: unknown;
 }
 
-export async function POST(req: Request): Promise<NextResponse> {
-  const denied = await gate();
-  if (denied) return denied;
-
-  let body: PostBody;
+export async function POST(req: Request) {
   try {
-    body = (await req.json()) as PostBody;
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
-  }
+    const p = await requireStaff(['owner', 'ops']);
+    const ctx = ctxFor(req, actorFor(p, 'staff'));
+    const body = await readJson<PostBody>(req);
 
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  if (!name) return NextResponse.json({ error: 'A zone name is required.' }, { status: 400 });
-  const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim() : undefined;
-  const riderId =
-    typeof body.riderId === 'string' && ObjectId.isValid(body.riderId) ? new ObjectId(body.riderId) : undefined;
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name || name.length > 80) throw new ValidationError('A zone name (up to 80 characters) is required.');
+    const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 300) : undefined;
+    let riderId: ObjectId | undefined;
+    if (body.riderId !== undefined && body.riderId !== null && body.riderId !== '') {
+      if (typeof body.riderId !== 'string' || !ObjectId.isValid(body.riderId)) throw new ValidationError('riderId must be a valid id.');
+      riderId = new ObjectId(body.riderId);
+    }
 
-  let shape: Zone['shape'];
-  let geometry: Zone['geometry'];
+    let shape: Zone['shape'];
+    let geometry: Zone['geometry'];
+    if (Array.isArray(body.points)) {
+      const pts = [];
+      for (const raw of body.points) {
+        const o = raw as { lat?: unknown; lng?: unknown };
+        const pt = normalizePoint(o?.lat, o?.lng);
+        if (!pt) throw new ValidationError('Every polygon point needs a valid lat and lng.');
+        pts.push(pt);
+      }
+      if (pts.length < 3) throw new ValidationError('A polygon zone needs at least 3 points.');
+      shape = { kind: 'polygon', points: pts };
+      geometry = pointsToPolygon(pts) as Zone['geometry'];
+    } else {
+      const centre = normalizePoint(body.lat, body.lng);
+      if (!centre) throw new ValidationError('A valid lat and lng are required (or a points array for a polygon).');
+      const radiusM = typeof body.radiusM === 'string' ? Number(body.radiusM) : body.radiusM;
+      if (typeof radiusM !== 'number' || !Number.isFinite(radiusM) || radiusM < MIN_RADIUS_M || radiusM > MAX_RADIUS_M) {
+        throw new ValidationError(`radiusM must be a number between ${MIN_RADIUS_M} and ${MAX_RADIUS_M} metres.`);
+      }
+      shape = { kind: 'circle', centre, radiusM };
+      geometry = circleToPolygon(centre, radiusM) as Zone['geometry'];
+    }
 
-  if (Array.isArray(body.points)) {
-    const pts = [];
-    for (const raw of body.points) {
-      const o = raw as { lat?: unknown; lng?: unknown };
-      const p = normalizePoint(o?.lat, o?.lng);
-      if (!p) return NextResponse.json({ error: 'Every polygon point needs a valid lat and lng.' }, { status: 400 });
-      pts.push(p);
-    }
-    if (pts.length < 3) {
-      return NextResponse.json({ error: 'A polygon zone needs at least 3 points.' }, { status: 400 });
-    }
-    shape = { kind: 'polygon', points: pts };
-    geometry = pointsToPolygon(pts) as Zone['geometry'];
-  } else {
-    const centre = normalizePoint(body.lat, body.lng);
-    if (!centre) {
-      return NextResponse.json(
-        { error: 'A valid lat and lng are required (or a points array for a polygon).' },
-        { status: 400 },
-      );
-    }
-    const radiusM = typeof body.radiusM === 'string' ? Number(body.radiusM) : body.radiusM;
-    if (typeof radiusM !== 'number' || !Number.isFinite(radiusM) || radiusM < MIN_RADIUS_M || radiusM > MAX_RADIUS_M) {
-      return NextResponse.json(
-        { error: `radiusM must be a number between ${MIN_RADIUS_M} and ${MAX_RADIUS_M} metres.` },
-        { status: 400 },
-      );
-    }
-    shape = { kind: 'circle', centre, radiusM };
-    geometry = circleToPolygon(centre, radiusM) as Zone['geometry'];
-  }
-
-  try {
     const db = await getDb();
-    const now = new Date();
-    const res = await col.zones(db).insertOne({
+    if (riderId && !(await col.riders(db).findOne({ _id: riderId }))) throw new NotFoundError('Unknown rider.');
+    const doc: Zone = {
       name,
       active: true,
       shape,
       geometry,
       ...(note ? { note } : {}),
       ...(riderId ? { riderId } : {}),
-      createdAt: now,
-      updatedAt: now,
-    } as Zone);
-    return NextResponse.json({ id: res.insertedId.toHexString(), name, active: true });
+      createdAt: ctx.now,
+      updatedAt: ctx.now,
+    };
+    const res = await col.zones(db).insertOne(doc);
+    await recordEvent(ctx, { entity: 'zone', entityId: res.insertedId.toHexString(), type: 'zone.created', data: { name } }, db);
+    if (riderId) await markRouteDirty(riderId, 'zone created', ctx);
+    return ok({ id: res.insertedId.toHexString(), name, active: true });
   } catch (err) {
-    return notConfigured(err) ?? NextResponse.json({ error: 'Could not save the zone.' }, { status: 503 });
+    return handleRouteError(err);
   }
 }
 
-export async function PATCH(req: Request): Promise<NextResponse> {
-  const denied = await gate();
-  if (denied) return denied;
-
-  let body: { id?: unknown; active?: unknown; riderId?: unknown };
+export async function PATCH(req: Request) {
   try {
-    body = (await req.json()) as { id?: unknown; active?: unknown; riderId?: unknown };
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
-  }
-  const id = typeof body.id === 'string' && ObjectId.isValid(body.id) ? new ObjectId(body.id) : null;
-  if (!id) return NextResponse.json({ error: 'A valid zone id is required.' }, { status: 400 });
+    const p = await requireStaff(['owner', 'ops']);
+    const ctx = ctxFor(req, actorFor(p, 'staff'));
+    const body = await readJson<{ id?: unknown; active?: unknown; riderId?: unknown }>(req);
+    if (typeof body.id !== 'string' || !ObjectId.isValid(body.id)) throw new ValidationError('A valid zone id is required.');
+    const id = new ObjectId(body.id);
 
-  const set: Record<string, unknown> = { updatedAt: new Date() };
-  const unset: Record<string, ''> = {};
-
-  if (body.active !== undefined) {
-    if (typeof body.active !== 'boolean') {
-      return NextResponse.json({ error: 'active must be true or false.' }, { status: 400 });
+    const set: Record<string, unknown> = { updatedAt: ctx.now };
+    const unset: Record<string, ''> = {};
+    if (body.active !== undefined) {
+      if (typeof body.active !== 'boolean') throw new ValidationError('active must be true or false.');
+      set.active = body.active;
     }
-    set.active = body.active;
-  }
-  // riderId: a valid id assigns the zone to a rider; null or '' clears it.
-  if (body.riderId !== undefined) {
-    if (body.riderId === null || body.riderId === '') {
-      unset.riderId = '';
-    } else if (typeof body.riderId === 'string' && ObjectId.isValid(body.riderId)) {
-      set.riderId = new ObjectId(body.riderId);
-    } else {
-      return NextResponse.json({ error: 'riderId must be a valid id, or null to clear.' }, { status: 400 });
+    let newRider: ObjectId | null | undefined;
+    if (body.riderId !== undefined) {
+      if (body.riderId === null || body.riderId === '') {
+        unset.riderId = '';
+        newRider = null;
+      } else if (typeof body.riderId === 'string' && ObjectId.isValid(body.riderId)) {
+        newRider = new ObjectId(body.riderId);
+        set.riderId = newRider;
+      } else {
+        throw new ValidationError('riderId must be a valid id, or null to clear.');
+      }
     }
-  }
+    if (body.active === undefined && body.riderId === undefined) {
+      throw new ValidationError('Nothing to update: send active and/or riderId.');
+    }
 
-  if (body.active === undefined && body.riderId === undefined) {
-    return NextResponse.json({ error: 'Nothing to update: send active and/or riderId.' }, { status: 400 });
-  }
-
-  const update: Record<string, unknown> = { $set: set };
-  if (Object.keys(unset).length > 0) update.$unset = unset;
-
-  try {
     const db = await getDb();
-    const res = await col.zones(db).updateOne({ _id: id }, update);
-    if (res.matchedCount === 0) return NextResponse.json({ error: 'Unknown zone.' }, { status: 404 });
-    return NextResponse.json({ id: body.id });
+    if (newRider && !(await col.riders(db).findOne({ _id: newRider }))) throw new NotFoundError('Unknown rider.');
+    const before = await col.zones(db).findOne({ _id: id });
+    if (!before) throw new NotFoundError('Unknown zone.');
+    const update: Record<string, unknown> = { $set: set };
+    if (Object.keys(unset).length) update.$unset = unset;
+    const res = await col.zones(db).updateOne({ _id: id, updatedAt: before.updatedAt }, update);
+    if (res.matchedCount === 0) throw new ConflictError('The zone changed while saving — reload and try again.');
+
+    await recordEvent(
+      ctx,
+      {
+        entity: 'zone',
+        entityId: id.toHexString(),
+        type: 'zone.updated',
+        data: {
+          ...(body.active !== undefined ? { active: { from: before.active, to: body.active } } : {}),
+          ...(newRider !== undefined
+            ? { riderId: { from: before.riderId?.toHexString() ?? null, to: newRider ? newRider.toHexString() : null } }
+            : {}),
+        },
+      },
+      db,
+    );
+    const reason = newRider !== undefined ? 'zone handed over' : 'zone switched on/off';
+    await markRouteDirty(before.riderId, reason, ctx);
+    if (newRider) await markRouteDirty(newRider, reason, ctx);
+    return ok({ id: id.toHexString() });
   } catch (err) {
-    return notConfigured(err) ?? NextResponse.json({ error: 'Could not update the zone.' }, { status: 503 });
+    return handleRouteError(err);
   }
 }
 
-export async function DELETE(req: Request): Promise<NextResponse> {
-  const denied = await gate();
-  if (denied) return denied;
-
-  const raw = new URL(req.url).searchParams.get('id') ?? '';
-  if (!ObjectId.isValid(raw)) {
-    return NextResponse.json({ error: 'A valid zone id is required.' }, { status: 400 });
-  }
-
+export async function DELETE(req: Request) {
   try {
+    const p = await requireStaff(['owner', 'ops']);
+    const ctx = ctxFor(req, actorFor(p, 'staff'));
+    const raw = new URL(req.url).searchParams.get('id') ?? '';
+    if (!ObjectId.isValid(raw)) throw new ValidationError('A valid zone id is required.');
     const db = await getDb();
-    const res = await col.zones(db).deleteOne({ _id: new ObjectId(raw) });
-    if (res.deletedCount === 0) return NextResponse.json({ error: 'Unknown zone.' }, { status: 404 });
-    return NextResponse.json({ deleted: raw });
+    const zone = await col.zones(db).findOneAndDelete({ _id: new ObjectId(raw) });
+    if (!zone) throw new NotFoundError('Unknown zone.');
+    await recordEvent(ctx, { entity: 'zone', entityId: raw, type: 'zone.deleted', data: { name: zone.name } }, db);
+    await markRouteDirty(zone.riderId, 'zone deleted', ctx);
+    return ok({ deleted: raw });
   } catch (err) {
-    return notConfigured(err) ?? NextResponse.json({ error: 'Could not delete the zone.' }, { status: 503 });
+    return handleRouteError(err);
   }
 }

@@ -79,7 +79,7 @@ function loadLeaflet(): Promise<L> {
   });
 }
 
-export default function ZoneMap() {
+export default function ZoneMap({ canEdit = true, onChange }: { canEdit?: boolean; onChange?: () => void } = {}) {
   const holder = useRef<HTMLDivElement>(null);
   const map = useRef<L>(null);
   const drawn = useRef<L[]>([]);
@@ -93,17 +93,31 @@ export default function ZoneMap() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
+  const [listState, setListState] = useState<'loading' | 'error' | 'ready'>('loading');
+  const [listError, setListError] = useState<string | null>(null);
+
+  const say = (text: string | null, error = false) => {
+    setMsg(text);
+    setIsError(error);
+  };
 
   const refresh = useCallback(async () => {
-    const r = await fetch('/api/admin/zones');
-    if (r.status === 403) { setMsg('Your mobile is not in ADMIN_MOBILES.'); return; }
-    if (!r.ok) {
-      const b = await r.json().catch(() => ({}));
-      setMsg(b.missing ? `Not configured: ${b.missing.join(', ')}` : 'Could not load zones.');
-      return;
+    try {
+      const r = await fetch('/api/admin/zones', { cache: 'no-store' });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string; missing?: string[] };
+        setListError(b.missing ? `Not configured: ${b.missing.join(', ')}` : (b.error ?? `Could not load zones (HTTP ${r.status}).`));
+        setListState('error');
+        return;
+      }
+      const b = (await r.json()) as { zones: ZoneRow[] };
+      setZones(b.zones);
+      setListState('ready');
+    } catch {
+      setListError('Could not load zones: the network request did not complete.');
+      setListState('error');
     }
-    const b = (await r.json()) as { zones: ZoneRow[] };
-    setZones(b.zones);
   }, []);
 
   /* ---- boot the map ---- */
@@ -118,15 +132,17 @@ export default function ZoneMap() {
           // Attribution is REQUIRED by the OSM tile usage policy, not decoration.
           attribution: '&copy; OpenStreetMap contributors',
         }).addTo(m);
-        m.on('click', (e: { latlng: { lat: number; lng: number } }) => {
-          setCentre({ lat: e.latlng.lat, lng: e.latlng.lng });
-        });
+        if (canEdit) {
+          m.on('click', (e: { latlng: { lat: number; lng: number } }) => {
+            setCentre({ lat: e.latlng.lat, lng: e.latlng.lng });
+          });
+        }
         map.current = m;
         setReady(true);
       })
       .catch(e => setLoadError(e instanceof Error ? e.message : 'Leaflet failed to load'));
     return () => { cancelled = true; };
-  }, []);
+  }, [canEdit]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -177,108 +193,155 @@ export default function ZoneMap() {
   async function save() {
     if (!centre || !name.trim()) return;
     setBusy(true);
-    setMsg(null);
+    say(null);
     try {
       const r = await fetch('/api/admin/zones', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), lat: centre.lat, lng: centre.lng, radiusM }),
       });
-      const b = await r.json().catch(() => ({}));
-      if (!r.ok) { setMsg(b.error ?? 'Could not save the zone.'); return; }
+      const b = (await r.json().catch(() => ({}))) as { error?: string; name?: string };
+      if (!r.ok) { say(b.error ?? `Could not save the zone (HTTP ${r.status}).`, true); return; }
       setName('');
       setCentre(null);
       await refresh();
-      setMsg(`Saved “${b.name}”.`);
+      onChange?.();
+      say(`Saved “${b.name ?? name.trim()}”. Give it a rider in the list above.`);
+    } catch {
+      say('Could not save the zone: the network request did not complete.', true);
     } finally {
       setBusy(false);
     }
   }
 
-  async function toggle(z: ZoneRow) {
-    await fetch('/api/admin/zones', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: z.id, active: !z.active }),
-    });
-    await refresh();
+  async function mutateZone(url: string, init: RequestInit, fallback: string, success: string) {
+    setBusy(true);
+    say(null);
+    try {
+      const r = await fetch(url, init);
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        say(b.error ?? `${fallback} (HTTP ${r.status}).`, true);
+        return;
+      }
+      await refresh();
+      onChange?.();
+      say(success);
+    } catch {
+      say(`${fallback}: the network request did not complete.`, true);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function remove(z: ZoneRow) {
-    await fetch(`/api/admin/zones?id=${encodeURIComponent(z.id)}`, { method: 'DELETE' });
-    await refresh();
+  function toggle(z: ZoneRow) {
+    void mutateZone(
+      '/api/admin/zones',
+      { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: z.id, active: !z.active }) },
+      'Could not update the zone',
+      z.active ? `${z.name} is off — its addresses are no longer serviceable.` : `${z.name} is on.`,
+    );
+  }
+
+  function remove(z: ZoneRow) {
+    if (!window.confirm(`Delete zone "${z.name}"? New customers there can no longer subscribe. Turning it off is reversible; deleting is not.`)) return;
+    void mutateZone(`/api/admin/zones?id=${encodeURIComponent(z.id)}`, { method: 'DELETE' }, 'Could not delete the zone', `Deleted ${z.name}.`);
   }
 
   const activeCount = zones.filter(z => z.active).length;
 
   return (
-    <section className="zone-editor">
-      <div className="zone-head">
-        <h2>Delivery zones</h2>
-        <p className="zone-state">
-          {activeCount === 0
-            ? 'No active zone — serviceability is fail-closed, so we currently deliver nowhere.'
-            : `${activeCount} active zone${activeCount === 1 ? '' : 's'}.`}
-        </p>
+    <section className="ops-card zone-editor" aria-labelledby="zones-h">
+      <div className="ops-card-head">
+        <h2 id="zones-h">Delivery zones</h2>
+        {listState === 'ready' && (
+          <span className={`ops-badge ${activeCount === 0 ? 'is-bad' : 'is-ok'}`}>
+            {activeCount} active
+          </span>
+        )}
       </div>
+      {listState === 'ready' && activeCount === 0 && (
+        <p className="ops-warn">No active zone — serviceability fails closed, so we currently deliver nowhere.</p>
+      )}
 
       {loadError ? (
-        <p className="zone-msg">
-          The map could not load ({loadError}). Zones can still be managed from the list below;
-          the map is a convenience for picking a centre, not the source of truth.
+        <p className="ops-warn">
+          The map could not load ({loadError}). Zones can still be managed from the list below; the map is only for
+          picking a centre.
         </p>
       ) : null}
 
       <div ref={holder} className="zone-map" role="application" aria-label="Delivery zone map" />
 
-      <div className="zone-form">
-        <p className="zone-hint">
-          {centre
-            ? `Centre ${centre.lat.toFixed(5)}, ${centre.lng.toFixed(5)} — adjust the radius, name it, then save.`
-            : 'Click the map to place a zone centre.'}
-        </p>
-        <label>
-          <span>Zone name</span>
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="e.g. Safilguda morning round"
-            maxLength={80}
-          />
-        </label>
-        <label>
-          <span>Radius — {(radiusM / 1000).toFixed(1)} km</span>
-          <input
-            type="range"
-            min={200}
-            max={25000}
-            step={100}
-            value={radiusM}
-            onChange={e => setRadiusM(Number(e.target.value))}
-          />
-        </label>
-        <button className="cta" onClick={save} disabled={busy || !centre || !name.trim()}>
-          {busy ? 'Saving…' : 'Save zone'}
-        </button>
-        {msg ? <p className="zone-msg">{msg}</p> : null}
-      </div>
+      {canEdit && (
+        <div className="ops-card" style={{ background: 'var(--ops-soft)' }}>
+          <h3>Add a zone</h3>
+          <p className="ops-muted">
+            {centre
+              ? `Centre ${centre.lat.toFixed(5)}, ${centre.lng.toFixed(5)} — adjust the radius, name it, then save.`
+              : 'Tap the map to place a zone centre.'}
+          </p>
+          <label className="ops-field">
+            <span>Zone name</span>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Safilguda morning round" maxLength={80} />
+          </label>
+          <label className="ops-field">
+            <span>Radius — {(radiusM / 1000).toFixed(1)} km</span>
+            <input type="range" min={200} max={25000} step={100} value={radiusM} onChange={e => setRadiusM(Number(e.target.value))} />
+          </label>
+          <button type="button" className="ops-btn ops-btn-primary" onClick={save} disabled={busy || !centre || !name.trim()}>
+            {busy ? 'Saving…' : 'Save zone'}
+          </button>
+        </div>
+      )}
 
-      {zones.length > 0 ? (
-        <ul className="zone-list">
+      {msg ? (
+        <p className={isError ? 'ops-error' : 'ops-ok'} role={isError ? 'alert' : 'status'}>
+          {msg}
+        </p>
+      ) : null}
+
+      {listState === 'loading' ? (
+        <p className="ops-pending" role="status">
+          Loading zones…
+        </p>
+      ) : listState === 'error' ? (
+        <div className="ops-error" role="alert">
+          {listError}
+          <div className="ops-actions">
+            <button type="button" className="ops-btn" onClick={() => void refresh()}>
+              Retry
+            </button>
+          </div>
+        </div>
+      ) : zones.length === 0 ? (
+        <p className="ops-empty">No zones yet.</p>
+      ) : (
+        <ul className="ops-list">
           {zones.map(z => (
             <li key={z.id}>
-              <span className="zone-name">{z.name}</span>
-              <span className="zone-shape">
-                {z.shape.kind === 'circle'
-                  ? `${(z.shape.radiusM / 1000).toFixed(1)} km circle`
-                  : `${z.shape.points.length}-point area`}
-              </span>
-              <button onClick={() => toggle(z)}>{z.active ? 'Turn off' : 'Turn on'}</button>
-              <button onClick={() => remove(z)}>Delete</button>
+              <div className="ops-card-head">
+                <strong>{z.name}</strong>
+                <span className={`ops-badge ${z.active ? 'is-ok' : 'is-warn'}`}>{z.active ? 'On' : 'Off'}</span>
+              </div>
+              <p className="ops-muted" style={{ margin: '0.2rem 0' }}>
+                {z.shape.kind === 'circle' ? `${(z.shape.radiusM / 1000).toFixed(1)} km circle` : `${z.shape.points.length}-point area`}
+                {z.note ? ` · ${z.note}` : ''}
+              </p>
+              {canEdit && (
+                <div className="ops-actions">
+                  <button type="button" className="ops-btn ops-btn-small" onClick={() => toggle(z)} disabled={busy}>
+                    {z.active ? 'Turn off' : 'Turn on'}
+                  </button>
+                  <button type="button" className="ops-btn ops-btn-small ops-btn-danger" onClick={() => remove(z)} disabled={busy}>
+                    Delete
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>
-      ) : null}
+      )}
     </section>
   );
 }
