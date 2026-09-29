@@ -201,7 +201,8 @@ outbox 'suppressed'). Language from `user.lang`. Who enqueues what (dedupe key):
 
 ## 5. Tick (`/api/cron/tick`, every 5 min; each step leased in job_runs, errors isolated)
 
-1 `expireUnpaidOrders` (B1) · 2 `activateDueSubscriptions` (B1) · 3 `lockDueDays` (B2) ·
+1 `expireUnpaidOrders` (B1) · 1a `repairPaidOrders` (every 10 min: activates paid orders
+whose activation never completed) · 2 `activateDueSubscriptions` (B1) · 3 `lockDueDays` (B2) ·
 4 `closeDueDays` (B2) · 5 `autoResolveStaleUnconfirmed` (B2) · 6 `compensatePendingMisses`
 (B3 — retries any fault-'ours' miss whose compensation failed) · 7
 `completeEndedSubscriptions` (B1) · 7a `settleCancellations` (retries the refund/credit

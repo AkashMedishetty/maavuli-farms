@@ -104,7 +104,15 @@ export async function pauseDates(subscriptionId: ObjectId, rawDates: string[], c
     .find({ subscriptionId, date: { $in: newDates }, source: 'plan', status: 'planned' })
     .toArray();
   const withRow = new Set(rows.map(r => r.date));
-  const noRow = newDates.filter(d => !withRow.has(d));
+  let noRow = newDates.filter(d => !withRow.has(d));
+  if (noRow.length) {
+    // A concurrent identical request may have paused (and so removed the row of) a
+    // date since our read: that date is already paused, not missing.
+    const nowPaused = new Set(
+      (await col.pausedDates(db).find({ subscriptionId, date: { $in: noRow } }).toArray()).map(p => p.date),
+    );
+    noRow = noRow.filter(d => !nowPaused.has(d));
+  }
   if (noRow.length) throw new ValidationError('No delivery is planned on some dates', noRow.map(d => `no delivery on ${d}`));
 
   const remaining = sub.pauseAllowanceDays - sub.pauseUsedDays;
@@ -115,50 +123,89 @@ export async function pauseDates(subscriptionId: ObjectId, rawDates: string[], c
     });
   }
 
-  // Claim the allowance atomically first so two concurrent pauses cannot overspend it.
-  const claim = await col.subscriptions(db).updateOne(
-    { _id: subscriptionId, pauseUsedDays: { $lte: sub.pauseAllowanceDays - newDates.length } },
-    { $inc: { pauseUsedDays: newDates.length, daysPaused: newDates.length } },
-  );
-  if (claim.matchedCount === 0) throw new ConflictError('Not enough pause days left.');
-
-  const pausedDocs: Omit<PausedDate, '_id'>[] = newDates.map(date => ({
-    subscriptionId,
-    mobile: sub.mobile,
-    date,
-    pausedAt: ctx.now,
-  }));
-  try {
-    await col.pausedDates(db).insertMany(pausedDocs, { ordered: false });
-  } catch (err) {
-    if ((err as { code?: number }).code !== 11000) throw err;
+  // The paused_dates insert IS the claim: the unique {subscriptionId,date} index lets
+  // exactly one of two identical requests (a double tap) own each date. Everything
+  // after — allowance, removed rows, the extension — counts only the dates THIS call
+  // claimed, never the dates it asked for.
+  const claimed: string[] = [];
+  for (const date of newDates) {
+    const doc: Omit<PausedDate, '_id'> = { subscriptionId, mobile: sub.mobile, date, pausedAt: ctx.now };
+    try {
+      await col.pausedDates(db).insertOne(doc as PausedDate);
+      claimed.push(date);
+    } catch (err) {
+      if ((err as { code?: number }).code !== 11000) throw err;
+    }
   }
-  await col.deliveries(db).deleteMany({ subscriptionId, date: { $in: newDates }, source: 'plan', status: 'planned' });
+  const releaseClaims = async (ds: string[]) => {
+    if (ds.length) await col.pausedDates(db).deleteMany({ subscriptionId, date: { $in: ds } });
+  };
+  if (claimed.length === 0) {
+    return {
+      success: true,
+      message: 'All dates were already paused',
+      pauseUsedDays: sub.pauseUsedDays,
+      pauseAllowanceDays: sub.pauseAllowanceDays,
+      newEndDate: sub.endDate,
+    };
+  }
 
-  const { newEndDate } = await extendSubscription(subscriptionId, newDates.length, 'plan', ctx);
+  // Spend the allowance for the claimed dates atomically, so two concurrent pauses of
+  // DIFFERENT dates cannot overspend it either.
+  const spend = await col.subscriptions(db).updateOne(
+    { _id: subscriptionId, pauseUsedDays: { $lte: sub.pauseAllowanceDays - claimed.length } },
+    { $inc: { pauseUsedDays: claimed.length, daysPaused: claimed.length } },
+  );
+  if (spend.matchedCount === 0) {
+    await releaseClaims(claimed);
+    throw new ConflictError('Not enough pause days left.');
+  }
+
+  // Remove each claimed date's planned row. A row the lock froze in between (the
+  // cutoff passed mid-request) is not removed: that date is delivered, so its claim
+  // and allowance day are handed back and it is not extended.
+  const paused: string[] = [];
+  const missed: string[] = [];
+  for (const date of claimed) {
+    const del = await col.deliveries(db).deleteOne({ subscriptionId, date, source: 'plan', status: 'planned' });
+    if (del.deletedCount === 1) paused.push(date);
+    else missed.push(date);
+  }
+  if (missed.length) {
+    await releaseClaims(missed);
+    await col.subscriptions(db).updateOne(
+      { _id: subscriptionId },
+      { $inc: { pauseUsedDays: -missed.length, daysPaused: -missed.length } },
+    );
+  }
+  if (paused.length === 0) {
+    throw new ConflictError('Those dates have just closed for changes; nothing was paused.');
+  }
+
+  const { newEndDate } = await extendSubscription(subscriptionId, paused.length, 'plan', ctx);
 
   await recordEvent(ctx, {
     entity: 'subscription',
     entityId: subscriptionId.toHexString(),
     type: 'subscription.paused_dates',
     mobile: sub.mobile,
-    data: { dates: newDates, newEndDate },
+    data: { dates: paused, newEndDate },
   }, db);
 
   await enqueueMessage(
     {
       mobile: sub.mobile,
       template: 'pause_confirmed',
-      params: { dates: newDates.join(', '), endDate: newEndDate },
-      dedupeKey: `pause:${subscriptionId.toHexString()}:${newDates[0]}:${newDates.length}`,
+      params: { dates: paused.join(', '), endDate: newEndDate },
+      dedupeKey: `pause:${subscriptionId.toHexString()}:${paused[0]}:${paused.length}`,
     },
     ctx,
   );
 
   return {
     success: true,
-    message: `Paused ${newDates.length} date(s). Your plan now ends ${newEndDate}.`,
-    pauseUsedDays: sub.pauseUsedDays + newDates.length,
+    message: `Paused ${paused.length} date(s). Your plan now ends ${newEndDate}.`,
+    pauseUsedDays: sub.pauseUsedDays + paused.length,
     pauseAllowanceDays: sub.pauseAllowanceDays,
     newEndDate,
   };
@@ -179,8 +226,16 @@ export async function unpauseDates(subscriptionId: ObjectId, rawDates: string[],
 
   for (const date of dates) await assertDateOpen(date, ctx, db);
 
-  const paused = await col.pausedDates(db).find({ subscriptionId, date: { $in: dates } }).toArray();
-  if (paused.length === 0) {
+  const found = await col.pausedDates(db).find({ subscriptionId, date: { $in: dates } }).toArray();
+  // Deleting the pause record IS the claim (mirror of pauseDates): of two identical
+  // requests only the one whose delete removed a date restores it, shortens the plan
+  // for it and gives its allowance day back.
+  const claimedDocs: PausedDate[] = [];
+  for (const p of found) {
+    const del = await col.pausedDates(db).deleteOne({ _id: p._id });
+    if (del.deletedCount === 1) claimedDocs.push(p);
+  }
+  if (claimedDocs.length === 0) {
     return {
       success: true,
       message: 'No dates were paused',
@@ -189,7 +244,7 @@ export async function unpauseDates(subscriptionId: ObjectId, rawDates: string[],
       newEndDate: sub.endDate,
     };
   }
-  const restored = paused.map(p => p.date).sort();
+  const restored = claimedDocs.map(p => p.date).sort();
 
   // Give the restored dates their delivery back FIRST, so shortenSubscription removes
   // the appended tail day(s) rather than one of these.
@@ -220,12 +275,19 @@ export async function unpauseDates(subscriptionId: ObjectId, rawDates: string[],
   try {
     ({ newEndDate } = await shortenSubscription(subscriptionId, restored.length, ctx));
   } catch (err) {
-    // No open tail day to give back: undo the restore, leave the pause standing.
+    // No open tail day to give back (or the plan stopped running): undo the restore
+    // and put the pause records back, so the pause stands exactly as before.
     if (inserted.length) await col.deliveries(db).deleteMany({ _id: { $in: inserted } });
+    for (const p of claimedDocs) {
+      try {
+        await col.pausedDates(db).insertOne(p);
+      } catch (e) {
+        if ((e as { code?: number }).code !== 11000) throw e;
+      }
+    }
     throw err;
   }
 
-  await col.pausedDates(db).deleteMany({ subscriptionId, date: { $in: restored } });
   await col.subscriptions(db).updateOne(
     { _id: subscriptionId },
     { $inc: { pauseUsedDays: -restored.length, daysPaused: -restored.length } },

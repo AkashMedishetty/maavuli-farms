@@ -2,7 +2,8 @@
  * WhatsApp Cloud API webhook. OWNER: B6.
  *
  *   GET  — Meta's subscription handshake: echo hub.challenge iff
- *          hub.mode=subscribe AND hub.verify_token === WHATSAPP_VERIFY_TOKEN.
+ *          hub.mode=subscribe AND hub.verify_token equals WHATSAPP_VERIFY_TOKEN
+ *          (timing-safe compare).
  *   POST — an event batch. The X-Hub-Signature-256 header (HMAC-SHA256 of the RAW
  *          body with WHATSAPP_APP_SECRET) is verified with a timing-safe comparison
  *          BEFORE the body is parsed — an unverified webhook is a spoofing hole.
@@ -22,7 +23,7 @@
  * Meta does not retry a batch we have already durably recorded.
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { col, normalizeMobile, type InboundMessage } from '@/lib/models';
@@ -39,6 +40,13 @@ function env(name: string): string | undefined {
   return v && v.trim() !== '' ? v.trim() : undefined;
 }
 
+/** Constant-time string compare (hash both sides so the lengths always match). */
+function sameSecret(a: string, b: string): boolean {
+  const ha = createHash('sha256').update(a, 'utf8').digest();
+  const hb = createHash('sha256').update(b, 'utf8').digest();
+  return timingSafeEqual(ha, hb);
+}
+
 /** GET: subscription verification handshake. */
 export async function GET(req: Request): Promise<NextResponse | Response> {
   const url = new URL(req.url);
@@ -47,7 +55,7 @@ export async function GET(req: Request): Promise<NextResponse | Response> {
   const challenge = url.searchParams.get('hub.challenge');
   const expected = env('WHATSAPP_VERIFY_TOKEN');
 
-  if (mode === 'subscribe' && expected && token === expected && challenge !== null) {
+  if (mode === 'subscribe' && expected && token !== null && sameSecret(token, expected) && challenge !== null) {
     // Meta expects the raw challenge string, not JSON.
     return new Response(challenge, { status: 200, headers: { 'content-type': 'text/plain' } });
   }

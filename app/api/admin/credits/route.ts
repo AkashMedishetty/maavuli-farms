@@ -1,6 +1,6 @@
 import { getDb } from '@/lib/db';
 import { col, normalizeMobile } from '@/lib/models';
-import { addCredit, GOODWILL_CAP_PAISE } from '@/lib/credits';
+import { addCredit, GOODWILL_CAP_PAISE, withCreditLock } from '@/lib/credits';
 import { actorFor, requireStaff } from '@/lib/roles';
 import { ctxFor } from '@/lib/clock';
 import { handleRouteError, ok, readJson } from '@/lib/api';
@@ -9,7 +9,12 @@ import { formatINR } from '@/lib/pricing';
 
 export const dynamic = 'force-dynamic';
 
-/** POST /api/admin/credits {mobile, amountPaise, note} — goodwill credit, not refundable. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * POST /api/admin/credits {mobile, amountPaise, note} — goodwill credit, not refundable.
+ * GOODWILL_CAP_PAISE caps each entry AND the rolling 24 h total to one customer.
+ */
 export async function POST(req: Request) {
   try {
     const p = await requireStaff(['owner', 'ops', 'support']);
@@ -29,10 +34,27 @@ export async function POST(req: Request) {
     const db = await getDb();
     if (!(await col.users(db).countDocuments({ mobile }, { limit: 1 }))) throw new NotFoundError('No customer with that mobile');
 
-    const entry = await addCredit(
-      { mobile, amountPaise: amount, kind: 'goodwill', refundable: false, note },
-      ctxFor(req, actorFor(p, 'staff')),
-    );
+    const ctx = ctxFor(req, actorFor(p, 'staff'));
+    // The cap is also an AGGREGATE: all goodwill to this customer in the last 24 h,
+    // from every staff member, plus this entry. Read and write under the customer's
+    // credit lease, so two requests at once cannot both pass the check.
+    const entry = await withCreditLock(mobile, async d => {
+      const since = new Date(ctx.now.getTime() - DAY_MS);
+      const [agg] = await col
+        .credits(d)
+        .aggregate<{ total: number }>([
+          { $match: { mobile, kind: 'goodwill', at: { $gte: since } } },
+          { $group: { _id: null, total: { $sum: '$amountPaise' } } },
+        ])
+        .toArray();
+      const given = agg?.total ?? 0;
+      if (given + amount > cap) {
+        throw new ForbiddenError(
+          `This customer has had ${formatINR(given)} of goodwill in the last 24 hours. Your role can give at most ${formatINR(cap)} in total per customer per day — ask the owner to add more.`,
+        );
+      }
+      return addCredit({ mobile, amountPaise: amount, kind: 'goodwill', refundable: false, note }, ctx);
+    });
     return ok({ credit: { id: entry._id?.toHexString() ?? null, mobile, amountPaise: amount, kind: 'goodwill', note } }, 201);
   } catch (err) {
     return handleRouteError(err);

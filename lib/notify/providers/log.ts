@@ -17,6 +17,10 @@ import type { NotifyProvider, SendRequest, SendResult } from './types';
 
 let counter = 0;
 
+function maskMobile(m: string): string {
+  return m.length > 4 ? `${'•'.repeat(m.length - 4)}${m.slice(-4)}` : '••••';
+}
+
 export const logProvider: NotifyProvider = {
   name: 'log',
   async send(req: SendRequest): Promise<SendResult> {
@@ -29,8 +33,17 @@ export const logProvider: NotifyProvider = {
       return { ok: false, retryable: false, error: err instanceof Error ? err.message : String(err) };
     }
     const id = `log_${Date.now()}_${counter++}`;
-    // eslint-disable-next-line no-console
-    console.log(`[notify:log] → ${req.mobile} [${req.template}/${req.lang}] ${preview}${req.mediaUrl ? ` (media: ${req.mediaUrl})` : ''}`);
+    if (process.env.NODE_ENV === 'production') {
+      // resolveProvider refuses 'log' in production; should it ever run there anyway,
+      // never print the message body (codes, names, addresses) or a signed media URL.
+      // eslint-disable-next-line no-console
+      console.log(
+        `[notify:log] → ${maskMobile(req.mobile)} [${req.template}/${req.lang}] (${preview.length} chars${req.mediaUrl ? ', with media' : ''})`,
+      );
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(`[notify:log] → ${req.mobile} [${req.template}/${req.lang}] ${preview}${req.mediaUrl ? ` (media: ${req.mediaUrl})` : ''}`);
+    }
     return { ok: true, providerMessageId: id, status: 'logged' };
   },
 };

@@ -4,10 +4,12 @@
  * delivered, OUR fault (reason 'disruption'), so each customer is compensated
  * exactly like any other miss we cause — and sends one WhatsApp per customer.
  *
- * A disruption on a date that has not locked yet locks it first: the affected
- * deliveries must be frozen with their rider and snapshot before they can be
+ * The affected deliveries must be frozen (rider + snapshot) before they can be
  * marked, and a customer must not be able to "pause" a day we already know we
- * cannot deliver (and so keep both the pause and the compensation).
+ * cannot deliver (and so keep both the pause and the compensation). A date past its
+ * cutoff (or locked early by ops) is locked as a whole, as the tick would. A date
+ * that is still open freezes ONLY the affected zones' rows: every other customer
+ * keeps that date open until the normal cutoff.
  */
 
 import { ObjectId } from 'mongodb';
@@ -16,7 +18,7 @@ import { col, type Delivery, type Disruption } from './models';
 import type { OpCtx } from './clock';
 import { recordEvent } from './events';
 import { addDaysYMD, isYMD, istYMD } from './cutoff';
-import { dateLabel, lockDay } from './manifest';
+import { dateLabel, ensureLocked, lockRowsInZones } from './manifest';
 import { markNotDelivered } from './outcomes';
 import { enqueueMessage } from './notify';
 import { ValidationError } from './errors';
@@ -60,8 +62,10 @@ export async function createDisruption(input: DisruptionInput, ctx: OpCtx): Prom
     if (found !== input.zoneIds.length) throw new ValidationError('One or more zones do not exist.');
   }
 
-  // Freeze the day first (no-op when already locked).
-  await lockDay(input.date, ctx);
+  // Freeze first. Past the cutoff: lock the whole day (no-op when already locked).
+  // Still open: freeze only the affected rows, never the date for every zone.
+  const dayLock = await ensureLocked(input.date, ctx);
+  if (!dayLock) await lockRowsInZones(input.date, input.zoneIds, ctx);
 
   const filter: Record<string, unknown> = {
     date: input.date,

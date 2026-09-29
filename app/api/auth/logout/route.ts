@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { destroySession, SESSION_COOKIE } from '@/lib/auth';
 import { NotConfiguredError } from '@/lib/db';
+import { handleRouteError } from '@/lib/api';
+
+// Reads cookies/sessions on every request; never prerender or cache.
+export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/auth/logout
@@ -17,7 +21,7 @@ export async function POST(): Promise<NextResponse> {
   } catch (err) {
     // If the DB is unreachable we still clear the cookie so the browser is signed
     // out; only surface a hard failure the caller could not have caused.
-    if (!(err instanceof NotConfiguredError)) throw err;
+    if (!(err instanceof NotConfiguredError)) return handleRouteError(err);
     jar.delete(SESSION_COOKIE);
   }
   return NextResponse.json({ ok: true });

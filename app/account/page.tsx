@@ -24,6 +24,8 @@ import { CancelSubscription } from '@/components/CancelSubscription';
 import { ExtraMilk } from '@/components/account/ExtraMilk';
 import { AddressForm, PreferencesForm, RefundUpi, ReportProblem } from '@/components/account/forms';
 import { safeNext } from './next';
+import { SubmitButton } from '@/components/SubmitButton';
+import { normalizeMobile } from '@/lib/models';
 import './account.css';
 
 export const metadata = { title: 'My Deliveries' };
@@ -33,8 +35,8 @@ export const dynamic = 'force-dynamic';
 /**
  * /account — the customer dashboard.
  *
- *  · no session → OTP sign-in (Server Actions; step and errors ride in the URL, so
- *    the form needs no client bundle). `?next=/admin` or `/rider` returns staff and
+ *  · no session → OTP sign-in (Server Actions; step and errors ride in the URL — a
+ *    dev/demo code never does, it is read from a short-lived httpOnly cookie). `?next=/admin` or `/rider` returns staff and
  *    riders to where they came from after signing in (same-origin paths only).
  *  · session    → lib/account.getAccountView, rendered section by section. Each
  *    section has its own error state: a failed read is never shown as "nothing here".
@@ -53,6 +55,30 @@ function withNext(path: string, next: string | null): string {
 
 // --------------------------------------------------------------- server actions
 
+/*
+ * A development/demo code is shown from a short-lived httpOnly cookie bound to the
+ * mobile, never from the URL (browser history, proxy and request logs).
+ */
+const DEV_CODE_COOKIE = 'mv_dev_code';
+const DEV_CODE_PATH = '/account';
+
+async function setDevCode(mobile: string, code: string | undefined, demo = false): Promise<void> {
+  const { cookies } = await import('next/headers');
+  const jar = await cookies();
+  const m = normalizeMobile(mobile);
+  const base = { httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', path: DEV_CODE_PATH };
+  if (code && m) jar.set(DEV_CODE_COOKIE, `${m}.${code}.${demo ? 1 : 0}`, { ...base, maxAge: 5 * 60 });
+  else jar.set(DEV_CODE_COOKIE, '', { ...base, maxAge: 0 });
+}
+
+async function readDevCode(mobile: string): Promise<{ code: string; demo: boolean } | undefined> {
+  const { cookies } = await import('next/headers');
+  const raw = (await cookies()).get(DEV_CODE_COOKIE)?.value ?? '';
+  const [m, code, demo] = raw.split('.');
+  const want = normalizeMobile(mobile);
+  return want && m === want && code && /^\d{6}$/.test(code) ? { code, demo: demo === '1' } : undefined;
+}
+
 async function requestCodeAction(formData: FormData): Promise<void> {
   'use server';
   const mobile = String(formData.get('mobile') ?? '');
@@ -63,8 +89,8 @@ async function requestCodeAction(formData: FormData): Promise<void> {
     const result = await issueOtp(mobile, { ip: clientIpFrom(await headers()) });
     // Dev (or explicit demo mode) with no provider: issueOtp returns the code so it
     // can be shown. Unreachable in normal production (it throws instead).
-    const dev = result.devCode ? `&dev=${result.devCode}${result.demo ? '&demo=1' : ''}` : '';
-    target = `/account?step=code&m=${encodeURIComponent(mobile)}${dev}`;
+    await setDevCode(mobile, result.devCode, result.demo === true);
+    target = `/account?step=code&m=${encodeURIComponent(mobile)}`;
   } catch (err) {
     if (err instanceof InvalidMobileError) target = `/account?err=mobile&m=${encodeURIComponent(mobile)}`;
     else if (err instanceof RateLimitError) target = `/account?err=rate&retry=${err.retryAfterSeconds}`;
@@ -84,6 +110,7 @@ async function verifyCodeAction(formData: FormData): Promise<void> {
   let target = next ?? '/account';
   try {
     await verifyOtp(mobile, code); // sets the session cookie
+    await setDevCode(mobile, undefined);
   } catch (err) {
     if (err instanceof VerifyError) target = withNext(`/account?step=code&m=${encodeURIComponent(mobile)}&err=code`, next);
     else if (err instanceof NotConfiguredError) target = withNext('/account?err=db', next);
@@ -210,8 +237,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Sear
   const step = one(sp.step) === 'code' ? 'code' : 'mobile';
   const mobile = one(sp.m) ?? '';
   const err = errCopy(one(sp.err), one(sp.retry));
-  const devCode = one(sp.dev);
-  const demo = one(sp.demo) === '1';
+  const dev = step === 'code' ? await readDevCode(mobile) : undefined;
+  const devCode = dev?.code;
+  const demo = dev?.demo === true;
 
   return (
     <>
@@ -261,9 +289,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Sear
                     required
                   />
                 </label>
-                <button type="submit" className="cta">
+                <SubmitButton className="cta" pendingLabel="Sending…">
                   Send code
-                </button>
+                </SubmitButton>
               </form>
             ) : (
               <form action={verifyCodeAction}>
@@ -289,9 +317,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Sear
                     <strong>{devCode}</strong>.
                   </p>
                 ) : null}
-                <button type="submit" className="cta">
+                <SubmitButton className="cta" pendingLabel="Checking…">
                   Verify &amp; sign in
-                </button>
+                </SubmitButton>
                 <p className="sub-help">
                   <Link href={withNext('/account', next)}>Use a different number or resend the code</Link>
                 </p>
@@ -346,9 +374,9 @@ async function SignedIn({ mobile }: { mobile: string }) {
         )}
 
         <form action={logoutAction} className="acct-foot">
-          <button type="submit" className="acct-btn acct-btn-ghost">
+          <SubmitButton className="acct-btn acct-btn-ghost" pendingLabel="Signing out…">
             Sign out
-          </button>
+          </SubmitButton>
         </form>
       </main>
       <Footer />

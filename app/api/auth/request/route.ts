@@ -8,6 +8,10 @@ import {
   SmsNotConfiguredError,
 } from '@/lib/auth';
 import { NotConfiguredError } from '@/lib/db';
+import { handleRouteError } from '@/lib/api';
+
+// Reads cookies/sessions on every request; never prerender or cache.
+export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/auth/request  { mobile }
@@ -70,6 +74,6 @@ export async function POST(req: Request): Promise<NextResponse> {
     if (err instanceof NotConfiguredError) {
       return NextResponse.json({ error: err.message, missing: err.missing }, { status: 503 });
     }
-    throw err;
+    return handleRouteError(err);
   }
 }

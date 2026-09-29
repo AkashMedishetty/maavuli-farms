@@ -459,6 +459,12 @@ export interface Delivery {
   compensationCreditId?: ObjectId;
   /** lease while compensation for this delivery is being written (lib/compensation) */
   compensatingUntil?: Date;
+  /**
+   * The plan's endDate just before a make-up day was appended for this miss. Set
+   * before extending and cleared with the resolution write, so a retry after a crash
+   * in between adopts the appended day instead of appending a second one.
+   */
+  makeupPendingFrom?: string;
 }
 
 /**
@@ -815,6 +821,8 @@ export interface InboundMessage {
 export interface JobRun {
   _id: string;                 // step name
   leaseUntil?: Date;
+  /** only the holder of this token may release the lease (lib/jobs) */
+  leaseToken?: string;
   lastRunAt?: Date;
   lastOk?: boolean;
   lastError?: string;
@@ -901,6 +909,7 @@ export const INDEXES = [
   { col: COL.orders, spec: { mobile: 1, createdAt: -1 }, options: {} },
   { col: COL.orders, spec: { idempotencyKey: 1 }, options: { unique: true, sparse: true } },
   { col: COL.orders, spec: { status: 1, createdAt: 1 }, options: {} },
+  { col: COL.orders, spec: { status: 1, paidAt: -1 }, options: {} },
   { col: COL.subscriptions, spec: { mobile: 1, status: 1 }, options: {} },
   { col: COL.subscriptions, spec: { orderId: 1 }, options: { unique: true } },
   { col: COL.subscriptions, spec: { status: 1, endDate: 1 }, options: {} },

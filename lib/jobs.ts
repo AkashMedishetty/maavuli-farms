@@ -12,11 +12,13 @@
  * would let two real processes collide.
  */
 
+import { randomBytes } from 'node:crypto';
+import type { Filter, UpdateFilter } from 'mongodb';
 import { getDb } from './db';
-import { col } from './models';
+import { col, type JobRun } from './models';
 import type { OpCtx } from './clock';
 import { activateDueSubscriptions, completeEndedSubscriptions, settleCancellations } from './subscriptions';
-import { expireUnpaidOrders } from './orders';
+import { expireUnpaidOrders, repairPaidOrders } from './orders';
 import { autoResolveStaleUnconfirmed, closeDueDays, lockDueDays } from './manifest';
 import { compensatePendingMisses } from './compensation';
 import { drainOutbox, enqueueRenewalReminders } from './notify';
@@ -37,6 +39,7 @@ export interface TickStep {
 /** Contract §5 order. */
 export const TICK_STEPS: readonly TickStep[] = [
   { name: 'expireUnpaidOrders', leaseMs: 2 * MIN, run: expireUnpaidOrders },
+  { name: 'repairPaidOrders', leaseMs: 3 * MIN, minIntervalMs: 10 * MIN, run: repairPaidOrders },
   { name: 'activateDueSubscriptions', leaseMs: 2 * MIN, run: activateDueSubscriptions },
   { name: 'lockDueDays', leaseMs: 4 * MIN, run: lockDueDays },
   { name: 'closeDueDays', leaseMs: 4 * MIN, run: closeDueDays },
@@ -62,31 +65,40 @@ export interface StepReport {
 /**
  * Take the lease for `step`. The filter only matches an expired/absent lease; when
  * another process holds it, the upsert collides on _id (E11000) — that is "busy".
+ * Returns the lease token (null when busy): only the holder of that token may
+ * release the lease, so a step that overran its lease cannot free the lease a
+ * second tick has since taken.
  */
-async function acquire(step: string, leaseMs: number): Promise<boolean> {
+async function acquire(step: string, leaseMs: number): Promise<string | null> {
   const db = await getDb();
   const now = new Date();
+  const token = randomBytes(12).toString('hex');
   try {
     await col.jobRuns(db).updateOne(
       { _id: step, $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lt: now } }] },
-      { $set: { leaseUntil: new Date(now.getTime() + leaseMs) } },
+      // leaseToken is not on the JobRun type (models.ts is not this module's); the
+      // driver accepts the extra key.
+      { $set: { leaseUntil: new Date(now.getTime() + leaseMs), leaseToken: token } } as UpdateFilter<JobRun>,
       { upsert: true },
     );
-    return true;
+    return token;
   } catch (err) {
-    if ((err as { code?: number }).code === 11000) return false;
+    if ((err as { code?: number }).code === 11000) return null;
     throw err;
   }
 }
 
 /** Run `fn` under the step's lease. Returns null when another process holds it. */
 export async function withLease<T>(step: string, leaseMs: number, fn: () => Promise<T>): Promise<{ value: T } | null> {
-  if (!(await acquire(step, leaseMs))) return null;
+  const token = await acquire(step, leaseMs);
+  if (!token) return null;
   try {
     return { value: await fn() };
   } finally {
     const db = await getDb();
-    await col.jobRuns(db).updateOne({ _id: step }, { $unset: { leaseUntil: '' } });
+    await col
+      .jobRuns(db)
+      .updateOne({ _id: step, leaseToken: token } as Filter<JobRun>, { $unset: { leaseUntil: '', leaseToken: '' } } as UpdateFilter<JobRun>);
   }
 }
 

@@ -35,7 +35,7 @@ import { addDaysYMD, closeInstant, hmLabel, isPastCutoff, istInstant, istYMD, lo
 import { orderStopsForRider, type StopInput } from './route-plan';
 import { markNotDelivered } from './outcomes';
 import { enqueueMessage } from './notify';
-import { assertTransition, RUN_TRANSITIONS } from './transitions';
+import { assertTransition, DELIVERY_TRANSITIONS, RUN_TRANSITIONS } from './transitions';
 import { ConflictError, NotFoundError, ValidationError } from './errors';
 import { pointInPolygon } from './geo';
 
@@ -408,6 +408,55 @@ export async function ensureLocked(date: string, ctx: OpCtx): Promise<DayLock | 
   return lockDay(date, ctx);
 }
 
+/**
+ * Freeze ONLY the open rows of `date` whose zone is in `zoneIds` (empty = every
+ * zone), ahead of the cutoff — for a disruption declared on a date that is still
+ * open. Each row gets its rider, stop and snapshot like a normal lock, but no run
+ * and no day lock is created: every other row of the date stays the customer's
+ * (pause, cancel-from, extra milk) until the real lock at the cutoff, which then
+ * leaves these rows alone (they are no longer open). Returns the rows frozen.
+ */
+export async function lockRowsInZones(date: string, zoneIds: readonly ObjectId[], ctx: OpCtx): Promise<number> {
+  const db = await getDb();
+  const want = new Set(zoneIds.map(z => z.toHexString()));
+  const planned = (await resolveRows(db, date, OPEN_STATUSES)).filter(
+    p => want.size === 0 || (p.zone?._id !== undefined && want.has(p.zone._id.toHexString())),
+  );
+  let frozen = 0;
+  for (const p of planned) {
+    assertTransition('delivery', DELIVERY_TRANSITIONS, p.row.status, 'locked');
+    const res = await col.deliveries(db).updateOne(
+      { _id: p.row._id!, status: p.row.status },
+      {
+        $set: {
+          status: 'locked',
+          lockedAt: ctx.now,
+          riderId: p.riderId,
+          stopKey: p.stopKey,
+          snapshot: p.snapshot,
+          updatedAt: ctx.now,
+        },
+      },
+    );
+    if (res.modifiedCount !== 1) continue; // moved by someone else meanwhile
+    frozen++;
+    await recordEvent(
+      ctx,
+      {
+        entity: 'delivery',
+        entityId: p.row._id!.toHexString(),
+        type: 'delivery.locked',
+        from: p.row.status,
+        to: 'locked',
+        mobile: p.row.mobile,
+        data: { early: true },
+      },
+      db,
+    );
+  }
+  return frozen;
+}
+
 /** Tick step: lock every date that is past its cutoff (today, tomorrow, and a lookback for outages). */
 export async function lockDueDays(ctx: OpCtx): Promise<{ locked: string[] }> {
   const db = await getDb();
@@ -449,11 +498,35 @@ export async function closeDay(date: string, ctx: OpCtx): Promise<{ unconfirmed:
   // a snapshot before they are marked unconfirmed.
   await ensureLocked(date, ctx);
 
-  const res = await col.deliveries(db).updateMany(
-    { date, status: { $in: [...LIVE_STATUSES] } },
-    { $set: { status: 'unconfirmed', updatedAt: ctx.now } },
-  );
-  const unconfirmed = res.modifiedCount;
+  // Row by row (contract §2): assert the transition, move it conditionally on its
+  // FROM status, and give the customer's timeline a delivery.unconfirmed event.
+  const live = await col
+    .deliveries(db)
+    .find({ date, status: { $in: [...LIVE_STATUSES] } })
+    .project<{ _id: ObjectId; status: Delivery['status']; mobile: string }>({ status: 1, mobile: 1 })
+    .toArray();
+  let unconfirmed = 0;
+  for (const row of live) {
+    assertTransition('delivery', DELIVERY_TRANSITIONS, row.status, 'unconfirmed');
+    const res = await col.deliveries(db).updateOne(
+      { _id: row._id, status: row.status },
+      { $set: { status: 'unconfirmed', updatedAt: ctx.now } },
+    );
+    if (res.modifiedCount !== 1) continue; // the rider's tap landed first
+    unconfirmed++;
+    await recordEvent(
+      ctx,
+      {
+        entity: 'delivery',
+        entityId: row._id.toHexString(),
+        type: 'delivery.unconfirmed',
+        from: row.status,
+        to: 'unconfirmed',
+        mobile: row.mobile,
+      },
+      db,
+    );
+  }
 
   const runs = await col.riderRuns(db).find({ date, status: { $ne: 'closed' } }).toArray();
   for (const run of runs) {

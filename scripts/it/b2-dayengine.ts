@@ -227,13 +227,13 @@ else notVerified.push(`compensation of auto-resolved misses (${compensated.lengt
 // ---- a disruption on D2, zone 1 only ----
 const disruptCtx: OpCtx = { now: istInstant('2026-10-11', '08:00'), actor: staffActor('9800000011') };
 const dis = await createDisruption({ date: D2, zoneIds: [z1], reason: 'Heavy rain in Safilguda' }, disruptCtx);
-t('disruption: D2 locked first', (await col.dayLocks(db).countDocuments({ _id: D2 })) === 1);
+t('disruption: D2 NOT locked for every zone (still before its cutoff)', (await col.dayLocks(db).countDocuments({ _id: D2 })) === 0);
 t('disruption: zone-1 rows affected (A cow, A buffalo, B cow)', dis.affected === 3, dis);
 t('disruption: 2 customers notified', dis.customers === 2 && (await col.outbox(db).countDocuments({ template: 'disruption_notice' })) === 2);
 const d2rows = await col.deliveries(db).find({ date: D2 }).toArray();
 t('disruption: zone-1 rows not_delivered, reason disruption, fault ours',
   d2rows.filter(r => r.snapshot?.zoneId?.equals(z1)).every(r => r.status === 'not_delivered' && r.reason === 'disruption' && r.fault === 'ours'));
-t('disruption: other zones untouched', d2rows.filter(r => !r.snapshot?.zoneId?.equals(z1)).every(r => r.status === 'locked'));
+t('disruption: other zones untouched (still planned, still the customer’s to change)', d2rows.filter(r => !r.snapshot?.zoneId?.equals(z1)).every(r => r.status === 'planned'));
 let pastRejected = false;
 try {
   await createDisruption({ date: D, zoneIds: [], reason: 'too late' }, disruptCtx);

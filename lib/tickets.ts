@@ -16,6 +16,7 @@ import type { OpCtx } from './clock';
 
 const KINDS: readonly TicketKind[] = ['not_received', 'spoiled', 'quantity', 'other'];
 const CHANNELS: readonly Ticket['channel'][] = ['web', 'whatsapp', 'staff'];
+export const RESOLUTION_MAX = 500;
 
 export async function createTicket(
   input: {
@@ -67,8 +68,12 @@ export async function createTicket(
 }
 
 export async function resolveTicket(ticketId: ObjectId, resolution: string, ctx: OpCtx): Promise<Ticket> {
-  const trimmed = (resolution ?? '').trim();
+  const trimmed = (typeof resolution === 'string' ? resolution : '').trim();
   if (!trimmed) throw new ValidationError('A resolution note is required');
+  // It is sent verbatim to the customer as a WhatsApp template parameter.
+  if (trimmed.length > RESOLUTION_MAX) {
+    throw new ValidationError(`The resolution note can be at most ${RESOLUTION_MAX} characters`);
+  }
 
   const db = await getDb();
   const now = ctx.now;
