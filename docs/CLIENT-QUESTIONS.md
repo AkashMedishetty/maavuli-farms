@@ -80,3 +80,30 @@ today; each answer either confirms the default or is a small change. Items marke
     done after a customer call) and pause dates on a customer's behalf?
 28. **Abandoned checkouts call list** — orders started but not paid in the last 30
     days. Include failed payments too?
+
+## F. From the final checks (built with the default shown; say if you want it changed)
+
+29. **Missed-day credit and cancellation** — as published, a day we miss is not
+    charged at cancellation, and unspent credit from missed days is also refunded.
+    For a customer who chose credit instead of an extra day, that day comes back
+    twice (1 L cow year plan: ₹115 not charged, plus ₹96 of credit refunded). Built
+    as published for now. We suggest counting a credited missed day as used at the
+    price paid, so it comes back once. Which do you want?
+30. **A day found missed after cancelling** — a day that was already on the route
+    when the customer cancelled is charged (₹115). If it later turns out we missed
+    it, we give back ₹115 as credit (what was charged), not the lower price paid.
+    Confirm.
+31. **Renewal already paid, current plan cancelled** — the paid renewal now starts
+    straight away, from the day the cancelled plan stops, so there is no gap in
+    milk. Or should cancelling a plan also cancel and refund its renewal?
+32. **Renewal paid twice by mistake** — the second one runs after the first (two
+    terms back to back), and ops can cancel one for a refund under the normal
+    policy. Or should a second renewal be refunded automatically?
+33. **Goodwill limit per day** — on top of the per-entry limits (item 13), one
+    customer can receive at most that limit in total from staff in 24 hours
+    (support ₹200, ops ₹1,000, owner ₹10,000), counting all staff. Confirm.
+34. **Corrections to past deliveries** — riders can change only today's deliveries
+    in the app; anything from an earlier day is corrected by ops in the admin
+    console. Confirm.
+35. **Delivery photo links in WhatsApp** — the link in the "delivered" message works
+    for 24 hours; the photo stays in the customer's account for 60 days. Confirm.
