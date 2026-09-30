@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maavuli · subscribe flow · three directions</title>
+<style>
+/* Tokens are the site's own (app/globals.css), plus ONE proposed change:
+   control borders use --red-line (4.9:1) instead of --red-faint (1.5:1, fails WCAG 3:1). */
+:root{
+  --red:#8c170e; --red-deep:#650f08; --milk:#fff;
+  --red-dim:rgba(140,23,14,.72);
+  --red-line:rgba(140,23,14,.72);
+  --red-faint:rgba(140,23,14,.22);
+  --tint:rgba(140,23,14,.06);
+  --serif:"Iowan Old Style", Georgia, "Times New Roman", serif;
+  --sans:ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--red);background:#f3eee8;padding:48px clamp(20px,4vw,56px) 96px;line-height:1.5}
+.doc{max-width:1120px;margin:0 auto}
+.doc>h1{font:400 clamp(30px,4vw,44px)/1.05 var(--serif);letter-spacing:-.015em;margin:6px 0 12px}
+.kicker{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--red-dim)}
+.intro{max-width:72ch;color:var(--red-dim);font-size:15px}
+.fixes{margin:28px 0 8px;padding:18px 22px;border:1px solid var(--red-faint);border-radius:14px;background:var(--milk);max-width:960px}
+.fixes h2{font:400 20px var(--serif);margin-bottom:8px}
+.fixes ul{columns:2;column-gap:32px;font-size:13.5px;padding-left:18px}
+.fixes li{margin-bottom:5px;break-inside:avoid}
+.dir{margin-top:64px}
+.dir-head{display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+.dir-head .letter{font:400 44px/1 var(--serif)}
+.dir-head h2{font:400 28px/1.1 var(--serif);letter-spacing:-.01em}
+.dir-head .tag{font-size:11px;letter-spacing:.14em;text-transform:uppercase;border:1px solid var(--red);border-radius:999px;padding:3px 10px}
+.idea{max-width:80ch;margin:8px 0 18px;font-size:15px}
+.row{display:flex;gap:28px;overflow-x:auto;padding:6px 4px 18px}
+.shot{flex:0 0 300px}
+.cap{font-size:13px;color:var(--red-dim);margin-top:12px}
+.cap b{color:var(--red);font-weight:600}
+.pros{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:960px;font-size:13.5px;margin-top:6px}
+.pros h3{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--red-dim);margin-bottom:4px;font-weight:600}
+.pros ul{padding-left:18px}
+
+/* phone */
+.phone{width:300px;height:640px;border-radius:42px;background:#171717;padding:10px;box-shadow:0 34px 60px -34px rgba(0,0,0,.5)}
+.screen{position:relative;height:100%;border-radius:32px;background:var(--milk);overflow:hidden;display:flex;flex-direction:column}
+.sbar{display:flex;justify-content:space-between;padding:10px 22px 4px;font:600 11px var(--sans)}
+.brand{background:var(--red);color:var(--milk);display:flex;justify-content:space-between;align-items:center;padding:8px 16px 10px}
+.brand b{font:400 19px var(--serif);letter-spacing:-.01em}
+.brand span{font-size:9px;letter-spacing:.22em;text-transform:uppercase;opacity:.85}
+.body{padding:12px 16px 0;flex:1;overflow:hidden}
+.eyebrow{font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--red-dim)}
+.t1{font:400 24px/1.06 var(--serif);letter-spacing:-.015em;margin:4px 0 6px}
+.lead{font-size:12px;color:var(--red-dim);line-height:1.45}
+.lbl{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--red-dim);margin:9px 0 5px;font-weight:600}
+.map{height:132px;border:1px solid var(--red-line);border-radius:12px;overflow:hidden;margin:8px 0}
+.okline{display:flex;align-items:center;gap:8px;border:1px solid var(--red);background:var(--tint);border-radius:10px;padding:7px 10px;font-size:11.5px;line-height:1.35}
+.tick{flex:0 0 18px;height:18px;border-radius:50%;background:var(--red);color:var(--milk);display:grid;place-items:center;font-size:10px;font-style:normal}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.opt{border:1px solid var(--red-line);border-radius:10px;padding:7px 9px;font-size:12px;line-height:1.3}
+.opt b{font:400 14px var(--serif);display:block}
+.opt small{display:block;font-size:10px;color:var(--red-dim)}
+.opt.on{background:var(--red);color:var(--milk);border-color:var(--red)}
+.opt.on small{color:rgba(255,255,255,.88)}
+.bottle{border:1px solid var(--red-line);border-radius:12px;padding:6px 6px 8px;text-align:center;font-size:11px;line-height:1.3}
+.bottle img{display:block;height:78px;width:100%;object-fit:contain;margin-bottom:3px}
+.bottle.sm img{height:62px}
+.bottle b{font:400 14px var(--serif);display:block}
+.bottle.on{background:var(--red);color:var(--milk);border-color:var(--red)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--red-line);border-radius:999px;padding:5px 10px;font-size:11px}
+.chip.on{background:var(--red);color:var(--milk);border-color:var(--red)}
+.field{margin-bottom:6px}
+.field span{display:block;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--red-dim);margin-bottom:2px}
+.field div{border:1px solid var(--red-line);border-radius:10px;padding:7px 10px;font-size:12px}
+.more{font-size:11.5px;text-decoration:underline;margin:2px 0 4px;display:inline-block}
+.btn{display:inline-block;background:var(--red);color:var(--milk);border-radius:999px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:11px 16px;white-space:nowrap;text-align:center}
+.btn.wide{display:block;margin-top:10px}
+.btn.line{background:var(--milk);color:var(--red);border:1px solid var(--red);padding:9px 10px}
+.bar{position:absolute;left:0;right:0;bottom:0;background:var(--milk);border-top:1px solid var(--red-faint);padding:10px 14px 20px;display:flex;align-items:center;gap:10px}
+.bar .amt{font:400 20px/1.1 var(--serif)}
+.bar .meta{font-size:10px;color:var(--red-dim)}
+.bar .grow{flex:1;min-width:0}
+.fold{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--red-faint);padding:8px 0;font-size:11.5px}
+.fold em{font-style:normal;margin-left:auto;text-decoration:underline;font-size:11px}
+.locked{display:flex;justify-content:space-between;border:1px dashed var(--red-faint);border-radius:12px;padding:9px 12px;margin-top:7px;font-size:11.5px;color:var(--red-dim)}
+.sect{border:1px solid var(--red);border-radius:14px;padding:9px 11px 10px;margin-top:8px}
+.sect h4{font:400 16px var(--serif);display:flex;gap:8px;align-items:baseline;font-weight:400}
+.sect h4 i{font-style:normal;font-size:10px;letter-spacing:.14em;color:var(--red-dim)}
+.note{font-size:10.5px;color:var(--red-dim);margin-top:6px;line-height:1.4}
+.prog{display:flex;gap:6px;margin:2px 0 8px}
+.prog span{flex:1;border-top:3px solid var(--red-faint);padding-top:5px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--red-dim)}
+.prog .cur,.prog .did{border-color:var(--red);color:var(--red)}
+.trow{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--red-line);border-radius:10px;padding:6px 10px;margin-bottom:5px;font-size:11.5px;line-height:1.3}
+.trow b{font:400 14px var(--serif)}
+.trow small{display:block;font-size:9.5px;color:var(--red-dim)}
+.trow .p{font:400 14px var(--serif);white-space:nowrap}
+.trow.on{background:var(--red);color:var(--milk);border-color:var(--red)}
+.trow.on small{color:rgba(255,255,255,.88)}
+.rcpt{border:1px solid var(--red);border-radius:14px;padding:6px 12px 8px}
+.rl{display:grid;grid-template-columns:54px 1fr auto;gap:6px;padding:5px 0;border-bottom:1px solid var(--red-faint);font-size:11.5px;align-items:baseline;line-height:1.35}
+.rl span{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--red-dim)}
+.rl em{font-style:normal;text-decoration:underline;font-size:10.5px}
+.rtot{display:flex;justify-content:space-between;align-items:baseline;padding-top:6px}
+.rtot span{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--red-dim)}
+.rtot b{font:400 22px var(--serif);font-weight:400}
+.card{background-color:var(--red);background-image:radial-gradient(rgba(255,255,255,.17) 1.1px,transparent 1.3px);background-size:13px 13px;color:var(--milk);border-radius:16px;padding:12px 14px 10px}
+.card h3{font:400 18px var(--serif);margin-bottom:2px}
+.ln{display:flex;justify-content:space-between;align-items:baseline;gap:10px;border-bottom:1px dashed rgba(255,255,255,.5);padding:6px 2px;font-size:12px}
+.ln span{font-size:9px;letter-spacing:.14em;text-transform:uppercase;opacity:.85;white-space:nowrap}
+.ln b{font:400 13.5px var(--serif);text-align:right}
+.ln.blank b{opacity:.55}
+.ln.now{background:rgba(255,255,255,.14);border-radius:6px;padding:6px 6px;border-bottom-color:transparent}
+.ctot{display:flex;justify-content:space-between;align-items:baseline;padding-top:8px}
+.ctot span{font-size:10px;opacity:.85}
+.ctot b{font:400 26px var(--serif)}
+.cmp{border-collapse:collapse;width:100%;max-width:1040px;background:var(--milk);font-size:13.5px;margin-top:12px}
+.cmp th,.cmp td{border-bottom:1px solid var(--red-faint);padding:10px 14px;text-align:left;vertical-align:top}
+.cmp th{font:400 17px var(--serif)}
+.cmp td:first-child{color:var(--red-dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase;width:190px}
+.rec{margin-top:20px;max-width:80ch;font-size:15px}
+</style>
+</head>
+<body>
+<div class="doc">
+<p class="kicker">Maavuli Farm Milk · subscribe flow</p>
+<h1>Three directions for signing up</h1>
+<p class="intro"><b>Chosen: B, three steps (30 Sep 2026) — built at /subscribe.</b> Built from the site's own colours, type and bottle photos, with real prices (buffalo, 1 litre, 3 months = ₹8,122.50; first delivery tomorrow, Thu 1 Oct). Each direction is shown at three moments on a phone.</p>
+
+<div class="fixes">
+<h2>Fixed in all three</h2>
+<ul>
+<li>A refresh or the phone's Back button keeps your place. Today both lose everything, including the 9-field address.</li>
+<li>Milk, amount and length are chosen together, and every length shows its price per litre and its pause days.</li>
+<li>The total, the first delivery date and the 5:30–8:00 AM window show before sign-in. The WhatsApp code is the last small step before Pay.</li>
+<li>Every map result says what to do next. "Not in our area yet" offers WhatsApp or a call instead of an email link.</li>
+<li>Plain words: no map coordinates on the review, no "worked out on our server".</li>
+<li>A clear selected state (filled red) and borders you can see. Today's 1.5:1 borders fail accessibility.</li>
+<li>The brand inside the flow: the red, the serif and the product bottles. Today the flow is plain white.</li>
+<li>Kept exactly: the zone check before anything else, prices from the server, no double charges, and the "do not pay again" screen.</li>
+</ul>
+</div>
+
+<!-- ============================ A ============================ -->
+<section class="dir">
+<div class="dir-head"><span class="letter">A</span><h2>One page</h2><span class="tag">fewest screens</span></div>
+<p class="idea">Everything on one page, in four parts. Each part opens when the one before it is done, then folds into a one-line summary. The price sits in a bar at the bottom from the moment a plan is chosen. To change anything, reopen its line; nothing else is lost.</p>
+<div class="row">
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:12</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<p class="eyebrow">Start your milk</p>
+<h3 class="t1">Milk at your door, every morning.</h3>
+<p class="lead">Four short parts, all on this page. Your price stays at the bottom.</p>
+<div class="sect">
+<h4><i>1</i> Where</h4>
+<div class="map"><svg viewBox="0 0 280 132" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Map with the delivery pin on Sai Residency"><rect width="280" height="132" fill="#f5efe7"/><g fill="#e8ddcf"><rect x="8" y="8" width="70" height="42" rx="3"/><rect x="92" y="6" width="62" height="46" rx="3"/><rect x="168" y="10" width="104" height="40" rx="3"/><rect x="8" y="72" width="62" height="54" rx="3"/><rect x="92" y="74" width="84" height="52" rx="3"/><rect x="190" y="70" width="82" height="58" rx="3"/></g><path d="M0 61H280M84 0V132M182 0V132" stroke="#fff" stroke-width="9"/><path d="M0 61H280" stroke="#eed9a6" stroke-width="3"/><text x="100" y="118" font-size="8" fill="#8c170e" opacity=".75" font-family="system-ui">Sai Residency</text><g transform="translate(134 100)"><path d="M0-26C-9-26-15-19-15-11C-15 0 0 12 0 12S15 0 15-11C15-19 9-26 0-26Z" fill="#8c170e"/><circle cy="-11" r="5.5" fill="#fff"/></g></svg></div>
+<div class="okline"><i class="tick">✓</i><span><b>We deliver here</b> · Safilguda · 5:30–8:00 AM</span></div>
+</div>
+<div class="locked"><span>2 · Your plan</span><span>milk · amount · length</span></div>
+<div class="locked"><span>3 · Your door</span><span>name · flat</span></div>
+<div class="locked"><span>4 · Pay</span><span>code · pay once</span></div>
+</div>
+<div class="bar"><div class="grow"><div class="meta">Next</div><div class="amt" style="font-size:16px">Choose your plan</div></div><span class="btn">Continue</span></div>
+</div></div>
+<p class="cap"><b>1 · Where.</b> The zone check still comes first. The later parts are visible but closed, so the customer sees how short the whole thing is.</p></div>
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:13</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="fold"><i class="tick">✓</i><span>Where: Sai Residency, Safilguda</span><em>Change</em></div>
+<div class="sect">
+<h4><i>2</i> Your plan</h4>
+<p class="lbl">Milk</p>
+<div class="two">
+<div class="bottle sm on"><img src="../../public/hero/bottle-buffalo.png" alt=""><b>Buffalo</b>₹95 a litre</div>
+<div class="bottle sm"><img src="../../public/hero/bottle-cow.png" alt=""><b>Cow</b>₹115 a litre</div>
+</div>
+<p class="lbl">Each morning</p>
+<div class="two"><div class="opt">½ litre</div><div class="opt on">1 litre</div></div>
+<p class="lbl">For</p>
+<div class="two">
+<div class="opt"><b>1 month</b><small>₹2,850 · 3 pause days</small></div>
+<div class="opt on"><b>3 months</b><small>₹8,122.50 · 20 pause days</small></div>
+<div class="opt"><b>6 months</b><small>₹15,390 · 25 pause days</small></div>
+<div class="opt"><b>1 year</b><small>₹29,070 · 30 pause days</small></div>
+</div>
+<p class="lbl">First delivery</p>
+<div class="chips"><span class="chip on">Thu 1 Oct · earliest</span><span class="chip">Another date</span></div>
+</div>
+</div>
+<div class="bar"><div class="grow"><div class="amt">₹8,122.50</div><div class="meta">90 days · ₹90.25 a litre · save 5%</div></div><span class="btn">Continue</span></div>
+</div></div>
+<p class="cap"><b>2 · Your plan.</b> Milk, amount and length on one card instead of three screens, with the total live in the bar. "Where" folds to one line you can reopen.</p></div>
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:14</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="fold"><i class="tick">✓</i><span>Where: Safilguda</span><em>Change</em></div>
+<div class="fold"><i class="tick">✓</i><span>Buffalo · 1 litre · 3 months · from Thu 1 Oct</span><em>Change</em></div>
+<div class="sect">
+<h4><i>3</i> Your door</h4>
+<div class="field"><span>Name for the delivery</span><div>Anitha Rao</div></div>
+<div class="two"><div class="field"><span>Flat / house</span><div>203</div></div><div class="field"><span>Floor</span><div>2</div></div></div>
+<div class="field"><span>Society or street</span><div>Sai Residency, Balram Nagar</div></div>
+<span class="more">+ Landmark or a note for the rider</span>
+</div>
+<div class="sect">
+<h4><i>4</i> Pay</h4>
+<div class="field"><span>Your mobile</span><div>+91 98000 00101</div></div>
+<p class="note">We send a 6-digit code on WhatsApp. No password.</p>
+</div>
+</div>
+<div class="bar"><div class="grow"><div class="amt">₹8,122.50</div><div class="meta">One payment · no auto-renewal</div></div><span class="btn">Send code</span></div>
+</div></div>
+<p class="cap"><b>3 and 4 · Door, then pay.</b> Four door fields, with more on request, then the mobile number. The bar button changes from Continue to Send code to Pay ₹8,122.50.</p></div>
+
+</div>
+<div class="pros"><div><h3>Good</h3><ul><li>The fewest screens. Anything can be changed in place, and the price is always in view.</li><li>Also the best layout on a laptop.</li></ul></div><div><h3>Watch</h3><ul><li>On a phone, dragging the map fights with scrolling the page.</li><li>A long page for a first-time buyer.</li></ul></div></div>
+</section>
+
+<!-- ============================ B ============================ -->
+<section class="dir">
+<div class="dir-head"><span class="letter">B</span><h2>Three steps</h2><span class="tag">recommended</span></div>
+<p class="idea">Where → Your plan → Pay. The map and the door details share one screen. Milk, amount, length and start date share the next, with every price in view. Pay is a single receipt with the real dates on it, and the WhatsApp code comes last. "Edit" jumps to that step and brings you straight back to Pay.</p>
+<div class="row">
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:12</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="prog"><span class="cur">1 · Where</span><span>2 · Plan</span><span>3 · Pay</span></div>
+<h3 class="t1">Where should we deliver?</h3>
+<div class="map"><svg viewBox="0 0 280 132" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Map with the delivery pin on Sai Residency"><rect width="280" height="132" fill="#f5efe7"/><g fill="#e8ddcf"><rect x="8" y="8" width="70" height="42" rx="3"/><rect x="92" y="6" width="62" height="46" rx="3"/><rect x="168" y="10" width="104" height="40" rx="3"/><rect x="8" y="72" width="62" height="54" rx="3"/><rect x="92" y="74" width="84" height="52" rx="3"/><rect x="190" y="70" width="82" height="58" rx="3"/></g><path d="M0 61H280M84 0V132M182 0V132" stroke="#fff" stroke-width="9"/><path d="M0 61H280" stroke="#eed9a6" stroke-width="3"/><text x="100" y="118" font-size="8" fill="#8c170e" opacity=".75" font-family="system-ui">Sai Residency</text><g transform="translate(134 100)"><path d="M0-26C-9-26-15-19-15-11C-15 0 0 12 0 12S15 0 15-11C15-19 9-26 0-26Z" fill="#8c170e"/><circle cy="-11" r="5.5" fill="#fff"/></g></svg></div>
+<div class="okline"><i class="tick">✓</i><span><b>We deliver here</b> · Safilguda. Milk arrives 5:30–8:00 AM.</span></div>
+<div class="field" style="margin-top:8px"><span>Name for the delivery</span><div>Anitha Rao</div></div>
+<div class="two"><div class="field"><span>Flat / house</span><div>203</div></div><div class="field"><span>Floor</span><div>2</div></div></div>
+<div class="field"><span>Society or street</span><div>Sai Residency, Balram Nagar</div></div>
+<span class="more">+ Landmark or a note for the rider</span>
+<span class="btn wide">Continue to your plan</span>
+</div>
+</div></div>
+<p class="cap"><b>1 · Where.</b> The door fields appear only once the pin is inside a delivery area. If it isn't, the screen offers "Message us on WhatsApp" or "Call", not an email link.</p></div>
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:13</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="prog"><span class="did">✓ Where</span><span class="cur">2 · Plan</span><span>3 · Pay</span></div>
+<h3 class="t1">Your milk</h3>
+<div class="two">
+<div class="bottle on"><img src="../../public/hero/bottle-buffalo.png" alt=""><b>Buffalo</b>₹95 a litre</div>
+<div class="bottle"><img src="../../public/hero/bottle-cow.png" alt=""><b>Cow</b>₹115 a litre</div>
+</div>
+<p class="lbl">Each morning</p>
+<div class="two"><div class="opt">½ litre</div><div class="opt on">1 litre</div></div>
+<p class="lbl">For how long</p>
+<div class="trow"><div><b>1 month</b><small>₹95 a litre · 3 pause days</small></div><span class="p">₹2,850</span></div>
+<div class="trow on"><div><b>3 months</b><small>₹90.25 a litre · 20 pause days · save 5%</small></div><span class="p">₹8,122.50</span></div>
+<div class="trow"><div><b>6 months</b><small>₹85.50 a litre · 25 pause days · save 10%</small></div><span class="p">₹15,390</span></div>
+<div class="trow"><div><b>1 year</b> <small style="display:inline">(360 days)</small><small>₹80.75 a litre · 30 pause days · save 15%</small></div><span class="p">₹29,070</span></div>
+</div>
+<div class="bar"><div class="grow"><div class="amt">₹8,122.50</div><div class="meta">First delivery Thu 1 Oct · <u>change</u></div></div><span class="btn">Continue</span></div>
+</div></div>
+<p class="cap"><b>2 · Your plan.</b> Three of today's screens become one. The per-litre drop (₹95 down to ₹80.75) and the pause days explain why a longer plan is worth it.</p></div>
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:14</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="prog"><span class="did">✓ Where</span><span class="did">✓ Plan</span><span class="cur">3 · Pay</span></div>
+<h3 class="t1">Check and pay</h3>
+<div class="rcpt">
+<div class="rl"><span>Milk</span><div>Buffalo · 1 litre each morning</div><em>Edit</em></div>
+<div class="rl"><span>For</span><div>3 months (90 days) · 20 pause days</div><em></em></div>
+<div class="rl"><span>When</span><div>Thu 1 Oct → Tue 29 Dec · 5:30–8:00 AM</div><em>Edit</em></div>
+<div class="rl"><span>To</span><div>Anitha Rao, 203, Sai Residency, Safilguda</div><em>Edit</em></div>
+<div class="rtot"><span>Total · you save ₹427.50</span><b>₹8,122.50</b></div>
+</div>
+<p class="lbl">Sign in to pay</p>
+<div class="two" style="grid-template-columns:1.5fr 1fr;align-items:center"><div class="field" style="margin:0"><div>98000 00101</div></div><span class="btn line">Get code</span></div>
+<p class="note">The code comes on WhatsApp. ☐ Also send delivery updates there (no marketing).</p>
+<span class="btn wide">Pay ₹8,122.50</span>
+<p class="note">One payment. No auto-renewal. Pause a morning until 4 PM the day before.</p>
+</div>
+</div></div>
+<p class="cap"><b>3 · Pay.</b> Everything on one receipt, with the real dates, before any sign-in. The code is the last step before Pay, and a Maavuli credit balance shows up here once you're signed in.</p></div>
+
+</div>
+<div class="pros"><div><h3>Good</h3><ul><li>Fixes every high-severity problem from the audit.</li><li>The least new code: today's map, sign-in, pricing and payment pieces are reused. Fastest to build and test before launch.</li></ul></div><div><h3>Watch</h3><ul><li>The least distinctive of the three.</li><li>Screen 1 is the busiest; the landmark and door note stay folded away until asked for.</li></ul></div></div>
+</section>
+
+<!-- ============================ C ============================ -->
+<section class="dir">
+<div class="dir-head"><span class="letter">C</span><h2>Your milk card</h2><span class="tag">most brand</span></div>
+<p class="idea">One short question at a time, answered with one big tap. Each answer is written onto a red "milk card" at the top of the screen, like the card households kept for the milkman, so the whole plan is always in view. Tap any line to change it. The finished card is the receipt you pay from, and the same card could later become the account page, ticked each morning the milk comes.</p>
+<div class="row">
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:13</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="card">
+<h3>Your milk card</h3>
+<div class="ln"><span>To</span><b>203, Sai Residency ✓</b></div>
+<div class="ln now"><span>Milk</span><b>?</b></div>
+<div class="ln blank"><span>Each morning</span><b>—</b></div>
+<div class="ln blank"><span>For</span><b>—</b></div>
+<div class="ln blank"><span>From</span><b>—</b></div>
+</div>
+<p class="eyebrow" style="margin-top:12px">Question 2 of 6</p>
+<h3 class="t1">Which milk?</h3>
+<div class="two">
+<div class="bottle"><img src="../../public/hero/bottle-buffalo.png" alt=""><b>Buffalo milk</b>₹95 a litre</div>
+<div class="bottle"><img src="../../public/hero/bottle-cow.png" alt=""><b>Cow milk</b>₹115 a litre</div>
+</div>
+<p class="note">Tap one. You can change any line on the card later.</p>
+</div>
+</div></div>
+<p class="cap"><b>A question at a time.</b> The card fills line by line, so a customer new to buying online always sees what they have chosen so far and what is left.</p></div>
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:13</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="card">
+<h3>Your milk card</h3>
+<div class="ln"><span>To</span><b>203, Sai Residency ✓</b></div>
+<div class="ln"><span>Milk</span><b>Buffalo</b></div>
+<div class="ln"><span>Each morning</span><b>1 litre</b></div>
+<div class="ln now"><span>For</span><b>?</b></div>
+<div class="ln blank"><span>From</span><b>—</b></div>
+</div>
+<p class="eyebrow" style="margin-top:12px">Question 4 of 6</p>
+<h3 class="t1">For how long?</h3>
+<div class="trow"><div><b>1 month</b><small>3 pause days</small></div><span class="p">₹2,850</span></div>
+<div class="trow"><div><b>3 months</b><small>20 pause days · save 5%</small></div><span class="p">₹8,122.50</span></div>
+<div class="trow"><div><b>6 months</b><small>25 pause days · save 10%</small></div><span class="p">₹15,390</span></div>
+<div class="trow"><div><b>1 year</b><small>30 pause days · save 15%</small></div><span class="p">₹29,070</span></div>
+<p class="note">Longer is cheaper: ₹95 a litre for a month, ₹80.75 for a year. A paused morning is added to the end.</p>
+</div>
+</div></div>
+<p class="cap"><b>Big, single answers.</b> One decision per screen, as the client asked for originally. A returning customer can skip straight to the finished card.</p></div>
+
+<div class="shot"><div class="phone"><div class="screen">
+<div class="sbar"><span>7:14</span><span>4G ▮▮▮</span></div>
+<div class="brand"><b>Maavuli</b><span>Farm milk</span></div>
+<div class="body">
+<div class="card">
+<h3>Your milk card</h3>
+<div class="ln"><span>To</span><b>Anitha Rao · 203, Sai Residency</b></div>
+<div class="ln"><span>Milk</span><b>Buffalo · 1 litre a morning</b></div>
+<div class="ln"><span>For</span><b>3 months · 20 pause days</b></div>
+<div class="ln"><span>From</span><b>Thu 1 Oct · 5:30–8:00 AM</b></div>
+<div class="ctot"><span>₹90.25 a litre</span><b>₹8,122.50</b></div>
+</div>
+<p class="note" style="margin-top:8px">Tap any line to change it.</p>
+<p class="lbl">Sign with your mobile</p>
+<div class="two" style="grid-template-columns:1.5fr 1fr;align-items:center"><div class="field" style="margin:0"><div>98000 00101</div></div><span class="btn line">Get code</span></div>
+<p class="note">The code comes on WhatsApp.</p>
+<span class="btn wide">Pay ₹8,122.50</span>
+<p class="note">One payment, no auto-renewal. After you pay, this card sits in your account, ticked each morning your milk comes.</p>
+</div>
+</div></div>
+<p class="cap"><b>The card is the receipt.</b> The customer pays from the finished card. The ticked account card would be new work after launch.</p></div>
+
+</div>
+<div class="pros"><div><h3>Good</h3><ul><li>The clearest for older or first-time customers, and the most "Maavuli" of the three.</li><li>One idea (the card) could carry through to the account page and the WhatsApp updates.</li></ul></div><div><h3>Watch</h3><ul><li>The most questions (6) and the biggest build.</li><li>Can feel slow to someone who already knows what they want.</li></ul></div></div>
+</section>
+
+<!-- ======================= comparison ======================= -->
+<section class="dir">
+<div class="dir-head"><h2>Side by side</h2></div>
+<table class="cmp">
+<tr><th></th><th>A · One page</th><th>B · Three steps</th><th>C · Milk card</th></tr>
+<tr><td>Screens before paying</td><td>1, in four parts</td><td>3</td><td>6 short questions</td></tr>
+<tr><td>Changing a choice</td><td>Reopen its line</td><td>Edit jumps there, then back to Pay</td><td>Tap the line on the card</td></tr>
+<tr><td>Price in view</td><td>Bottom bar, from part 2</td><td>On every length, and the total on Pay</td><td>On every length, and the total on the card</td></tr>
+<tr><td>Best for</td><td>Quick deciders; also best on a laptop</td><td>Everyone; what online shoppers expect</td><td>First-time online buyers; strongest brand</td></tr>
+<tr><td>Build</td><td>Medium: one long page</td><td>Smallest: reuses today's pieces</td><td>Largest: new card and question flow</td></tr>
+<tr><td>Main risk</td><td>Map dragging fights page scrolling on phones</td><td>Least distinctive</td><td>Slower for repeat customers</td></tr>
+</table>
+<p class="rec"><b>Recommended: B.</b> It fixes every high-severity problem the audit found: lost progress, seven screens, sign-in before the price, and map dead ends. It keeps everything that is right today, and it reuses the existing map, sign-in, pricing and payment code, so it can be built and tested well before launch. If you want more of the brand, C's milk card can become B's Pay screen.</p>
+</section>
+</div>
+</body>
+</html>

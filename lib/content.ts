@@ -31,6 +31,11 @@ export const CONTACT = {
   email: 'info@maavulifarmmilk.com',
   phones: ['+91 70752 02177'],
   /**
+   * The farm's WhatsApp number for customers to message, in any format. NOT
+   * CONFIRMED (docs/CLIENT-QUESTIONS.md) — while null, no WhatsApp button is shown.
+   */
+  whatsapp: null as string | null,
+  /**
    * FSSAI State Licence (Form C, Telangana), from the licence certificate. The copy
    * supplied shows validity to 06-08-2022 only — renewal to be confirmed by the
    * client (docs/CLIENT-QUESTIONS.md). Legally required on a dairy site.

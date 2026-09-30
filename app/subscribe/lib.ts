@@ -3,6 +3,53 @@
  */
 import type { ApiFail, ApiResult } from './types';
 
+/* ------------------------------------------------------------------ steps -- */
+
+/** The three screens: where (pin + door), plan (milk, amount, length, start), pay. */
+export type FlowStep = 'where' | 'plan' | 'pay';
+export const FLOW_STEPS: readonly FlowStep[] = ['where', 'plan', 'pay'];
+
+export function isFlowStep(v: unknown): v is FlowStep {
+  return v === 'where' || v === 'plan' || v === 'pay';
+}
+
+/** Which screen an API failure belongs to, so the error shows next to what caused it. */
+export function stepForFail(f: ApiFail): FlowStep {
+  // Machine codes first (lib/errors ValidationError.code): a copy edit on the server
+  // can never misroute these.
+  switch (f.code) {
+    case 'outside_zone':
+    case 'details_incomplete':
+      return 'where';
+    case 'date_locked':
+    case 'start_invalid':
+    case 'plan_invalid':
+      return 'plan';
+    case 'not_renewable':
+      return 'pay';
+  }
+  // Fallback for errors without a code.
+  const text = `${f.error} ${f.issues.join(' ')}`.toLowerCase();
+  if (f.status === 400) {
+    if (/delivery area|delivery zone|drop a pin|pin on the map/.test(text)) return 'where';
+    if (/delivery details|name for the delivery|delivery address|addressparts|house|pincode/.test(text)) return 'where';
+    if (/first delivery|startdate/.test(text)) return 'plan';
+    if (/kind|quantityid|tenureid|plan selection|milk/.test(text)) return 'plan';
+  }
+  return 'pay';
+}
+
+export function isOutsideZone(f: ApiFail): boolean {
+  if (f.code === 'outside_zone') return true;
+  return f.status === 400 && /delivery area|delivery zone/i.test(`${f.error} ${f.issues.join(' ')}`);
+}
+
+/** "+91 98000 00101" for a 10-digit Indian mobile; anything else unchanged. */
+export function formatMobile(m: string): string {
+  const d = m.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
+  return /^\d{10}$/.test(d) ? `+91 ${d.slice(0, 5)} ${d.slice(5)}` : m;
+}
+
 /** fetch JSON and normalise every failure (network included) to ApiFail. */
 export async function callApi<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   let res: Response;
@@ -124,7 +171,7 @@ export function addressProblems(a: AddressForm): Partial<Record<keyof AddressFor
   const p: Partial<Record<keyof AddressForm | 'address', string>> = {};
   if (a.name.trim().length < 2) p.name = 'Who should the rider ask for?';
   if (!a.house.trim()) p.house = 'The flat or house number is needed to find your door.';
-  if (!a.society.trim() && !a.area.trim()) p.society = 'Add the society / street, or the area.';
+  if (!a.society.trim() && !a.area.trim()) p.society = 'Add the society, building or street (or the area).';
   if (a.pincode.trim() && !/^\d{6}$/.test(a.pincode.trim())) p.pincode = 'A pincode is 6 digits (or leave it empty).';
   if (!p.house && !p.society && composeAddress(a).length < 10) p.address = 'Please add a little more of the address.';
   return p;

@@ -1,64 +1,70 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { PRODUCTS, QUANTITIES, TENURES, quote, formatINR, type MilkKind } from '@/lib/pricing';
+import { PRODUCTS, QUANTITIES, TENURES, formatINR, pauseDaysFor, quote, type MilkKind } from '@/lib/pricing';
 import { CONTACT } from '@/lib/content';
 import LocationPicker, { type PickedLocation } from '@/components/LocationPicker';
+import { ACCURACY_OK_M } from '@/components/LocationPickerShared';
 import RazorpayCheckout, { type CheckoutOrder, type RazorpayResponse } from '@/components/RazorpayCheckout';
 import OtpForm from './OtpForm';
+import { clearDraft, readDraft, writeDraft } from './draft';
 import {
   EMPTY_ADDRESS,
+  FLOW_STEPS,
   addDaysYMD,
   addressProblems,
   callApi,
   composeAddress,
   dateLabel,
+  formatMobile,
+  isFlowStep,
+  isOutsideZone,
   istToday,
   newKey,
   postJson,
+  stepForFail,
   type AddressForm,
+  type FlowStep,
 } from './lib';
-import type { ApiFail, PreviewJSON, RenewalProp } from './types';
+import type { ApiFail, DayRuleLabels, PreviewJSON, RenewalProp } from './types';
 
 /**
- * The subscription funnel, pin first.
+ * The subscription funnel, in three screens.
  *
- *   1 where   — the exact doorstep on a map, checked against the delivery zones
- *   2 address — name + the parts a rider needs at the door
- *   3–5 plan  — milk → daily amount → term (running price in the rail)
- *   6 start   — earliest open date from the server; later up to 30 days
- *   7 pay     — sign in (OTP) → final numbers + credit → checkout → Razorpay → verify
+ *   1 where — the exact doorstep on a map, checked against the delivery zones; the
+ *             door details appear only once the pin is somewhere we deliver
+ *   2 plan  — milk, daily amount and length on ONE screen with every price in view,
+ *             and the first delivery date from the server
+ *   3 pay   — one receipt (server-priced, real dates) BEFORE sign-in; then the
+ *             one-time code; then Razorpay → verify
  *
- * Every rupee figure comes from lib/pricing.quote() (the rail) or the server's
- * /api/checkout/preview (the final numbers). The client never sends an amount.
+ * Progress survives a refresh (draft.ts — this browser tab only), and the phone's
+ * Back button moves between the screens (one history entry per screen) instead of
+ * leaving the page. "Edit" on the receipt jumps to a screen, and its Continue comes
+ * straight back to pay.
+ *
+ * Every rupee figure comes from lib/pricing.quote() or the server's
+ * /api/checkout/preview. The client never sends an amount.
  *
  * Honest states: serviceability keeps yes / no / not-published / down /
  * unconfigured distinct; every fetch has loading → error → data; an API error is
- * shown next to the step that caused it (a pin outside every zone sends the
- * customer back to step 1; a locked date back to the start-date step).
+ * shown on the screen that caused it (a pin outside every zone goes back to the map,
+ * a date that closed goes back to the plan).
  */
 
-type Step = 'where' | 'address' | 'milk' | 'qty' | 'term' | 'start' | 'review';
-const STEPS: readonly Step[] = ['where', 'address', 'milk', 'qty', 'term', 'start', 'review'];
-const STEP_LABELS: Record<Step, string> = {
-  where: 'Location',
-  address: 'Address',
-  milk: 'Milk',
-  qty: 'Daily amount',
-  term: 'Duration',
-  start: 'Start date',
-  review: 'Pay',
-};
+type Step = FlowStep;
+const STEP_LABELS: Record<Step, string> = { where: 'Where', plan: 'Your plan', pay: 'Pay' };
 
 type Area =
   | { kind: 'idle' }
   | { kind: 'checking' }
   | { kind: 'yes'; zone: string | null }
   | { kind: 'no' }
-  | { kind: 'unknown'; message: string }
-  | { kind: 'down'; message: string }
+  | { kind: 'unknown' }
+  | { kind: 'down' }
   | { kind: 'unconfigured'; missing: string[] };
 
 type StepErrors = Partial<Record<Step, ApiFail>>;
@@ -68,9 +74,21 @@ interface StartChoice {
   date: string;
 }
 
+interface PlanBody {
+  purpose: 'new' | 'renewal';
+  kind: MilkKind;
+  quantityId: string;
+  tenureId: string;
+  renewsSubscriptionId?: string;
+  startDate?: string;
+}
+
+type Ready = Extract<RenewalProp, { kind: 'ready' }>;
+type PayKey = { sig: string; key: string } | null;
+
 /* ------------------------------------------------------------------ helpers -- */
 
-function detailsToForm(r: Extract<RenewalProp, { kind: 'ready' }>): AddressForm {
+function detailsToForm(r: Ready): AddressForm {
   const d = r.details;
   const ap = d.addressParts;
   return {
@@ -87,47 +105,34 @@ function detailsToForm(r: Extract<RenewalProp, { kind: 'ready' }>): AddressForm 
   };
 }
 
-/** Which step an API failure belongs to. */
-function stepForFail(f: ApiFail): Step {
-  if (f.code === 'date_locked') return 'start';
-  // Machine codes from the API first (lib/errors ValidationError.code) — copy edits on
-  // the server can never misroute these.
-  switch (f.code) {
-    case 'outside_zone':
-      return 'where';
-    case 'details_incomplete':
-      return 'address';
-    case 'start_invalid':
-      return 'start';
-    case 'plan_invalid':
-      return 'milk';
-    case 'not_renewable':
-      return 'review';
-  }
-  // Fallback for errors without a code.
-  const text = `${f.error} ${f.issues.join(' ')}`.toLowerCase();
-  if (f.status === 400) {
-    if (/delivery area|delivery zone|drop a pin|pin on the map/.test(text)) return 'where';
-    if (/delivery details|name for the delivery|delivery address|addressparts|house|pincode/.test(text)) return 'address';
-    if (/first delivery|startdate/.test(text)) return 'start';
-    if (/kind|quantityid|tenureid|plan selection|milk/.test(text)) return 'milk';
-  }
-  return 'review';
+/** A renewal lands on the receipt when its plan still matches; otherwise on what is missing. */
+function initialStepFor(r: Ready | null): Step {
+  if (!r || !r.details.location) return 'where';
+  return r.quantityId && r.tenureId ? 'pay' : 'plan';
 }
 
-function isOutsideZone(f: ApiFail): boolean {
-  if (f.code === 'outside_zone') return true;
-  return f.status === 400 && /delivery area|delivery zone/i.test(`${f.error} ${f.issues.join(' ')}`);
+const milkName = (k: MilkKind) => PRODUCTS.find((p) => p.kind === k)?.label ?? k;
+/** "½ litre" / "1 litre" from "½ Litre / day". */
+const qtyName = (id: string) => (QUANTITIES.find((x) => x.id === id)?.label ?? id).replace(/\s*\/\s*day$/i, '').replace('Litre', 'litre');
+const termName = (id: string) => TENURES.find((t) => t.id === id)?.label ?? id;
+
+/** "a, b and c". */
+function listJoin(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
+
+const reducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 
 /* =================================================================== flow ==== */
 
-export default function SubscribeFlow({ renewal }: { renewal: RenewalProp }) {
+export default function SubscribeFlow({ renewal, rules }: { renewal: RenewalProp; rules: DayRuleLabels }) {
   const router = useRouter();
   const ready = renewal.kind === 'ready' ? renewal : null;
 
-  const [step, setStep] = useState<Step>(ready ? 'start' : 'where');
-  const [pin, setPin] = useState<PickedLocation | null>(ready?.details.location ? { ...ready.details.location } : null);
+  const [step, setStep] = useState<Step>(() => initialStepFor(ready));
+  const [pin, setPinState] = useState<PickedLocation | null>(ready?.details.location ? { ...ready.details.location } : null);
   const [area, setArea] = useState<Area>({ kind: 'idle' });
   const [addr, setAddr] = useState<AddressForm>(ready ? detailsToForm(ready) : EMPTY_ADDRESS);
   const [milk, setMilk] = useState<MilkKind | null>(ready?.milk ?? null);
@@ -135,14 +140,107 @@ export default function SubscribeFlow({ renewal }: { renewal: RenewalProp }) {
   const [term, setTerm] = useState<string | null>(ready?.tenureId ?? null);
   const [start, setStart] = useState<StartChoice>({ mode: 'earliest', date: '' });
   const [errors, setErrors] = useState<StepErrors>({});
+  const [reachedPay, setReachedPay] = useState(() => initialStepFor(ready) === 'pay');
+  const [payKey, setPayKey] = useState<PayKey>(null);
+  /** paid (or payment received): stop saving, hide the stepper */
+  const [finished, setFinished] = useState(false);
+  /** false until this tab's saved draft has been read */
+  const [restored, setRestored] = useState(false);
 
-  // A renewal whose plan ids could not be matched starts at the first missing plan step.
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  const finishedRef = useRef(finished);
+  finishedRef.current = finished;
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  /** which screens the current inputs allow (set each render, read by the Back/Forward handler) */
+  const reachRef = useRef<(s: Step) => boolean>(() => true);
+  const focusHeading = useRef(false);
+
+  /* ---- resume a half-finished sign-up in this tab (new plans only: a renewal is
+     rebuilt from the server every time) ---- */
   useEffect(() => {
-    if (!ready) return;
-    if (!ready.quantityId) setStep('qty');
-    else if (!ready.tenureId) setStep('term');
+    if (!ready) {
+      const d = readDraft();
+      if (d) {
+        setPinState(d.pin);
+        setAddr(d.addr);
+        setMilk(d.milk);
+        setQty(d.qty);
+        setTerm(d.term);
+        setStart(d.start);
+        setReachedPay(d.reachedPay);
+        setPayKey(d.payKey);
+        // Back after a reload lands on an older entry of this page: that entry's
+        // screen wins over the one saved last.
+        const hs = (window.history.state as { sbStep?: unknown } | null)?.sbStep;
+        let s: Step = isFlowStep(hs) ? hs : d.step;
+        const pinUsable = !!d.pin && !(d.pin.accuracyM !== undefined && d.pin.accuracyM > ACCURACY_OK_M);
+        if (!pinUsable || (s !== 'where' && Object.keys(addressProblems(d.addr)).length > 0)) s = 'where';
+        else if (s === 'pay' && !(d.milk && d.qty && d.term)) s = 'plan';
+        setStep(s);
+      }
+    }
+    setRestored(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ---- the phone's Back / Forward move between the three screens ---- */
+  useEffect(() => {
+    if (!restored) return;
+    try {
+      window.history.replaceState({ ...(window.history.state ?? {}), sbStep: stepRef.current }, '');
+    } catch {
+      /* history unavailable: Back simply leaves the page, as before */
+    }
+    const onPop = (e: PopStateEvent) => {
+      // Paid: the older screens are over. Back takes the customer to their deliveries.
+      if (finishedRef.current) {
+        routerRef.current.replace('/account');
+        return;
+      }
+      const s = (e.state as { sbStep?: unknown } | null)?.sbStep;
+      if (!isFlowStep(s)) return;
+      // Forward can land on a screen the inputs no longer allow (a moved pin, a cleared
+      // choice): show the furthest screen that is still open instead.
+      const target: Step = reachRef.current(s) ? s : reachRef.current('plan') ? 'plan' : 'where';
+      if (target !== s) {
+        try {
+          window.history.replaceState({ ...(window.history.state ?? {}), sbStep: target }, '');
+        } catch {
+          /* the screen still changes */
+        }
+      }
+      focusHeading.current = true;
+      if (target === 'pay') setReachedPay(true);
+      setStep(target);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [restored]);
+
+  /* ---- save progress (this tab only; cleared once paid) ---- */
+  useEffect(() => {
+    if (!restored || ready || finished) return;
+    writeDraft({
+      step,
+      pin: pin
+        ? {
+            lat: pin.lat,
+            lng: pin.lng,
+            ...(pin.accuracyM !== undefined ? { accuracyM: pin.accuracyM } : {}),
+            ...(pin.label ? { label: pin.label } : {}),
+          }
+        : null,
+      addr,
+      milk,
+      qty,
+      term,
+      start,
+      reachedPay,
+      payKey,
+    });
+  }, [restored, ready, finished, step, pin, addr, milk, qty, term, start, reachedPay, payKey]);
 
   const q = useMemo(() => (milk && qty && term ? quote(milk, qty, term) : null), [milk, qty, term]);
 
@@ -162,35 +260,36 @@ export default function SubscribeFlow({ renewal }: { renewal: RenewalProp }) {
       if (seq !== checkSeq.current) return; // a newer pin superseded this check
       if (!r.ok) {
         if (r.fail.status === 503 && r.fail.missing?.length) setArea({ kind: 'unconfigured', missing: r.fail.missing });
-        else setArea({ kind: 'down', message: r.fail.error });
+        else setArea({ kind: 'down' });
         return;
       }
       if (r.data.serviceable) setArea({ kind: 'yes', zone: r.data.zone ?? null });
-      else if (r.data.unknown) setArea({ kind: 'unknown', message: r.data.message ?? 'Our delivery area is not published yet.' });
+      else if (r.data.unknown) setArea({ kind: 'unknown' });
       else setArea({ kind: 'no' });
     })();
   }, [pin]);
 
-  const recheck = () => setPin((p) => (p ? { ...p } : p));
+  const recheck = () => setPinState((p) => (p ? { ...p } : p));
 
-  /* ---- errors ---- */
-  const clearError = (s: Step) => setErrors((e) => (e[s] ? { ...e, [s]: undefined } : e));
-  const routeFail = useCallback((f: ApiFail) => {
-    const s = stepForFail(f);
-    setErrors((e) => ({ ...e, [s]: f }));
-    if (s === 'start' && f.code === 'date_locked') setStart({ mode: 'earliest', date: '' });
-    if (isOutsideZone(f)) setArea({ kind: 'no' });
+  /* ---- navigation ---- */
+  const go = useCallback((s: Step, opts: { replace?: boolean } = {}) => {
+    focusHeading.current = true;
+    if (s === 'pay') setReachedPay(true);
+    if (s !== stepRef.current) {
+      try {
+        const state = { ...(window.history.state ?? {}), sbStep: s };
+        if (opts.replace) window.history.replaceState(state, '');
+        else window.history.pushState(state, '');
+      } catch {
+        /* the screen still changes; only Back will not return to it */
+      }
+    }
     setStep(s);
+    window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
   }, []);
 
-  // After a step change, move focus to the new step's heading so keyboard and
-  // screen-reader users are not left on <body> (the button they pressed unmounted).
-  const focusHeading = useRef(false);
-  const go = (s: Step) => {
-    focusHeading.current = true;
-    setStep(s);
-    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  // After a screen change, move focus to its heading so keyboard and screen-reader
+  // users are not left on <body> (the button they pressed unmounted).
   useEffect(() => {
     if (!focusHeading.current) return;
     focusHeading.current = false;
@@ -200,8 +299,37 @@ export default function SubscribeFlow({ renewal }: { renewal: RenewalProp }) {
     h.focus({ preventScroll: true });
   }, [step]);
 
-  const idx = STEPS.indexOf(step);
-  const pct = Math.round((idx / (STEPS.length - 1)) * 100);
+  /* ---- errors ---- */
+  const clearError = (s: Step) => setErrors((e) => (e[s] ? { ...e, [s]: undefined } : e));
+  const routeFail = useCallback(
+    (f: ApiFail) => {
+      const s = stepForFail(f);
+      setErrors((e) => ({ ...e, [s]: f }));
+      if (f.code === 'date_locked') setStart({ mode: 'earliest', date: '' });
+      if (isOutsideZone(f)) setArea({ kind: 'no' });
+      go(s, { replace: true });
+    },
+    [go],
+  );
+
+  const setPin = (p: PickedLocation) => {
+    clearError('where');
+    setPinState(p);
+    // Offer the searched place name as the society, if nothing is filled in yet.
+    if (p.label) {
+      const first = p.label.split(',')[0]?.trim().slice(0, 120) ?? '';
+      if (first) setAddr((a) => (a.society.trim() || a.area.trim() ? a : { ...a, society: first }));
+    }
+  };
+
+  const inaccurate = pin?.accuracyM !== undefined && pin.accuracyM > ACCURACY_OK_M;
+  // for moving between screens a check still running is not a "no"; Pay itself waits for a yes
+  const areaOpen = area.kind === 'yes' || area.kind === 'checking' || area.kind === 'idle';
+  const whereDone = !!pin && areaOpen && !inaccurate && Object.keys(addressProblems(addr)).length === 0;
+  const planDone = !!q;
+  const reachable = (s: Step) => s === 'where' || (s === 'plan' ? whereDone : whereDone && planDone);
+  reachRef.current = reachable;
+  const backToPay = reachedPay && planDone;
 
   if (renewal.kind !== 'none' && renewal.kind !== 'ready') {
     return (
@@ -211,10 +339,10 @@ export default function SubscribeFlow({ renewal }: { renewal: RenewalProp }) {
     );
   }
 
-  const plan =
+  const plan: PlanBody | null =
     milk && qty && term
       ? {
-          purpose: ready ? ('renewal' as const) : ('new' as const),
+          purpose: ready ? 'renewal' : 'new',
           kind: milk,
           quantityId: qty,
           tenureId: term,
@@ -224,162 +352,140 @@ export default function SubscribeFlow({ renewal }: { renewal: RenewalProp }) {
       : null;
 
   return (
-    <main className="sb">
+    <main className={`sb${finished ? ' is-finished' : ''}`}>
       <div className="sb-grid">
         <div className="sb-flow">
-          <div className="sb-flow-progress">
-            <Progress step={step} idx={idx} pct={pct} />
-          </div>
-          <div className="sb-flow-step">
-            {ready ? (
-              <div className="sb-notice is-ok" role="status">
-                <span className="sb-dot" aria-hidden="true" />
-                <span>
-                  Renewing your plan that ends on <b>{dateLabel(ready.endDate)}</b>. Your address and pin are
-                  filled in — change anything you need.
-                </span>
-              </div>
-            ) : null}
+          {!finished ? <Stepper step={step} reachable={reachable} onOpen={(s) => go(s)} /> : null}
 
-            {step === 'where' && (
-              <WhereStep
-                pin={pin}
-                setPin={(p) => {
-                  clearError('where');
-                  setPin(p);
-                }}
-                area={area}
-                error={errors.where}
-                onRecheck={recheck}
-                onNext={() => {
-                  // Offer the searched place name as the society, if nothing is filled in yet.
-                  if (pin?.label && !addr.society.trim() && !addr.area.trim()) {
-                    setAddr((a) => ({ ...a, society: pin.label!.split(',')[0]!.trim().slice(0, 120) }));
-                  }
-                  clearError('where');
-                  go('address');
-                }}
-              />
-            )}
+          {ready && !finished ? (
+            <div className="sb-notice is-ok">
+              <span className="sb-dot" aria-hidden="true" />
+              <span>
+                Renewing your plan that ends on <b>{dateLabel(ready.endDate)}</b>. Your address and pin are filled
+                in — change anything you need.
+              </span>
+            </div>
+          ) : null}
 
-            {step === 'address' && (
-              <AddressStep
-                value={addr}
-                onChange={(a) => {
-                  clearError('address');
-                  setAddr(a);
-                }}
-                error={errors.address}
-                onNext={() => go(ready && milk && qty && term ? 'start' : 'milk')}
-                onBack={() => go('where')}
-              />
-            )}
+          {step === 'where' && (
+            <WhereStep
+              pin={pin}
+              setPin={setPin}
+              area={area}
+              addr={addr}
+              setAddr={(a) => {
+                clearError('where');
+                setAddr(a);
+              }}
+              error={errors.where}
+              rules={rules}
+              onRecheck={recheck}
+              nextLabel={backToPay ? 'Continue to pay' : 'Continue to your plan'}
+              onNext={() => go(backToPay ? 'pay' : 'plan')}
+            />
+          )}
 
-            {step === 'milk' && (
-              <MilkStep
-                selected={milk}
-                error={errors.milk}
-                onPick={(k) => {
-                  clearError('milk');
-                  setMilk(k);
-                  go('qty');
-                }}
-                onBack={() => go('address')}
-              />
-            )}
+          {step === 'plan' && (
+            <PlanStep
+              milk={milk}
+              setMilk={(k) => {
+                clearError('plan');
+                setMilk(k);
+              }}
+              qty={qty}
+              setQty={(id) => {
+                clearError('plan');
+                setQty(id);
+              }}
+              term={term}
+              setTerm={(id) => {
+                clearError('plan');
+                setTerm(id);
+              }}
+              q={q}
+              plan={plan}
+              renewal={ready}
+              start={start}
+              setStart={(c) => {
+                clearError('plan');
+                setStart(c);
+              }}
+              error={errors.plan}
+              rules={rules}
+              onNext={() => go('pay')}
+            />
+          )}
 
-            {step === 'qty' && milk && (
-              <QtyStep milk={milk} selected={qty} onPick={(id) => { setQty(id); go('term'); }} onBack={() => go('milk')} />
-            )}
-            {step === 'qty' && !milk && <MissingPrior label="the milk" onFix={() => go('milk')} />}
-
-            {step === 'term' && milk && qty && (
-              <TermStep milk={milk} qty={qty} selected={term} onPick={(id) => { setTerm(id); go('start'); }} onBack={() => go('qty')} />
-            )}
-            {step === 'term' && !(milk && qty) && <MissingPrior label="the milk and daily amount" onFix={() => go('milk')} />}
-
-            {step === 'start' && plan && (
-              <StartStep
-                plan={plan}
-                renewal={ready}
-                choice={start}
-                setChoice={(c) => {
-                  clearError('start');
-                  setStart(c);
-                }}
-                error={errors.start}
-                onNext={() => {
-                  clearError('start');
-                  go('review');
-                }}
-                onBack={() => go(ready ? 'address' : 'term')}
-              />
-            )}
-            {step === 'start' && !plan && <MissingPrior label="your plan" onFix={() => go('milk')} />}
-
-            {step === 'review' && plan && pin && q && (
-              <ReviewStep
-                plan={plan}
-                planLabel={planLabelOf(milk!, qty!, term!)}
-                pin={pin}
-                area={area}
-                addr={addr}
-                error={errors.review}
-                clearError={() => clearError('review')}
-                onFail={routeFail}
-                onEdit={go}
-              />
-            )}
-            {step === 'review' && !(plan && pin && q) && (
-              <MissingPrior label={!pin ? 'your delivery pin' : 'your plan'} onFix={() => go(!pin ? 'where' : 'milk')} />
-            )}
-
-            <p className="sb-foot">
-              <Link href="/plans">See every plan and price →</Link>
-            </p>
-          </div>
+          {step === 'pay' && plan && pin && q ? (
+            <PayStep
+              plan={plan}
+              q={q}
+              pin={pin}
+              area={area}
+              addr={addr}
+              rules={rules}
+              error={errors.pay}
+              clearError={() => clearError('pay')}
+              onFail={routeFail}
+              onEdit={(s) => go(s)}
+              payKey={payKey}
+              setPayKey={setPayKey}
+              onFinished={(clear) => {
+                setFinished(true);
+                if (clear) clearDraft();
+              }}
+            />
+          ) : step === 'pay' ? (
+            <MissingPrior label={!pin ? 'your delivery pin' : 'your plan'} onFix={() => go(!pin ? 'where' : 'plan')} />
+          ) : null}
         </div>
 
-        <aside className="sb-rail" aria-label="Your plan so far">
-          <SummaryCard milk={milk} qty={qty} term={term} q={q} area={area} address={composeAddress(addr)} />
-        </aside>
+        {!finished ? (
+          <aside className="sb-rail" aria-label="Your plan so far">
+            <SummaryCard milk={milk} qty={qty} term={term} q={q} area={area} address={composeAddress(addr)} />
+          </aside>
+        ) : null}
       </div>
     </main>
   );
 }
 
-function planLabelOf(milk: MilkKind, qty: string, term: string): string {
-  return `${PRODUCTS.find((p) => p.kind === milk)?.label ?? milk} · ${QUANTITIES.find((x) => x.id === qty)?.label ?? qty} · ${
-    TENURES.find((t) => t.id === term)?.label ?? term
-  }`;
-}
-
 /* --------------------------------------------------------------- shared UI -- */
 
-function Progress({ step, idx, pct }: { step: Step; idx: number; pct: number }) {
+function Stepper({ step, reachable, onOpen }: { step: Step; reachable: (s: Step) => boolean; onOpen: (s: Step) => void }) {
+  const idx = FLOW_STEPS.indexOf(step);
   return (
-    <div className="sb-progress">
-      <ol className="sb-steps">
-        {STEPS.map((s, n) => (
-          <li key={s} className={n === idx ? 'is-current' : n < idx ? 'is-done' : undefined} aria-current={s === step ? 'step' : undefined}>
-            <span className="sb-num" aria-hidden="true">
-              {n < idx ? '✓' : n + 1}
-            </span>
-            <span className="sb-label">{STEP_LABELS[s]}</span>
-          </li>
-        ))}
+    <nav className="sb-stepper" aria-label="Sign-up steps">
+      <ol>
+        {FLOW_STEPS.map((s, n) => {
+          const done = n < idx;
+          const inner = (
+            <>
+              <span className="sb-stepno" aria-hidden="true">
+                {done ? '✓' : n + 1}
+              </span>
+              <span className="sb-steplabel">{STEP_LABELS[s]}</span>
+              {done ? <span className="sb-visually-hidden"> (done)</span> : null}
+            </>
+          );
+          return (
+            <li
+              key={s}
+              className={n === idx ? 'is-current' : done ? 'is-done' : undefined}
+              aria-current={n === idx ? 'step' : undefined}
+            >
+              {n !== idx && reachable(s) ? (
+                <button type="button" className="sb-stepitem" onClick={() => onOpen(s)}>
+                  {inner}
+                </button>
+              ) : (
+                <span className="sb-stepitem">{inner}</span>
+              )}
+            </li>
+          );
+        })}
       </ol>
-      <div
-        className="sb-bar"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={pct}
-        aria-label={`Step ${idx + 1} of ${STEPS.length}`}
-      >
-        <div className="sb-bar-fill" style={{ width: `${Math.max(pct, 6)}%` }} />
-      </div>
-    </div>
+    </nav>
   );
 }
 
@@ -416,6 +522,7 @@ function StepError({ fail }: { fail: ApiFail | undefined }) {
 function MissingPrior({ label, onFix }: { label: string; onFix: () => void }) {
   return (
     <section className="sb-panel">
+      <h1>One thing first</h1>
       <p className="sb-lead">Please choose {label} first.</p>
       <button type="button" className="sb-btn" onClick={onFix}>
         Go back
@@ -456,11 +563,47 @@ function DevMissing({ title, missing }: { title: string; missing: string[] }) {
   );
 }
 
-function contactHref(subject: string, body: string): string {
-  return `mailto:${CONTACT.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
 const PHONE = CONTACT.phones[0] ?? '';
 const PHONE_HREF = `tel:${PHONE.replace(/\s/g, '')}`;
+/** The farm's WhatsApp number, once confirmed (docs/CLIENT-QUESTIONS.md). */
+const WHATSAPP = CONTACT.whatsapp;
+
+/** Ways to reach the farm when we cannot sign someone up online. Nothing is charged. */
+function ContactActions({ pin, subject }: { pin: PickedLocation | null; subject: string }) {
+  const where = pin ? `https://www.google.com/maps?q=${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}` : '';
+  const text = `Hello Maavuli, I would like milk delivered here: ${where}`;
+  return (
+    <div className="sb-contact">
+      {WHATSAPP ? (
+        <a
+          className="sb-ghost"
+          href={`https://wa.me/${WHATSAPP.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Message us on WhatsApp
+        </a>
+      ) : null}
+      <a className="sb-ghost" href={PHONE_HREF}>
+        Call {PHONE}
+      </a>
+      <a
+        className="sb-ghost"
+        href={`mailto:${CONTACT.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`}
+      >
+        Email us your location
+      </a>
+    </div>
+  );
+}
+
+function EditButton({ what, onClick }: { what: string; onClick: () => void }) {
+  return (
+    <button type="button" className="sb-linkbtn" onClick={onClick}>
+      Edit<span className="sb-visually-hidden"> {what}</span>
+    </button>
+  );
+}
 
 /* ------------------------------------------------------------ 1. where ---- */
 
@@ -468,27 +611,49 @@ function WhereStep({
   pin,
   setPin,
   area,
+  addr,
+  setAddr,
   error,
+  rules,
   onRecheck,
+  nextLabel,
   onNext,
 }: {
   pin: PickedLocation | null;
   setPin: (p: PickedLocation) => void;
   area: Area;
+  addr: AddressForm;
+  setAddr: (a: AddressForm) => void;
   error: ApiFail | undefined;
+  rules: DayRuleLabels;
   onRecheck: () => void;
+  nextLabel: string;
   onNext: () => void;
 }) {
-  const inaccurate = pin?.accuracyM !== undefined && pin.accuracyM > 50;
-  const canGo = !!pin && area.kind === 'yes' && !inaccurate;
-  const coords = pin ? `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}` : '';
+  const inaccurate = pin?.accuracyM !== undefined && pin.accuracyM > ACCURACY_OK_M;
+  const pinOk = !!pin && area.kind === 'yes' && !inaccurate;
+  // Once a pin has been confirmed, nudging it re-runs the check: keep the door form up
+  // (and what is typed in it) while that runs, instead of flashing it away.
+  const confirmedOnce = useRef(false);
+  if (!pin || inaccurate || (area.kind !== 'yes' && area.kind !== 'checking')) confirmedOnce.current = false;
+  else if (area.kind === 'yes') confirmedOnce.current = true;
+  const showDoor = pinOk || (!!pin && !inaccurate && area.kind === 'checking' && confirmedOnce.current);
+  const hint = !pin
+    ? 'Place a pin on your building to continue.'
+    : inaccurate
+      ? 'Drag the pin (or use the arrows) onto your building to continue.'
+      : area.kind === 'down'
+        ? 'Check again to continue.'
+        : area.kind === 'no' || area.kind === 'unknown'
+          ? 'We can continue once the pin is somewhere we deliver.'
+          : '';
+
   return (
     <section className="sb-panel" aria-labelledby="sb-where-h">
-      <p className="eyebrow">Step 1 of {STEPS.length}</p>
       <h1 id="sb-where-h">Where should we deliver?</h1>
       <p className="sb-lead">
-        Put the pin on your building. The rider comes to this exact spot every morning, and we check it
-        against our delivery zones before you choose anything else.
+        Put the pin on your building. The rider comes to this exact spot every morning, so we check it against our
+        delivery area before anything else.
       </p>
       <StepError fail={error} />
 
@@ -500,35 +665,40 @@ function WhereStep({
             <span className="sb-spinner" aria-hidden="true" /> Checking whether we deliver here…
           </p>
         ) : area.kind === 'yes' ? (
-          <div className="sb-notice is-ok" role="status">
+          <div className="sb-notice is-ok">
             <span className="sb-dot" aria-hidden="true" />
             <span>
-              <b>Yes — we deliver here</b>
-              {area.zone ? ` (${area.zone})` : ''}.
+              <b>We deliver here</b>
+              {area.zone ? ` · ${area.zone}` : ''}. Milk arrives between {rules.windowStart} and {rules.windowEnd} each
+              morning.
             </span>
           </div>
         ) : area.kind === 'no' ? (
-          <div className="sb-notice" role="status">
+          <div className="sb-notice">
             <span className="sb-dot" aria-hidden="true" />
-            <span>
-              We do not deliver to this spot yet. If the pin is in the wrong place, move it. Otherwise{' '}
-              <a href={contactHref('Delivery area request — Maavuli', `Please deliver to: ${coords}`)}>tell us where you are</a>{' '}
-              or call <a href={PHONE_HREF}>{PHONE}</a> — nothing is charged.
-            </span>
+            <div>
+              <b>We don’t deliver to this spot yet.</b>
+              <p>
+                If the pin is in the wrong place, move it onto your building. If it is right, tell us: we are adding
+                areas, and nothing is charged.
+              </p>
+              <ContactActions pin={pin} subject="Delivery area request — Maavuli" />
+            </div>
           </div>
         ) : area.kind === 'unknown' ? (
-          <div className="sb-notice is-warn" role="status">
+          <div className="sb-notice is-warn">
             <span className="sb-dot" aria-hidden="true" />
-            <span>
-              {area.message} We cannot take a payment until it is. <a href={contactHref('Subscription interest — Maavuli', `Location: ${coords}`)}>Send us your location</a>{' '}
-              or call <a href={PHONE_HREF}>{PHONE}</a>.
-            </span>
+            <div>
+              <b>Our delivery area is not published yet,</b> so we cannot take payments online. Tell us where you are
+              and we will set up your delivery.
+              <ContactActions pin={pin} subject="Subscription interest — Maavuli" />
+            </div>
           </div>
         ) : area.kind === 'down' ? (
-          <div className="sb-notice is-err" role="alert">
+          <div className="sb-notice is-err">
             <span className="sb-dot" aria-hidden="true" />
             <span>
-              We could not check this spot just now — that is a problem on our side, not a “no”. ({area.message}){' '}
+              We could not check this spot just now. That is a problem on our side, not a “no”.{' '}
               <button type="button" className="sb-linkbtn" onClick={onRecheck}>
                 Check again
               </button>
@@ -539,39 +709,41 @@ function WhereStep({
         ) : null}
       </div>
 
-      <div className="sb-nav">
-        <button type="button" className="sb-btn" onClick={onNext} disabled={!canGo}>
-          Continue
-        </button>
-      </div>
-      {!canGo && pin && inaccurate ? (
-        <p className="sb-hint">Drag the pin (or use the arrows) onto your building to continue.</p>
-      ) : !pin ? (
-        <p className="sb-hint">Place a pin to continue.</p>
-      ) : null}
+      {showDoor ? (
+        <DoorForm addr={addr} setAddr={setAddr} nextLabel={nextLabel} canSubmit={pinOk} onNext={onNext} />
+      ) : (
+        <>
+          <div className="sb-nav">
+            <button type="button" className="sb-btn" disabled>
+              {nextLabel}
+            </button>
+          </div>
+          {hint ? <p className="sb-hint">{hint}</p> : null}
+        </>
+      )}
     </section>
   );
 }
 
-/* ---------------------------------------------------------- 2. address ---- */
-
-function AddressStep({
-  value,
-  onChange,
-  error,
+function DoorForm({
+  addr,
+  setAddr,
+  nextLabel,
+  canSubmit,
   onNext,
-  onBack,
 }: {
-  value: AddressForm;
-  onChange: (v: AddressForm) => void;
-  error: ApiFail | undefined;
+  addr: AddressForm;
+  setAddr: (a: AddressForm) => void;
+  nextLabel: string;
+  /** false while a moved pin is being re-checked */
+  canSubmit: boolean;
   onNext: () => void;
-  onBack: () => void;
 }) {
   const [touched, setTouched] = useState(false);
-  const problems = addressProblems(value);
+  const [more, setMore] = useState(() => !!(addr.building || addr.area || addr.pincode || addr.landmark || addr.instructions));
+  const problems = addressProblems(addr);
   const valid = Object.keys(problems).length === 0;
-  const set = (k: keyof AddressForm) => (e: { target: { value: string } }) => onChange({ ...value, [k]: e.target.value });
+  const set = (k: keyof AddressForm) => (e: { target: { value: string } }) => setAddr({ ...addr, [k]: e.target.value });
   const show = (k: keyof AddressForm | 'address') => (touched ? problems[k] : undefined);
 
   const field = (
@@ -589,7 +761,7 @@ function AddressStep({
         <input
           id={id}
           className="sb-input"
-          value={value[k]}
+          value={addr[k]}
           onChange={set(k)}
           autoComplete={opts.auto ?? 'off'}
           maxLength={opts.max ?? 120}
@@ -608,349 +780,311 @@ function AddressStep({
     );
   };
 
-  const line = composeAddress(value);
-  return (
-    <section className="sb-panel" aria-labelledby="sb-addr-h">
-      <p className="eyebrow">Step 2 of {STEPS.length}</p>
-      <h1 id="sb-addr-h">Who and which door?</h1>
-      <p className="sb-lead">The pin gets the rider to your building; these get the bottle to your door.</p>
-      <StepError fail={error} />
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setTouched(true);
+    if (valid) {
+      onNext();
+      return;
+    }
+    // Take the customer to the first field that needs them.
+    const first = (['name', 'house', 'society', 'pincode'] as const).find((k) => problems[k]) ?? 'society';
+    if (first === 'pincode') setMore(true);
+    window.setTimeout(() => document.getElementById(`sb-addr-${first}`)?.focus(), 0);
+  };
 
-      <form
-        className="sb-fields"
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault();
-          setTouched(true);
-          if (valid) onNext();
-        }}
-      >
-        {field('name', 'Name for the delivery', { required: true, auto: 'name', max: 100, placeholder: 'Who should we ask for?' })}
-        {field('house', 'Flat / house number', { required: true, max: 100, placeholder: 'e.g. 304' })}
-        {field('floor', 'Floor', { max: 40, placeholder: 'e.g. 3' })}
-        {field('building', 'Tower / block', { max: 120, placeholder: 'e.g. Block B' })}
-        {field('society', 'Society / apartment / street', { max: 120, auto: 'address-line1', placeholder: 'e.g. Aparna Towers' })}
-        {field('area', 'Area / locality', { max: 120, auto: 'address-level3', placeholder: 'e.g. Safilguda' })}
-        {field('pincode', 'Pincode', { max: 6, auto: 'postal-code', inputMode: 'numeric', placeholder: '6 digits' })}
-        {field('landmark', 'Landmark', { max: 300, placeholder: 'Opposite the water tank, blue gate…' })}
-        <div className="sb-field">
-          <label htmlFor="sb-addr-instructions">
-            Door instructions <i>(optional)</i>
-          </label>
-          <textarea
-            id="sb-addr-instructions"
-            value={value.instructions}
-            onChange={set('instructions')}
-            rows={2}
-            maxLength={500}
-            placeholder="Hang the bag on the handle, ring twice, leave with security…"
-          />
+  const line = composeAddress(addr);
+  return (
+    <form className="sb-door" noValidate onSubmit={submit} aria-labelledby="sb-door-h">
+      <h2 id="sb-door-h" className="sb-subhead">
+        Your door
+      </h2>
+      <p className="sb-hint">The pin gets the rider to your building. These get the milk to your door.</p>
+      <div className="sb-fields">
+        {field('name', 'Name for the delivery', { required: true, auto: 'name', max: 100, placeholder: 'Who should the rider ask for?' })}
+        <div className="sb-row2">
+          {field('house', 'Flat / house', { required: true, max: 100, placeholder: 'e.g. 304' })}
+          {field('floor', 'Floor', { max: 40, placeholder: 'e.g. 3' })}
         </div>
-
-        {line ? (
-          <p className="sb-hint">
-            The rider will read: <b>{line}</b>
-          </p>
-        ) : null}
-        {show('address') ? <p className="sb-fieldnote">{show('address')}</p> : null}
-
-        <div className="sb-nav">
-          <button type="submit" className="sb-btn">
-            Continue
-          </button>
-          <button type="button" className="sb-back" onClick={onBack}>
-            ← Back to the map
-          </button>
-        </div>
-        {touched && !valid ? <p className="sb-hint" role="alert">Please fix the highlighted fields.</p> : null}
-      </form>
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------ 3–5. plan ---- */
-
-function MilkStep({
-  selected,
-  error,
-  onPick,
-  onBack,
-}: {
-  selected: MilkKind | null;
-  error: ApiFail | undefined;
-  onPick: (k: MilkKind) => void;
-  onBack: () => void;
-}) {
-  return (
-    <section className="sb-panel">
-      <p className="eyebrow">Step 3 of {STEPS.length}</p>
-      <h1>Which milk?</h1>
-      <StepError fail={error} />
-      <div className="sb-choices sb-two">
-        {PRODUCTS.map((p) => (
-          <button
-            key={p.kind}
-            type="button"
-            className={`sb-choice${selected === p.kind ? ' is-selected' : ''}`}
-            onClick={() => onPick(p.kind)}
-            aria-pressed={selected === p.kind}
-          >
-            <span className="sb-choice-name">{p.label}</span>
-            {/* breedClaim stays null until the client confirms it — asserting it would be inventing a fact. */}
-            {p.breedClaim ? (
-              <span className="sb-choice-sub">{p.breedClaim}</span>
-            ) : (
-              <span className="sb-choice-rate">from {formatINR(quote(p.kind, 'one', '1m').perLitrePaise)} / litre</span>
-            )}
-          </button>
-        ))}
-      </div>
-      <div className="sb-nav">
-        <button type="button" className="sb-back" onClick={onBack}>
-          ← Back to address
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function QtyStep({ milk, selected, onPick, onBack }: { milk: MilkKind; selected: string | null; onPick: (id: string) => void; onBack: () => void }) {
-  return (
-    <section className="sb-panel">
-      <p className="eyebrow">Step 4 of {STEPS.length}</p>
-      <h1>How much, each day?</h1>
-      <div className="sb-choices sb-two">
-        {QUANTITIES.map((x) => (
-          <button
-            key={x.id}
-            type="button"
-            className={`sb-choice${selected === x.id ? ' is-selected' : ''}`}
-            onClick={() => onPick(x.id)}
-            aria-pressed={selected === x.id}
-          >
-            <span className="sb-choice-name">{x.label}</span>
-            <span className="sb-choice-rate">{formatINR(quote(milk, x.id, '1m').finalPaise)} / month to start</span>
-          </button>
-        ))}
-      </div>
-      <div className="sb-nav">
-        <button type="button" className="sb-back" onClick={onBack}>
-          ← Back to milk
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function TermStep({
-  milk,
-  qty,
-  selected,
-  onPick,
-  onBack,
-}: {
-  milk: MilkKind;
-  qty: string;
-  selected: string | null;
-  onPick: (id: string) => void;
-  onBack: () => void;
-}) {
-  return (
-    <section className="sb-panel">
-      <p className="eyebrow">Step 5 of {STEPS.length}</p>
-      <h1>For how long?</h1>
-      <p className="sb-lead">Longer terms are prepaid once and discounted. No auto-renewal.</p>
-      <div className="sb-choices sb-terms">
-        {TENURES.map((t) => {
-          const tq = quote(milk, qty, t.id);
-          return (
-            <button
-              key={t.id}
-              type="button"
-              className={`sb-choice${selected === t.id ? ' is-selected' : ''}`}
-              onClick={() => onPick(t.id)}
-              aria-pressed={selected === t.id}
-            >
-              <span className="sb-choice-name">{t.label}</span>
-              <span className="sb-choice-rate">{formatINR(tq.finalPaise)} total</span>
-              {t.discountPct > 0 ? <span className="sb-choice-off">save {t.discountPct}%</span> : null}
-            </button>
-          );
+        {field('society', 'Society, building or street', {
+          required: true,
+          max: 120,
+          auto: 'address-line1',
+          placeholder: 'e.g. Aparna Towers',
         })}
+        {more ? (
+          <>
+            {field('building', 'Tower / block', { max: 120, placeholder: 'e.g. Block B' })}
+            {field('area', 'Area / locality', { max: 120, auto: 'address-level3', placeholder: 'e.g. Safilguda' })}
+            {field('pincode', 'Pincode', { max: 6, auto: 'postal-code', inputMode: 'numeric', placeholder: '6 digits' })}
+            {field('landmark', 'Landmark', { max: 300, placeholder: 'Opposite the water tank, blue gate…' })}
+            <div className="sb-field">
+              <label htmlFor="sb-addr-instructions">
+                Note for the rider <i>(optional)</i>
+              </label>
+              <textarea
+                id="sb-addr-instructions"
+                className="sb-input"
+                value={addr.instructions}
+                onChange={set('instructions')}
+                rows={2}
+                maxLength={500}
+                placeholder="Hang the bag on the handle, ring twice, leave with security…"
+              />
+            </div>
+          </>
+        ) : (
+          <button type="button" className="sb-linkbtn sb-more" onClick={() => setMore(true)}>
+            + Add a landmark, tower, pincode or a note for the rider
+          </button>
+        )}
       </div>
+
+      {line ? (
+        <p className="sb-hint sb-reads">
+          The rider will read: <b>{line}</b>
+        </p>
+      ) : null}
+      {show('address') ? <p className="sb-fieldnote">{show('address')}</p> : null}
+
       <div className="sb-nav">
-        <button type="button" className="sb-back" onClick={onBack}>
-          ← Back to amount
+        <button type="submit" className="sb-btn" disabled={!canSubmit}>
+          {nextLabel}
         </button>
       </div>
-    </section>
+      {touched && !valid ? (
+        <p className="sb-hint" role="alert">
+          Please fix the highlighted fields.
+        </p>
+      ) : null}
+    </form>
   );
 }
 
-/* ------------------------------------------------------------- 6. start ---- */
+/* ------------------------------------------------------------- 2. plan ---- */
 
-interface PlanBody {
-  purpose: 'new' | 'renewal';
-  kind: MilkKind;
-  quantityId: string;
-  tenureId: string;
-  renewsSubscriptionId?: string;
-  startDate?: string;
-}
-
-type Load<T> = { kind: 'loading' } | { kind: 'error'; fail: ApiFail } | { kind: 'ok'; data: T };
-
-/** POST /api/checkout/preview, re-run whenever the body changes. */
-function usePreview(body: (PlanBody & { useCredit: boolean }) | null, enabled = true): [Load<PreviewJSON>, () => void] {
-  const [state, setState] = useState<Load<PreviewJSON>>({ kind: 'loading' });
-  const [nonce, setNonce] = useState(0);
-  const key = body ? JSON.stringify(body) : '';
-  useEffect(() => {
-    if (!body || !enabled) return;
-    let alive = true;
-    setState({ kind: 'loading' });
-    void postJson<{ preview: PreviewJSON }>('/api/checkout/preview', body).then((r) => {
-      if (!alive) return;
-      setState(r.ok ? { kind: 'ok', data: r.data.preview } : { kind: 'error', fail: r.fail });
-    });
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, nonce, enabled]);
-  return [state, () => setNonce((n) => n + 1)];
-}
-
-function StartStep({
+function PlanStep({
+  milk,
+  setMilk,
+  qty,
+  setQty,
+  term,
+  setTerm,
+  q,
   plan,
   renewal,
-  choice,
-  setChoice,
+  start,
+  setStart,
   error,
+  rules,
   onNext,
-  onBack,
 }: {
-  plan: PlanBody;
-  renewal: Extract<RenewalProp, { kind: 'ready' }> | null;
-  choice: StartChoice;
-  setChoice: (c: StartChoice) => void;
+  milk: MilkKind | null;
+  setMilk: (k: MilkKind) => void;
+  qty: string | null;
+  setQty: (id: string) => void;
+  term: string | null;
+  setTerm: (id: string) => void;
+  q: ReturnType<typeof quote> | null;
+  plan: PlanBody | null;
+  renewal: Ready | null;
+  start: StartChoice;
+  setStart: (c: StartChoice) => void;
   error: ApiFail | undefined;
+  rules: DayRuleLabels;
   onNext: () => void;
-  onBack: () => void;
 }) {
   // Ask for the EARLIEST date (no startDate), so the answer is the first open date.
-  const { startDate: _omit, ...base } = plan;
-  void _omit;
-  const [pv, retry] = usePreview({ ...base, useCredit: false });
+  const earliest = plan
+    ? {
+        purpose: plan.purpose,
+        kind: plan.kind,
+        quantityId: plan.quantityId,
+        tenureId: plan.tenureId,
+        ...(plan.renewsSubscriptionId ? { renewsSubscriptionId: plan.renewsSubscriptionId } : {}),
+        useCredit: false,
+      }
+    : null;
+  const [pv, retry] = usePreview(earliest);
+  const known = pv.kind === 'ok' ? pv.data : pv.kind === 'loading' ? pv.last : undefined;
   const latest = addDaysYMD(istToday(), 30);
-  const lockedFirstOpen = error?.code === 'date_locked' ? error.firstOpen : undefined;
 
   let laterProblem: string | null = null;
-  if (pv.kind === 'ok' && choice.mode === 'later') {
-    if (!choice.date) laterProblem = 'Pick a date.';
-    else if (choice.date < pv.data.firstOpenDate) laterProblem = `The earliest we can start is ${dateLabel(pv.data.firstOpenDate)}.`;
-    else if (choice.date > latest) laterProblem = `The first delivery can be at most 30 days away (${dateLabel(latest)}).`;
+  if (!renewal && known && start.mode === 'later') {
+    if (!start.date) laterProblem = 'Pick a date.';
+    else if (start.date < known.firstOpenDate) laterProblem = `The earliest we can start is ${dateLabel(known.firstOpenDate)}.`;
+    else if (start.date > latest) laterProblem = `The first delivery can be at most 30 days away (${dateLabel(latest)}).`;
   }
+  const missing = [!milk && 'the milk', !qty && 'how much', !term && 'how long'].filter((x): x is string => !!x);
+  const canGo = !!q && !laterProblem;
 
   return (
-    <section className="sb-panel" aria-labelledby="sb-start-h">
-      <p className="eyebrow">Step 6 of {STEPS.length}</p>
-      <h1 id="sb-start-h">When should it start?</h1>
+    <section className="sb-panel" aria-labelledby="sb-plan-h">
+      <h1 id="sb-plan-h">Your milk</h1>
       <StepError fail={error} />
 
-      {pv.kind === 'loading' ? (
-        <p className="sb-secondary">
-          <span className="sb-spinner" aria-hidden="true" /> Finding the earliest delivery date…
-        </p>
-      ) : pv.kind === 'error' ? (
-        <>
-          <StepError fail={pv.fail} />
-          <button type="button" className="sb-btn" onClick={retry}>
-            Try again
-          </button>
-        </>
-      ) : renewal ? (
-        <>
-          <p className="sb-lead">
-            Your renewal starts on <b>{dateLabel(pv.data.startDate, true)}</b>
-            {pv.data.startDate === addDaysYMD(renewal.endDate, 1)
-              ? `, the day after your current plan ends (${dateLabel(renewal.endDate)}).`
-              : ' — the earliest date still open for changes, because your current plan has already ended.'}{' '}
-            It runs to {dateLabel(pv.data.endDate, true)}.
-          </p>
-          <div className="sb-nav">
-            <button type="button" className="sb-btn" onClick={onNext}>
-              Continue
-            </button>
-            <button type="button" className="sb-back" onClick={onBack}>
-              ← Back
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="sb-lead">
-            The earliest first delivery is <b>{dateLabel(pv.data.firstOpenDate, true)}</b>.
-            {lockedFirstOpen ? ' The date you picked closed while you were choosing.' : ''}
-          </p>
-          <fieldset className="sb-startopts">
-            <legend className="sb-visually-hidden">First delivery date</legend>
-            <label className="sb-radio">
-              <input
-                type="radio"
-                name="sb-start"
-                checked={choice.mode === 'earliest'}
-                onChange={() => setChoice({ mode: 'earliest', date: '' })}
-              />
-              <span>As early as possible — {dateLabel(pv.data.firstOpenDate)}</span>
-            </label>
-            <label className="sb-radio">
-              <input
-                type="radio"
-                name="sb-start"
-                checked={choice.mode === 'later'}
-                onChange={() => setChoice({ mode: 'later', date: choice.date || pv.data.firstOpenDate })}
-              />
-              <span>A later date (up to 30 days from today)</span>
-            </label>
-            {choice.mode === 'later' ? (
-              <div className="sb-field">
-                <label htmlFor="sb-start-date">First delivery on</label>
+      <fieldset className="sb-group">
+        <legend>Milk</legend>
+        <div className="sb-milks">
+          {PRODUCTS.map((p) => {
+            const on = milk === p.kind;
+            return (
+              <label key={p.kind} className={`sb-milk${on ? ' is-on' : ''}`}>
                 <input
-                  id="sb-start-date"
-                  className="sb-input"
-                  type="date"
-                  min={pv.data.firstOpenDate}
-                  max={latest}
-                  value={choice.date}
-                  onChange={(e) => setChoice({ mode: 'later', date: e.target.value })}
-                  aria-invalid={laterProblem ? true : undefined}
-                  aria-describedby={laterProblem ? 'sb-start-err' : undefined}
+                  type="radio"
+                  name="sb-milk"
+                  className="sb-visually-hidden"
+                  checked={on}
+                  onChange={() => setMilk(p.kind)}
                 />
-                {choice.date && !laterProblem ? <p className="sb-hint">{dateLabel(choice.date, true)}</p> : null}
-                {laterProblem ? (
-                  <em id="sb-start-err" className="sb-fieldnote">
-                    {laterProblem}
-                  </em>
+                <Image
+                  src={`/hero/bottle-${p.kind}.png`}
+                  alt=""
+                  width={220}
+                  height={220}
+                  sizes="(max-width: 30rem) 40vw, 200px"
+                  className="sb-milk-img"
+                />
+                <span className="sb-milk-name">{p.label}</span>
+                <span className="sb-milk-rate">{formatINR(p.baseRatePaise)} a litre, less on longer plans</span>
+                {/* breedClaim stays null until the client confirms it — asserting it would be inventing a fact. */}
+                {p.breedClaim ? <span className="sb-milk-rate">{p.breedClaim}</span> : null}
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <fieldset className="sb-group">
+        <legend>Each morning</legend>
+        <div className="sb-opts">
+          {QUANTITIES.map((x) => {
+            const on = qty === x.id;
+            return (
+              <label key={x.id} className={`sb-opt${on ? ' is-on' : ''}`}>
+                <input type="radio" name="sb-qty" className="sb-visually-hidden" checked={on} onChange={() => setQty(x.id)} />
+                <span>{qtyName(x.id)}</span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <fieldset className="sb-group">
+        <legend>For how long</legend>
+        <div className="sb-terms">
+          {TENURES.map((t) => {
+            const on = term === t.id;
+            const tq = milk && qty ? quote(milk, qty, t.id) : null;
+            const perLitre = milk ? quote(milk, 'one', t.id).perLitrePaise : null;
+            const meta = [`${t.days} days`, `${pauseDaysFor(t.days)} pause days`, t.discountPct > 0 ? `save ${t.discountPct}%` : null]
+              .filter(Boolean)
+              .join(' · ');
+            return (
+              <label key={t.id} className={`sb-term${on ? ' is-on' : ''}`}>
+                <input type="radio" name="sb-term" className="sb-visually-hidden" checked={on} onChange={() => setTerm(t.id)} />
+                <span className="sb-term-main">
+                  <span className="sb-term-name">{t.label}</span>
+                  <span className="sb-term-meta">{meta}</span>
+                </span>
+                {tq || perLitre ? (
+                  <span className="sb-term-price">
+                    {tq ? <b>{formatINR(tq.finalPaise)}</b> : null}
+                    {perLitre ? <span>{formatINR(perLitre)} a litre</span> : null}
+                  </span>
                 ) : null}
-              </div>
-            ) : null}
-          </fieldset>
-          <div className="sb-nav">
-            <button type="button" className="sb-btn" onClick={onNext} disabled={!!laterProblem}>
-              Continue
-            </button>
-            <button type="button" className="sb-back" onClick={onBack}>
-              ← Back to duration
-            </button>
-          </div>
-        </>
-      )}
+              </label>
+            );
+          })}
+        </div>
+        <p className="sb-hint">Paid once for the whole plan. No auto-renewal. A paused morning is added to the end.</p>
+      </fieldset>
+
+      {q ? (
+        <div className="sb-start">
+          <p className="sb-legend">First delivery</p>
+          {pv.kind === 'error' ? (
+            <>
+              <StepError fail={pv.fail} />
+              <button type="button" className="sb-linkbtn" onClick={retry}>
+                Try again
+              </button>
+            </>
+          ) : !known ? (
+            <p className="sb-secondary">
+              <span className="sb-spinner" aria-hidden="true" /> Finding the earliest delivery date…
+            </p>
+          ) : renewal ? (
+            <p className="sb-start-line">
+              <b>{dateLabel(known.startDate, true)}</b>
+              {known.startDate === addDaysYMD(renewal.endDate, 1)
+                ? `, the day after your current plan ends (${dateLabel(renewal.endDate)})`
+                : ', the earliest date still open, because your current plan has already ended'}
+              , between {rules.windowStart} and {rules.windowEnd}.
+            </p>
+          ) : start.mode === 'earliest' ? (
+            <>
+              <p className="sb-start-line">
+                <b>{dateLabel(known.firstOpenDate, true)}</b>, between {rules.windowStart} and {rules.windowEnd}. That is
+                the earliest we can start.
+                {error?.code === 'date_locked' ? ' The date you picked closed while you were choosing.' : ''}
+              </p>
+              <button type="button" className="sb-linkbtn" onClick={() => setStart({ mode: 'later', date: known.firstOpenDate })}>
+                Start on a later date
+              </button>
+            </>
+          ) : (
+            <div className="sb-field">
+              <label htmlFor="sb-start-date">Start on</label>
+              <input
+                id="sb-start-date"
+                className="sb-input"
+                type="date"
+                min={known.firstOpenDate}
+                max={latest}
+                value={start.date}
+                onChange={(e) => setStart({ mode: 'later', date: e.target.value })}
+                aria-invalid={laterProblem ? true : undefined}
+                aria-describedby={laterProblem ? 'sb-start-err' : undefined}
+              />
+              {start.date && !laterProblem ? <p className="sb-hint">{dateLabel(start.date, true)}</p> : null}
+              {laterProblem ? (
+                <em id="sb-start-err" className="sb-fieldnote">
+                  {laterProblem}
+                </em>
+              ) : null}
+              <button type="button" className="sb-linkbtn" onClick={() => setStart({ mode: 'earliest', date: '' })}>
+                Start as early as possible ({dateLabel(known.firstOpenDate)})
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <div className="sb-dock">
+        <div className="sb-dock-sum" aria-live="polite">
+          {q ? (
+            <>
+              <b className="sb-dock-amt">{formatINR(q.finalPaise)}</b>
+              <span className="sb-dock-meta">
+                {q.days} days · {formatINR(q.perLitrePaise)} a litre
+                {q.savingPaise > 0 ? ` · you save ${formatINR(q.savingPaise)}` : ''}
+              </span>
+            </>
+          ) : (
+            <span className="sb-dock-meta">Choose {listJoin(missing)}.</span>
+          )}
+        </div>
+        <button type="button" className="sb-btn" disabled={!canGo} onClick={onNext}>
+          Continue
+        </button>
+      </div>
     </section>
   );
 }
 
-/* ------------------------------------------------------------ 7. review ---- */
+/* -------------------------------------------------------------- 3. pay ---- */
 
 type Auth = { kind: 'loading' } | { kind: 'out' } | { kind: 'in'; mobile: string } | { kind: 'error'; fail: ApiFail };
 
@@ -975,26 +1109,41 @@ interface VerifyResponse {
   endDate: string | null;
 }
 
-function ReviewStep({
+interface MeResponse {
+  authenticated: boolean;
+  mobile?: string;
+  whatsappOptIn?: boolean;
+}
+
+function PayStep({
   plan,
-  planLabel,
+  q,
   pin,
   area,
   addr,
+  rules,
   error,
   clearError,
   onFail,
   onEdit,
+  payKey,
+  setPayKey,
+  onFinished,
 }: {
   plan: PlanBody;
-  planLabel: string;
+  q: ReturnType<typeof quote>;
   pin: PickedLocation;
   area: Area;
   addr: AddressForm;
+  rules: DayRuleLabels;
   error: ApiFail | undefined;
   clearError: () => void;
   onFail: (f: ApiFail) => void;
   onEdit: (s: Step) => void;
+  payKey: PayKey;
+  setPayKey: (k: PayKey) => void;
+  /** clear = the plan is confirmed, so the saved draft can go */
+  onFinished: (clear: boolean) => void;
 }) {
   const [auth, setAuth] = useState<Auth>({ kind: 'loading' });
   const [authNonce, setAuthNonce] = useState(0);
@@ -1004,28 +1153,35 @@ function ReviewStep({
   const [whatsappTouched, setWhatsappTouched] = useState(false);
   const whatsappTouchedRef = useRef(false);
   const [pay, setPay] = useState<Pay>({ kind: 'idle' });
-  /** idempotency key, tied to the exact request it was minted for; reused on retry */
-  const keyRef = useRef<{ sig: string; key: string } | null>(null);
+
+  // A returning customer who already opted in sees the box ticked (unless they changed it).
+  const applyMe = (me: MeResponse) => {
+    if (me.authenticated && me.whatsappOptIn === true && !whatsappTouchedRef.current) setWhatsapp(true);
+  };
 
   useEffect(() => {
     let alive = true;
     setAuth({ kind: 'loading' });
-    void callApi<{ authenticated: boolean; mobile?: string; whatsappOptIn?: boolean }>('/api/auth/me').then((r) => {
+    void callApi<MeResponse>('/api/auth/me').then((r) => {
       if (!alive) return;
       if (!r.ok) setAuth({ kind: 'error', fail: r.fail });
       else {
         setAuth(r.data.authenticated && r.data.mobile ? { kind: 'in', mobile: r.data.mobile } : { kind: 'out' });
-        // A returning customer who already opted in sees the box ticked.
-        if (r.data.authenticated && r.data.whatsappOptIn === true) setWhatsapp(prev => (whatsappTouchedRef.current ? prev : true));
+        applyMe(r.data);
       }
     });
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authNonce]);
 
-  const signedIn = auth.kind === 'in';
-  const [pv, retryPreview] = usePreview({ ...plan, useCredit }, signedIn);
+  // Priced by the server before sign-in (credit 0); priced again once signed in.
+  const [pv, retryPreview] = usePreview(
+    auth.kind === 'loading' ? null : { ...plan, useCredit },
+    auth.kind === 'in' ? auth.mobile : '',
+  );
+  const known = pv.kind === 'ok' ? pv.data : pv.kind === 'loading' ? pv.last : undefined;
 
   const addressParts = {
     house: addr.house.trim(),
@@ -1043,6 +1199,7 @@ function ReviewStep({
     ...(addr.instructions.trim() ? { instructions: addr.instructions.trim() } : {}),
     addressParts,
   };
+  const planLabel = `${milkName(plan.kind)} · ${qtyName(plan.quantityId)} each morning · ${termName(plan.tenureId)}`;
 
   const startCheckout = async () => {
     if (pay.kind === 'creating') return;
@@ -1055,23 +1212,32 @@ function ReviewStep({
       // stored preference as it is (lib/orders), so nobody is opted out by omission.
       ...(whatsappTouched ? { whatsappOptIn: whatsapp } : {}),
     };
+    // One key per exact request, kept in the tab's draft: a double tap, a retry, or a
+    // refresh after paying replays the SAME order instead of creating a second one.
     const sig = JSON.stringify(body);
-    if (!keyRef.current || keyRef.current.sig !== sig) keyRef.current = { sig, key: newKey() };
+    const key = payKey && payKey.sig === sig ? payKey.key : newKey();
+    if (!payKey || payKey.sig !== sig) setPayKey({ sig, key });
     setPay({ kind: 'creating' });
-    const r = await postJson<CheckoutResponse>('/api/checkout', { ...body, idempotencyKey: keyRef.current.key });
+    const r = await postJson<CheckoutResponse>('/api/checkout', { ...body, idempotencyKey: key });
     if (!r.ok) {
       setPay({ kind: 'idle' });
       if (r.fail.status === 401) {
         setAuth({ kind: 'out' });
         return;
       }
-      if (r.fail.status === 409 && r.fail.code === 'conflict') keyRef.current = null; // key belonged to another request
+      if (r.fail.status === 409 && r.fail.code === 'conflict') setPayKey(null); // key belonged to another request
       onFail(r.fail);
       return;
     }
     if (r.data.razorpay === null) {
-      // Paid entirely from credit — the server has already activated it.
-      setPay({ kind: 'active', startDate: r.data.preview.startDate, endDate: r.data.preview.endDate, fromCredit: true });
+      // Nothing left to pay: fully paid from credit, or an order this key already paid.
+      onFinished(true);
+      setPay({
+        kind: 'active',
+        startDate: r.data.preview.startDate,
+        endDate: r.data.preview.endDate,
+        fromCredit: r.data.preview.payablePaise === 0,
+      });
       return;
     }
     setPay({ kind: 'ready', order: r.data.razorpay, note: null });
@@ -1085,62 +1251,118 @@ function ReviewStep({
       razorpay_signature: resp.razorpay_signature,
     });
     if (r.ok && r.data.subscriptionId) {
+      onFinished(true);
       setPay({ kind: 'active', startDate: r.data.startDate, endDate: r.data.endDate, fromCredit: false });
       return;
     }
     // Money moved; our confirmation did not land. Never call this a failure — the
-    // Razorpay webhook is the backstop that activates the plan.
+    // Razorpay webhook is the backstop that activates the plan. The draft (with the
+    // same idempotency key) is KEPT, so paying "again" after a refresh replays this order.
+    onFinished(false);
     setPay({ kind: 'received', message: r.ok ? null : r.fail.error });
   };
 
-  if (pay.kind === 'active') return <Success {...pay} />;
+  if (pay.kind === 'active') return <Success {...pay} rules={rules} />;
   if (pay.kind === 'received') return <PaymentReceived message={pay.message} />;
 
-  const zoneText = area.kind === 'yes' ? area.zone : null;
+  const total = known ? known.amountPaise : q.finalPaise;
+  const saving = known ? known.savingPaise : q.savingPaise;
 
   return (
-    <section className="sb-panel" aria-labelledby="sb-review-h">
-      <p className="eyebrow">Step 7 of {STEPS.length}</p>
-      <h1 id="sb-review-h">Check &amp; pay.</h1>
+    <section className="sb-panel" aria-labelledby="sb-pay-h">
+      <h1 id="sb-pay-h">Check and pay</h1>
       <StepError fail={error} />
 
-      <dl className="sb-review">
-        <div>
-          <dt>Plan</dt>
-          <dd>
-            {planLabel}{' '}
-            <button type="button" className="sb-linkbtn" onClick={() => onEdit(plan.purpose === 'renewal' ? 'qty' : 'milk')}>
-              Change
-            </button>
-          </dd>
+      <div className="sb-receipt">
+        <dl>
+          <div>
+            <dt>Milk</dt>
+            <dd>
+              {milkName(plan.kind)} · {qtyName(plan.quantityId)} each morning
+            </dd>
+            <dd className="sb-edit">
+              <EditButton what="milk and amount" onClick={() => onEdit('plan')} />
+            </dd>
+          </div>
+          <div>
+            <dt>For</dt>
+            <dd>
+              {termName(plan.tenureId)} ({q.days} days) · {pauseDaysFor(q.days)} pause days
+            </dd>
+            <dd className="sb-edit" />
+          </div>
+          <div>
+            <dt>When</dt>
+            <dd>
+              {known ? (
+                <>
+                  {dateLabel(known.startDate)} → {dateLabel(known.endDate, true)}
+                </>
+              ) : pv.kind === 'error' ? (
+                'Dates not confirmed yet'
+              ) : (
+                'Working out the dates…'
+              )}{' '}
+              · {rules.windowStart}–{rules.windowEnd}
+            </dd>
+            <dd className="sb-edit">
+              <EditButton what="start date" onClick={() => onEdit('plan')} />
+            </dd>
+          </div>
+          <div>
+            <dt>To</dt>
+            <dd>
+              {details.name}, {details.address}
+              {details.landmark ? ` (${details.landmark})` : ''}
+            </dd>
+            <dd className="sb-edit">
+              <EditButton what="address" onClick={() => onEdit('where')} />
+            </dd>
+          </div>
+        </dl>
+        <div className="sb-receipt-total">
+          <span>{saving > 0 ? `Total · you save ${formatINR(saving)}` : 'Total'}</span>
+          <b>{formatINR(total)}</b>
         </div>
-        <div>
-          <dt>Deliver to</dt>
-          <dd>
-            {details.name} — {details.address}
-            {details.landmark ? ` (${details.landmark})` : ''}
-            {zoneText ? ` · ${zoneText}` : ''}{' '}
-            <button type="button" className="sb-linkbtn" onClick={() => onEdit('address')}>
-              Change
-            </button>
-          </dd>
-        </div>
-        <div>
-          <dt>Pin</dt>
-          <dd>
-            {pin.lat.toFixed(5)}, {pin.lng.toFixed(5)}{' '}
-            <button type="button" className="sb-linkbtn" onClick={() => onEdit('where')}>
-              Move
-            </button>
-          </dd>
-        </div>
-      </dl>
+        {known && known.creditAppliedPaise > 0 ? (
+          <>
+            <div className="sb-receipt-line">
+              <span>Paid from your credit</span>
+              <b>− {formatINR(known.creditAppliedPaise)}</b>
+            </div>
+            <div className="sb-receipt-total">
+              <span>To pay now</span>
+              <b>{formatINR(known.payablePaise)}</b>
+            </div>
+          </>
+        ) : null}
+      </div>
 
-      {area.kind !== 'yes' ? (
+      {pv.kind === 'error' ? (
+        <>
+          <StepError fail={pv.fail} />
+          <button
+            type="button"
+            className="sb-btn"
+            onClick={() => {
+              if (stepForFail(pv.fail) !== 'pay') onFail(pv.fail);
+              else retryPreview();
+            }}
+          >
+            {stepForFail(pv.fail) === 'pay' ? 'Try again' : 'Fix this'}
+          </button>
+        </>
+      ) : null}
+
+      {area.kind === 'idle' || area.kind === 'checking' ? (
+        <p className="sb-secondary">
+          <span className="sb-spinner" aria-hidden="true" /> Checking your delivery area…
+        </p>
+      ) : area.kind !== 'yes' ? (
         <div className="sb-notice is-err" role="alert">
           <span className="sb-dot" aria-hidden="true" />
           <span>
-            We have not confirmed delivery to your pin.{' '}
+            We cannot confirm delivery to your pin.{' '}
             <button type="button" className="sb-linkbtn" onClick={() => onEdit('where')}>
               Go back to the map
             </button>
@@ -1165,21 +1387,29 @@ function ReviewStep({
           </p>
         </>
       ) : auth.kind === 'out' ? (
-        <OtpForm
-          intro="Sign in with your mobile to pay — a one-time code, no password."
-          onSignedIn={(mobile) => setAuth({ kind: 'in', mobile })}
-        />
+        <div className="sb-signin">
+          <h2 className="sb-subhead">Sign in to pay</h2>
+          <OtpForm
+            intro="We send a 6-digit code to your mobile on WhatsApp. There is no password."
+            onSignedIn={(mobile) => {
+              setAuth({ kind: 'in', mobile });
+              void callApi<MeResponse>('/api/auth/me').then((r) => {
+                if (r.ok) applyMe(r.data);
+              });
+            }}
+          />
+        </div>
       ) : (
         <div className="sb-pay">
           <p className="sb-secondary">
-            Signed in as {auth.mobile}.{' '}
+            Signed in as {formatMobile(auth.mobile)}.{' '}
             <button
               type="button"
               className="sb-linkbtn"
               disabled={pay.kind !== 'idle'}
               onClick={async () => {
                 await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
-                keyRef.current = null;
+                setPayKey(null);
                 setAuth({ kind: 'out' });
               }}
             >
@@ -1187,159 +1417,126 @@ function ReviewStep({
             </button>
           </p>
 
-          {pv.kind === 'loading' ? (
+          {known && known.creditAvailablePaise > 0 ? (
+            <label className="sb-check-row">
+              <input
+                type="checkbox"
+                checked={useCredit}
+                disabled={pay.kind !== 'idle'}
+                onChange={(e) => setUseCredit(e.target.checked)}
+              />
+              <span>Use my Maavuli credit ({formatINR(known.creditAvailablePaise)} available)</span>
+            </label>
+          ) : null}
+
+          <label className="sb-check-row">
+            <input
+              type="checkbox"
+              checked={whatsapp}
+              disabled={pay.kind !== 'idle'}
+              onChange={(e) => {
+                whatsappTouchedRef.current = true;
+                setWhatsappTouched(true);
+                setWhatsapp(e.target.checked);
+              }}
+            />
+            <span>
+              Send me updates on WhatsApp — order confirmation, the day before the first delivery, and if a delivery
+              is missed or a refund is made. No marketing. You can turn this off any time in your account.
+            </span>
+          </label>
+
+          {pay.kind === 'ready' ? (
+            <>
+              <RazorpayCheckout
+                order={pay.order}
+                mobile={auth.mobile}
+                planLabel={planLabel}
+                label={`Pay ${formatINR(pay.order.amountPaise)}`}
+                onOpen={() => setPay((p) => (p.kind === 'ready' ? { ...p, note: null } : p))}
+                onDismiss={() =>
+                  setPay((p) =>
+                    p.kind === 'ready'
+                      ? { ...p, note: `The payment window was closed, so nothing was charged. Tap Pay ${formatINR(p.order.amountPaise)} to try again.` }
+                      : p,
+                  )
+                }
+                onPaid={(r) => void onPaid(r)}
+                onError={(message) => setPay((p) => (p.kind === 'ready' ? { ...p, note: message } : p))}
+              />
+              {pay.note ? (
+                <div className="sb-notice is-err" role="alert">
+                  <span className="sb-dot" aria-hidden="true" />
+                  <span>{pay.note}</span>
+                </div>
+              ) : null}
+            </>
+          ) : pay.kind === 'verifying' ? (
+            <p className="sb-secondary" role="status">
+              <span className="sb-spinner" aria-hidden="true" /> Payment received — confirming it…
+            </p>
+          ) : pv.kind === 'ok' ? (
+            <button
+              type="button"
+              className={`sb-btn sb-paybtn${pay.kind === 'creating' ? ' is-busy' : ''}`}
+              onClick={() => void startCheckout()}
+              disabled={pay.kind === 'creating'}
+            >
+              {pay.kind === 'creating' ? (
+                <>
+                  <span className="sb-spinner" aria-hidden="true" /> Starting…
+                </>
+              ) : pv.data.payablePaise === 0 ? (
+                'Confirm — paid from credit'
+              ) : (
+                `Pay ${formatINR(pv.data.payablePaise)}`
+              )}
+            </button>
+          ) : pv.kind === 'loading' ? (
             <p className="sb-secondary">
               <span className="sb-spinner" aria-hidden="true" /> Working out your final amount…
             </p>
-          ) : pv.kind === 'error' ? (
-            <>
-              <StepError fail={pv.fail} />
-              <button
-                type="button"
-                className="sb-btn"
-                onClick={() => {
-                  const s = stepForFail(pv.fail);
-                  if (s !== 'review') onFail(pv.fail);
-                  else retryPreview();
-                }}
-              >
-                {stepForFail(pv.fail) === 'review' ? 'Try again' : 'Fix this'}
-              </button>
-            </>
-          ) : (
-            <>
-              <ul className="sb-lines sb-final">
-                <li>
-                  <span>First delivery</span>
-                  <b>{dateLabel(pv.data.startDate, true)}</b>
-                </li>
-                <li>
-                  <span>Last delivery</span>
-                  <b>{dateLabel(pv.data.endDate, true)}</b>
-                </li>
-                <li>
-                  <span>
-                    {pv.data.days} days · {pv.data.litres} L
-                  </span>
-                  <b>{formatINR(pv.data.amountPaise)}</b>
-                </li>
-                {pv.data.savingPaise > 0 ? (
-                  <li className="sb-save">
-                    <span>You save</span>
-                    <b>{formatINR(pv.data.savingPaise)}</b>
-                  </li>
-                ) : null}
-                {pv.data.creditAppliedPaise > 0 ? (
-                  <li className="sb-save">
-                    <span>Paid from your credit</span>
-                    <b>− {formatINR(pv.data.creditAppliedPaise)}</b>
-                  </li>
-                ) : null}
-                <li className="sb-total">
-                  <span>To pay now</span>
-                  <b>{formatINR(pv.data.payablePaise)}</b>
-                </li>
-              </ul>
-
-              {pv.data.creditAvailablePaise > 0 ? (
-                <label className="sb-check-row">
-                  <input
-                    type="checkbox"
-                    checked={useCredit}
-                    disabled={pay.kind !== 'idle'}
-                    onChange={(e) => setUseCredit(e.target.checked)}
-                  />
-                  <span>Use my credit ({formatINR(pv.data.creditAvailablePaise)} available)</span>
-                </label>
-              ) : null}
-
-              <label className="sb-check-row">
-                <input
-                  type="checkbox"
-                  checked={whatsapp}
-                  disabled={pay.kind !== 'idle'}
-                  onChange={(e) => {
-                    whatsappTouchedRef.current = true;
-                    setWhatsappTouched(true);
-                    setWhatsapp(e.target.checked);
-                  }}
-                />
-                <span>
-                  Send me updates on WhatsApp — order confirmation, the day before the first delivery, and if a
-                  delivery is missed or a refund is made. No marketing. You can turn this off any time in your
-                  account.
-                </span>
-              </label>
-
-              {pay.kind === 'ready' ? (
-                <>
-                  <RazorpayCheckout
-                    order={pay.order}
-                    mobile={auth.mobile}
-                    planLabel={planLabel}
-                    onPaid={(r) => void onPaid(r)}
-                    onError={(message) => setPay((p) => (p.kind === 'ready' ? { ...p, note: message } : p))}
-                  />
-                  {pay.note ? (
-                    <div className="sb-notice is-err" role="alert">
-                      <span className="sb-dot" aria-hidden="true" />
-                      <span>{pay.note}</span>
-                    </div>
-                  ) : null}
-                </>
-              ) : pay.kind === 'verifying' ? (
-                <p className="sb-secondary" role="status">
-                  <span className="sb-spinner" aria-hidden="true" /> Payment received — confirming it with the bank…
-                </p>
-              ) : (
-                <button
-                  type="button"
-                  className={`sb-btn${pay.kind === 'creating' ? ' is-busy' : ''}`}
-                  onClick={() => void startCheckout()}
-                  disabled={pay.kind === 'creating'}
-                >
-                  {pay.kind === 'creating' ? (
-                    <>
-                      <span className="sb-spinner" aria-hidden="true" /> Starting…
-                    </>
-                  ) : pv.data.payablePaise === 0 ? (
-                    'Confirm — paid from credit'
-                  ) : (
-                    `Pay ${formatINR(pv.data.payablePaise)}`
-                  )}
-                </button>
-              )}
-              <p className="sb-hint">
-                Prepaid, fixed term, no auto-renewal. The amount is worked out on our server — what you see here
-                is what you are charged.
-              </p>
-            </>
-          )}
+          ) : null}
         </div>
       )}
+
+      <p className="sb-hint">
+        One payment for the whole plan. No auto-renewal. You can pause a morning until {rules.cutoff} the day before.
+      </p>
     </section>
   );
 }
 
-function Success({ startDate, endDate, fromCredit }: { startDate: string | null; endDate: string | null; fromCredit: boolean }) {
+function Success({
+  startDate,
+  endDate,
+  fromCredit,
+  rules,
+}: {
+  startDate: string | null;
+  endDate: string | null;
+  fromCredit: boolean;
+  rules: DayRuleLabels;
+}) {
+  const ref = useRef<HTMLHeadingElement>(null);
+  useEffect(() => ref.current?.focus({ preventScroll: true }), []);
   return (
-    <section className="sb-panel">
+    <section className="sb-panel" aria-labelledby="sb-done-h">
       <div className="sb-success" role="status">
         <span className="sb-check" aria-hidden="true">
           ✓
         </span>
-        <h2>{fromCredit ? 'Done — paid from your credit.' : 'Your plan is confirmed.'}</h2>
-        <p className="sb-lead">
-          {startDate && endDate ? (
-            <>
-              Deliveries run from <b>{dateLabel(startDate, true)}</b> to <b>{dateLabel(endDate, true)}</b>.
-            </>
-          ) : (
-            <>Your plan is confirmed.</>
-          )}{' '}
-          Pause a day or check the schedule in <Link href="/account">My Deliveries</Link>.
-        </p>
-        <Link className="cta" href="/account">
+        <h1 id="sb-done-h" ref={ref} tabIndex={-1}>
+          {fromCredit ? 'Done — paid from your credit.' : 'Your plan is confirmed.'}
+        </h1>
+        {startDate ? (
+          <p className="sb-lead">
+            Your first milk comes on <b>{dateLabel(startDate, true)}</b>, between {rules.windowStart} and{' '}
+            {rules.windowEnd}.{endDate ? <> The plan runs to <b>{dateLabel(endDate, true)}</b>.</> : null}
+          </p>
+        ) : null}
+        <p className="sb-lead">Pause a morning or see your schedule in My Deliveries.</p>
+        <Link className="sb-btn" href="/account">
           Go to my deliveries
         </Link>
       </div>
@@ -1348,20 +1545,24 @@ function Success({ startDate, endDate, fromCredit }: { startDate: string | null;
 }
 
 function PaymentReceived({ message }: { message: string | null }) {
+  const ref = useRef<HTMLHeadingElement>(null);
+  useEffect(() => ref.current?.focus({ preventScroll: true }), []);
   return (
-    <section className="sb-panel">
+    <section className="sb-panel" aria-labelledby="sb-received-h">
       <div className="sb-success" role="status">
         <span className="sb-check" aria-hidden="true">
           ✓
         </span>
-        <h2>Payment received.</h2>
+        <h1 id="sb-received-h" ref={ref} tabIndex={-1}>
+          Payment received.
+        </h1>
         <p className="sb-lead">
-          We could not confirm it with the gateway from this page just now{message ? ` (${message})` : ''}. Please{' '}
-          <b>do not pay again</b> — the gateway tells us directly, and your plan appears in{' '}
-          <Link href="/account">My Deliveries</Link> once it does, usually within a few minutes. If it has not
-          appeared in an hour, call <a href={PHONE_HREF}>{PHONE}</a>.
+          We could not confirm it with the payment gateway from this page just now{message ? ` (${message})` : ''}.
+          Please <b>do not pay again</b> — the gateway tells us directly, and your plan appears in{' '}
+          <Link href="/account">My Deliveries</Link> once it does, usually within a few minutes. If it has not appeared
+          in an hour, call <a href={PHONE_HREF}>{PHONE}</a>.
         </p>
-        <Link className="cta" href="/account">
+        <Link className="sb-btn" href="/account">
           Go to my deliveries
         </Link>
       </div>
@@ -1430,14 +1631,11 @@ function SummaryCard({
   area: Area;
   address: string;
 }) {
-  const milkLabel = milk ? PRODUCTS.find((p) => p.kind === milk)?.label : null;
-  const qtyLabel = qty ? QUANTITIES.find((x) => x.id === qty)?.label : null;
-  const termLabel = term ? TENURES.find((t) => t.id === term)?.label : null;
   const areaLine =
     area.kind === 'yes'
       ? area.zone
-        ? `Delivers · ${area.zone}`
-        : 'Delivers here'
+        ? `We deliver · ${area.zone}`
+        : 'We deliver here'
       : area.kind === 'no'
         ? 'Not in our area yet'
         : area.kind === 'unknown'
@@ -1451,64 +1649,82 @@ function SummaryCard({
   return (
     <div className="sb-card">
       <p className="sb-card-eyebrow">Your plan</p>
-      <div className="sb-price" aria-live="polite">
+      <div className="sb-price">
         {q ? (
           <>
             <span className="sb-amount">{formatINR(q.finalPaise)}</span>
             <span className="sb-per">
-              {formatINR(q.perLitrePaise)} / litre · {q.days} days prepaid
+              {formatINR(q.perLitrePaise)} a litre · {q.days} days, paid once
             </span>
           </>
         ) : (
           <>
             <span className="sb-amount is-pending">—</span>
-            <span className="sb-per">Choose a milk, amount and term</span>
+            <span className="sb-per">Choose the milk, how much and how long</span>
           </>
         )}
       </div>
       <ul className="sb-lines">
         <li className={areaLine ? undefined : 'is-empty'}>
-          <span>Location</span>
+          <span>Where</span>
           <b>{areaLine ?? 'no pin yet'}</b>
         </li>
         <li className={address ? undefined : 'is-empty'}>
-          <span>Address</span>
+          <span>Door</span>
           <b>{address || 'not entered'}</b>
         </li>
-        <li className={milkLabel ? undefined : 'is-empty'}>
+        <li className={milk ? undefined : 'is-empty'}>
           <span>Milk</span>
-          <b>{milkLabel ?? 'not chosen'}</b>
+          <b>{milk ? milkName(milk) : 'not chosen'}</b>
         </li>
-        <li className={qtyLabel ? undefined : 'is-empty'}>
-          <span>Each day</span>
-          <b>{qtyLabel ?? 'not chosen'}</b>
+        <li className={qty ? undefined : 'is-empty'}>
+          <span>Each morning</span>
+          <b>{qty ? qtyName(qty) : 'not chosen'}</b>
         </li>
-        <li className={termLabel ? undefined : 'is-empty'}>
-          <span>Term</span>
-          <b>{termLabel ?? 'not chosen'}</b>
+        <li className={term ? undefined : 'is-empty'}>
+          <span>For</span>
+          <b>{term ? `${termName(term)} · ${pauseDaysFor(q?.days ?? TENURES.find((t) => t.id === term)?.days ?? 30)} pause days` : 'not chosen'}</b>
         </li>
-        {q ? (
+        {q && q.savingPaise > 0 ? (
           <>
-            <li>
-              <span>Total milk</span>
-              <b>{q.litres} litres</b>
+            <li className="sb-strike">
+              <span>Full price</span>
+              <b>{formatINR(q.originalPaise)}</b>
             </li>
-            {q.savingPaise > 0 ? (
-              <>
-                <li className="sb-strike">
-                  <span>Full price</span>
-                  <b>{formatINR(q.originalPaise)}</b>
-                </li>
-                <li className="sb-save">
-                  <span>You save ({q.discountPct}%)</span>
-                  <b>{formatINR(q.savingPaise)}</b>
-                </li>
-              </>
-            ) : null}
+            <li className="sb-save">
+              <span>You save ({q.discountPct}%)</span>
+              <b>{formatINR(q.savingPaise)}</b>
+            </li>
           </>
         ) : null}
       </ul>
-      <p className="sb-rail-note">Prices are fixed-term and prepaid — one payment, no auto-renewal.</p>
+      <p className="sb-rail-note">One payment for the whole plan. No auto-renewal.</p>
     </div>
   );
+}
+
+/* ------------------------------------------------------------- preview ---- */
+
+/** `last` keeps the previous answer on screen while a new one loads, so nothing flickers. */
+type Load<T> = { kind: 'loading'; last?: T } | { kind: 'error'; fail: ApiFail } | { kind: 'ok'; data: T };
+
+/** POST /api/checkout/preview, re-run whenever the body (or `extraKey`) changes. */
+function usePreview(body: (PlanBody & { useCredit: boolean }) | null, extraKey = ''): [Load<PreviewJSON>, () => void] {
+  const [state, setState] = useState<Load<PreviewJSON>>({ kind: 'loading' });
+  const [nonce, setNonce] = useState(0);
+  const key = body ? `${JSON.stringify(body)}|${extraKey}` : '';
+  useEffect(() => {
+    if (!body) return;
+    let alive = true;
+    setState((s) => ({ kind: 'loading', last: s.kind === 'ok' ? s.data : s.kind === 'loading' ? s.last : undefined }));
+    void postJson<{ preview: PreviewJSON }>('/api/checkout/preview', body).then((r) => {
+      if (!alive) return;
+      setState(r.ok ? { kind: 'ok', data: r.data.preview } : { kind: 'error', fail: r.fail });
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, nonce]);
+  return [state, () => setNonce((n) => n + 1)];
 }

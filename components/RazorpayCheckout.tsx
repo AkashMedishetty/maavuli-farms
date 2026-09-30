@@ -66,6 +66,8 @@ export default function RazorpayCheckout({
   planLabel,
   onPaid,
   onError,
+  onOpen,
+  onDismiss,
   label = 'Pay & start delivery',
 }: {
   order: CheckoutOrder;
@@ -76,6 +78,10 @@ export default function RazorpayCheckout({
   /** Razorpay reported success. The parent confirms via /api/payments/verify. */
   onPaid: (r: RazorpayResponse) => void;
   onError: (message: string) => void;
+  /** The payment window is opening (a good moment to clear an old error). */
+  onOpen?: () => void;
+  /** The customer closed the payment window without paying. */
+  onDismiss?: () => void;
 }) {
   const [scriptReady, setScriptReady] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -96,6 +102,7 @@ export default function RazorpayCheckout({
     }
     setOpening(true);
     openedRef.current = true;
+    onOpen?.();
     try {
       const rzp = new window.Razorpay({
         key: order.keyId,
@@ -111,7 +118,10 @@ export default function RazorpayCheckout({
           onPaid(r);
         },
         modal: {
-          ondismiss: () => setOpening(false),
+          ondismiss: () => {
+            setOpening(false);
+            onDismiss?.();
+          },
         },
       });
       rzp.on('payment.failed', () => {
@@ -123,7 +133,7 @@ export default function RazorpayCheckout({
       setOpening(false);
       onError('Could not open the payment window. Please try again.');
     }
-  }, [order, mobile, planLabel, onPaid, onError]);
+  }, [order, mobile, planLabel, onPaid, onError, onOpen, onDismiss]);
 
   // Auto-open once the script is ready, so the flow feels continuous after the
   // order is created. Guarded so it fires exactly once.

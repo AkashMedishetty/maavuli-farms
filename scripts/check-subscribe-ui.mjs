@@ -1,69 +1,226 @@
-// Walk the real subscribe flow in a browser, through the new details step.
+// Walk the real three-screen subscribe flow in a headless browser and assert behaviour.
+// No screenshots: every check reads the DOM, the URL or history.state.
+//
+//   MONGODB_DB=maavuli_test next dev -H 127.0.0.1 -p 3417      (in another shell)
+//   SUBSCRIBE_BASE=http://127.0.0.1:3417 node scripts/check-subscribe-ui.mjs
+//
+// Needs a dev/test database with the dev zones (pnpm db:seed-dev) and no WhatsApp
+// provider (the sign-in code is then shown on screen). It stops at the Pay button:
+// no order is created and nothing is charged.
 import { chromium, devices } from 'playwright';
-import { execFileSync } from 'node:child_process';
-const BASE = 'http://127.0.0.1:3000';
-const cap = f => { try { execFileSync('sips', ['-Z', '1900', f], { stdio: 'ignore' }); } catch {} };
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+
+const BASE = process.env.SUBSCRIBE_BASE ?? 'http://127.0.0.1:3417';
+const IN_ZONE = { latitude: 17.4741, longitude: 78.5475, accuracy: 10 }; // DEV Safilguda
+const OUT_OF_ZONE = { latitude: 17.4401, longitude: 78.3489, accuracy: 10 }; // Gachibowli
+const T = 90_000;
+
 let bad = 0;
-const check = (l, c, d = '') => { console.log(`  ${c ? 'ok  ' : 'FAIL'} ${l}${d ? '  ' + d : ''}`); if (!c) bad++; };
+const check = (label, cond, detail = '') => {
+  console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${label}${detail ? `  (${detail})` : ''}`);
+  if (!cond) bad++;
+};
 
-const b = await chromium.launch();
-for (const [label, opts] of [['desktop', { viewport: { width: 1440, height: 1000 } }], ['mobile', { ...devices['Pixel 7'] }]]) {
-  console.log(`\n${label}`);
-  // grant geolocation so the optional pin path can be exercised
-  const ctx = await b.newContext({ ...opts, permissions: ['geolocation'], geolocation: { latitude: 17.4800, longitude: 78.5500 } });
-  const page = await ctx.newPage();
-  await page.addInitScript(() => { try { sessionStorage.setItem('mv-skip-loader', '1'); } catch {} });
-  await page.goto(BASE + '/subscribe', { waitUntil: 'networkidle' });
+const browser = await launch();
 
-  // step 1: pincode
-  await page.locator('input').first().fill('500047');
-  await page.getByRole('button', { name: /check/i }).first().click();
-  await page.waitForTimeout(1200);
-
-  // steps 2-4: pick the first option each time
-  for (const stepName of ['milk', 'quantity', 'term']) {
-    const cards = page.locator('.sb-choice, button[class*=choice], .sb-opt');
-    const n = await cards.count();
-    if (!n) { check(`${stepName}: options present`, false); break; }
-    await cards.first().click();
-    await page.waitForTimeout(700);
+/** Playwright's own browser, else the newest headless shell already on this machine. */
+async function launch() {
+  try {
+    return await chromium.launch();
+  } catch (err) {
+    const root = `${homedir()}/Library/Caches/ms-playwright`;
+    const found = process.env.CHROMIUM_PATH
+      ? [process.env.CHROMIUM_PATH]
+      : (existsSync(root) ? readdirSync(root) : [])
+          .filter((d) => d.startsWith('chromium_headless_shell-'))
+          .sort()
+          .reverse()
+          .map((d) => `${root}/${d}/chrome-headless-shell-mac-arm64/chrome-headless-shell`)
+          .filter((p) => existsSync(p));
+    if (!found.length) throw err;
+    console.log(`(using ${found[0]})`);
+    return chromium.launch({ executablePath: found[0] });
   }
+}
 
-  const onDetails = await page.locator('#sb-details-h').count();
-  check('reached the details step', onDetails > 0);
-  if (!onDetails) { await ctx.close(); continue; }
+async function newPage(opts, geolocation) {
+  const ctx = await browser.newContext({ ...opts, permissions: ['geolocation'], geolocation });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    const t = m.text();
+    // map tiles and the favicon are not ours to judge here
+    if (/tile\.openstreetmap|favicon|Failed to load resource/i.test(t)) return;
+    errors.push(`console: ${t.replace(/\s+/g, ' ').slice(0, 220)}`);
+  });
+  await page.addInitScript(() => {
+    try { sessionStorage.setItem('mv-skip-loader', '1'); } catch {}
+  });
+  page.setDefaultTimeout(T);
+  return { ctx, page, errors };
+}
 
-  // continue must be disabled until name + address are valid
-  const cont = page.getByRole('button', { name: /continue to payment/i });
-  check('Continue disabled with empty fields', await cont.isDisabled());
-  await page.locator('.sb-field input').first().fill('Akash');
-  await page.locator('.sb-field textarea').fill('Flat 3A');
-  await page.waitForTimeout(200);
-  check('still disabled with a too-short address', await cont.isDisabled());
-  await page.locator('.sb-field textarea').fill('Flat 3A, Sai Residency, Balram Nagar, Safilguda');
-  await page.locator('.sb-field input').nth(1).fill('opposite the water tank');
-  await page.waitForTimeout(250);
-  check('enabled once name and address are valid', !(await cont.isDisabled()));
+const h1 = (page, name) => page.getByRole('heading', { level: 1, name });
+const sbStep = (page) => page.evaluate(() => window.history.state?.sbStep ?? null);
 
-  // optional pin
-  await page.getByRole('button', { name: /use my current location/i }).click();
-  await page.waitForTimeout(2500);
-  const pinned = await page.locator('.sb-locbox .sb-help').allTextContents();
-  check('location pinned', pinned.some(t => /Pinned to/i.test(t)), pinned.find(t => /Pinned/i.test(t))?.slice(0, 60) ?? pinned.join(' | ').slice(0, 70));
-  const zone = await page.locator('.sb-locbox .sb-notice').first().textContent().catch(() => null);
-  check('zone checked immediately', Boolean(zone), (zone ?? '').trim().slice(0, 70));
+/**
+ * React is attached: the flow records its screen in history.state from an effect.
+ * A tap on the server-rendered HTML before that does nothing, so every fresh load
+ * waits for it before interacting.
+ */
+const hydrated = (page) => page.waitForFunction(() => window.history.state?.sbStep != null, null, { timeout: T });
 
-  await page.screenshot({ path: `ss/sub-details-${label}.png`, fullPage: true });
-  cap(`ss/sub-details-${label}.png`);
-  console.log(`  wrote ss/sub-details-${label}.png`);
+/** Wait; on a timeout, print what the page was showing, then fail. */
+async function waitOrExplain(page, locator, errors, what, ms = T) {
+  try {
+    await locator.waitFor({ timeout: ms });
+  } catch (err) {
+    const grab = async (sel) =>
+      ((await page.locator(sel).first().textContent({ timeout: 2000 }).catch(() => '')) ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+    console.log(`  FAIL waiting for ${what}`);
+    console.log(`       url: ${page.url()}`);
+    for (const sel of ['main.sb h1', '.lp-geo', '.lp-status', '.sb-areastate']) console.log(`       ${sel}: ${await grab(sel)}`);
+    if (errors.length) console.log(`       errors: ${errors.slice(0, 5).join(' | ')}`);
+    throw err;
+  }
+}
 
-  // and on to payment
-  await cont.click();
-  await page.waitForTimeout(1200);
-  const atCheckout = await page.locator('body').textContent();
-  check('reached the confirm/pay step', /prepaid|pay|sign in/i.test(atCheckout ?? ''));
+/* ------------------------------------------------------------ happy path -- */
+console.log('\nphone (Pixel 7), in the delivery area');
+{
+  const { ctx, page, errors } = await newPage({ ...devices['Pixel 7'] }, IN_ZONE);
+  await page.goto(`${BASE}/subscribe`, { waitUntil: 'domcontentloaded', timeout: T });
+  await h1(page, 'Where should we deliver?').waitFor();
+  await hydrated(page);
+  check('screen 1 is the map', true);
+  check('stepper shows three steps', (await page.locator('.sb-stepper li').count()) === 3);
+  check('continue is disabled before a pin', await page.getByRole('button', { name: 'Continue to your plan' }).isDisabled());
+
+  await page.getByRole('button', { name: /use my location/i }).click();
+  await waitOrExplain(page, page.getByText('We deliver here', { exact: true }), errors, 'the zone check (in the area)');
+  const zoneText = ((await page.locator('.sb-areastate').textContent()) ?? '').replace(/\s+/g, ' ').trim();
+  check('zone check says yes, with the delivery window', /Milk arrives between .+ and .+ each morning/.test(zoneText), zoneText);
+
+  await page.getByLabel(/Name for the delivery/).fill('Anitha Rao');
+  await page.getByLabel(/Flat \/ house/).fill('203');
+  await page.getByLabel(/Floor/).fill('2');
+  await page.getByLabel(/Society, building or street/).fill('Sai Residency, Balram Nagar');
+  check('the rider preview reads the address', await page.getByText('The rider will read:').isVisible());
+  await page.getByRole('button', { name: 'Continue to your plan' }).click();
+
+  await h1(page, 'Your milk').waitFor();
+  check('screen 2 is the plan', true);
+  check('history entry marks the plan screen', (await sbStep(page)) === 'plan', String(await sbStep(page)));
+  check('continue waits for all three choices', await page.locator('.sb-dock .sb-btn').isDisabled());
+
+  await page.locator('label.sb-milk', { hasText: 'Buffalo' }).click();
+  await page.locator('label.sb-opt', { hasText: '1 litre' }).click();
+  await page.locator('label.sb-term', { hasText: '3 Months' }).click();
+  const amt = (await page.locator('.sb-dock-amt').textContent())?.trim();
+  check('price bar shows the quote', amt === '₹8,122.50', amt);
+  check('term rows show pause days and per-litre', await page.locator('label.sb-term', { hasText: '20 pause days' }).locator('text=₹90.25 a litre').isVisible());
+  await page.getByText(/That is the earliest we can start/).waitFor();
+  check('first delivery date comes from the server', true);
+  check('selected milk is filled (is-on)', (await page.locator('label.sb-milk.is-on').count()) === 1);
+
+  // the phone's Back goes to the map, with the door details kept; Forward comes back
+  await page.goBack({ waitUntil: 'domcontentloaded' });
+  await waitOrExplain(page, h1(page, 'Where should we deliver?'), errors, 'screen 1 after Back', 20_000);
+  check('Back returns to screen 1', true);
+  await waitOrExplain(page, page.getByText('We deliver here', { exact: true }), errors, 'the zone check after Back');
+  check('door details survive Back', (await page.getByLabel(/Name for the delivery/).inputValue()) === 'Anitha Rao');
+  await page.goForward({ waitUntil: 'domcontentloaded' });
+  await waitOrExplain(page, h1(page, 'Your milk'), errors, 'screen 2 after Forward', 20_000);
+  check('Forward returns to screen 2', true);
+
+  // refresh keeps everything
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await h1(page, 'Your milk').waitFor();
+  const amt2 = (await page.locator('.sb-dock-amt').textContent())?.trim();
+  check('refresh keeps the screen and the plan', amt2 === '₹8,122.50', amt2);
+
+  // …and Back still works after a refresh
+  await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => null);
+  const backOk = await h1(page, 'Where should we deliver?').waitFor({ timeout: 20_000 }).then(() => true, () => false);
+  const landed = backOk ? '' : `landed on ${page.url()} · h1: ${await page.locator('h1').first().textContent({ timeout: 2000 }).catch(() => 'none')}`;
+  check('after a refresh, Back still returns to screen 1', backOk, landed);
+  if (backOk) {
+    await page.goForward({ waitUntil: 'domcontentloaded' }).catch(() => null);
+  } else {
+    await page.goto(`${BASE}/subscribe`, { waitUntil: 'domcontentloaded', timeout: T });
+    await hydrated(page);
+  }
+  await waitOrExplain(page, h1(page, 'Your milk'), errors, 'screen 2 again', 30_000);
+
+  await page.locator('.sb-dock .sb-btn').click();
+  await h1(page, 'Check and pay').waitFor();
+  check('screen 3 is the receipt', true);
+  check('receipt total before sign-in', (await page.locator('.sb-receipt-total b').first().textContent())?.trim() === '₹8,122.50');
+  await page.locator('.sb-receipt').getByText('→').waitFor();
+  check('receipt shows the server dates', true);
+  check('no map coordinates on the receipt', !(await page.locator('.sb-receipt').textContent()).match(/\d{2}\.\d{4,}/));
+  await page.getByRole('heading', { name: 'Sign in to pay' }).waitFor();
+  check('sign-in comes last', true);
+
+  await page.getByLabel('Your mobile number').fill('9800000101');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  const hint = page.getByText(/your code is \d{6}/);
+  await hint.waitFor();
+  const code = (await hint.textContent()).match(/(\d{6})/)?.[1];
+  await page.getByLabel(/6-digit code/).fill(code ?? '');
+  await page.getByText(/Signed in as \+91 98000 00101/).waitFor();
+  check('six digits sign in without an extra tap', true);
+  const payBtn = page.getByRole('button', { name: /^Pay ₹8,122\.50$/ });
+  await payBtn.waitFor();
+  check('pay button carries the amount', await payBtn.isVisible());
+
+  // edit from the receipt, then come straight back to pay
+  await page.getByRole('button', { name: /Edit address/ }).click();
+  await h1(page, 'Where should we deliver?').waitFor();
+  const next = page.getByRole('button', { name: 'Continue to pay' });
+  await next.waitFor();
+  check('after an edit, Continue goes back to pay', true);
+  await next.click();
+  await h1(page, 'Check and pay').waitFor();
+  check('…and lands on the receipt', true);
+
+  check('no page or console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
-await b.close();
-console.log(`\n${bad === 0 ? 'ALL CHECKS PASSED' : bad + ' FAILED'}`);
+
+/* --------------------------------------------------------- out of area -- */
+console.log('\nphone, outside every delivery zone');
+{
+  const { ctx, page, errors } = await newPage({ ...devices['Pixel 7'] }, OUT_OF_ZONE);
+  await page.goto(`${BASE}/subscribe`, { waitUntil: 'domcontentloaded', timeout: T });
+  await h1(page, 'Where should we deliver?').waitFor();
+  await hydrated(page);
+  await page.getByRole('button', { name: /use my location/i }).click();
+  await waitOrExplain(page, page.getByText(/We don.t deliver to this spot yet/), errors, 'the zone check (outside the area)');
+  check('says so plainly', true);
+  check('offers a call', await page.getByRole('link', { name: /^Call / }).isVisible());
+  check('offers an email with the location', (await page.getByRole('link', { name: 'Email us your location' }).getAttribute('href'))?.includes('google.com%2Fmaps') === true);
+  check('no door form outside the area', (await page.getByLabel(/Name for the delivery/).count()) === 0);
+  check('continue stays disabled', await page.getByRole('button', { name: 'Continue to your plan' }).isDisabled());
+  check('no page or console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+/* ---------------------------------------------------------------- desktop -- */
+console.log('\ndesktop 1440');
+{
+  const { ctx, page, errors } = await newPage({ viewport: { width: 1440, height: 900 } }, IN_ZONE);
+  await page.goto(`${BASE}/subscribe`, { waitUntil: 'domcontentloaded', timeout: T });
+  await h1(page, 'Where should we deliver?').waitFor();
+  await hydrated(page);
+  check('summary rail is shown on desktop', await page.locator('.sb-rail').isVisible());
+  check('no page or console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+await browser.close();
+console.log(`\n${bad ? `${bad} FAILED` : 'all checks passed'}`);
 process.exit(bad ? 1 : 0);
