@@ -245,7 +245,7 @@ export function AddressForm({ initial }: { initial: AddressValue }) {
   return (
     <form className="acct-stack" onSubmit={(e) => void submit(e)}>
       <p className="acct-muted">
-        Put the pin exactly on your door. The change applies from the first day still open for changes; deliveries
+        Put the marker exactly on your door. The change applies from the first day still open for changes; deliveries
         already confirmed keep the old address.
       </p>
       <LocationPicker value={pin} onChange={(p) => { setDone(null); setPin(p); }} />
@@ -293,7 +293,7 @@ export function AddressForm({ initial }: { initial: AddressValue }) {
       <button type="submit" className="acct-btn" disabled={act.pending || !pin || !parts.house.trim()}>
         {act.pending ? 'Saving address…' : 'Save address'}
       </button>
-      {!pin && <p className="acct-muted">Drop the pin on your door to save.</p>}
+      {!pin && <p className="acct-muted">Mark your door on the map to save.</p>}
       {done && (
         <p className="acct-ok" role="status">
           Saved. From {dayLabel(done.effectiveFrom)} your milk goes to {done.address} ({done.zoneName}).

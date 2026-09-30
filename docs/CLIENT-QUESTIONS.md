@@ -139,3 +139,11 @@ Razorpay's KYC and invoices and is never shown on the site.
     nothing about taste, breed or fat is confirmed. Send one true sentence for buffalo
     and one for cow (for example how it is milked, or what it is good for) and it goes
     under each bottle.
+40. **Ways to pay** — which payment methods are switched on in your Razorpay account
+    (UPI, cards, net banking)? Naming them next to the Pay button reassures first-time
+    buyers.
+41. **Sign-in without WhatsApp** — codes come only on WhatsApp; a customer without
+    WhatsApp is told to call you. Do you want an SMS backup (a paid SMS provider)?
+    And which hours is the phone answered? (Shown next to "Call".)
+42. **The first morning** — how is the milk left if nobody opens the door (a bag on the
+    handle, with security)? One line for the confirmation screen.

@@ -154,7 +154,7 @@ export default function LocationPickerLeaflet({ value, onChange, idPrefix }: Eng
         iconSize: [30, 42],
         iconAnchor: [15, 42],
       });
-      const mk = L.marker(at, { draggable: true, autoPan: true, icon, title: 'Your doorstep — drag to adjust', alt: 'Delivery pin' }).addTo(m);
+      const mk = L.marker(at, { draggable: true, autoPan: true, icon, title: 'Your doorstep — drag to adjust', alt: 'Delivery marker' }).addTo(m);
       mk.on('dragend', () => {
         const p = mk.getLatLng();
         onChangeRef.current({ lat: roundCoord(p.lat), lng: roundCoord(p.lng) });
@@ -185,13 +185,13 @@ export default function LocationPickerLeaflet({ value, onChange, idPrefix }: Eng
       const url = `${NOMINATIM}?format=json&countrycodes=in&limit=5&accept-language=en&viewbox=${VIEWBOX}&q=${encodeURIComponent(text)}`;
       const res = await fetch(url, { headers: { accept: 'application/json' } });
       if (!res.ok) {
-        setSearch({ kind: 'error', message: 'The map search is not answering right now. You can still move the pin by hand.' });
+        setSearch({ kind: 'error', message: 'The map search is not answering right now. You can still tap your building on the map.' });
         return;
       }
       const hits = (await res.json()) as NominatimHit[];
       setSearch({ kind: 'results', hits: Array.isArray(hits) ? hits : [] });
     } catch {
-      setSearch({ kind: 'error', message: 'The map search is not answering right now. You can still move the pin by hand.' });
+      setSearch({ kind: 'error', message: 'The map search is not answering right now. You can still tap your building on the map.' });
     }
   }
 
@@ -238,7 +238,7 @@ export default function LocationPickerLeaflet({ value, onChange, idPrefix }: Eng
       {search.kind === 'results' ? (
         search.hits.length === 0 ? (
           <p className="lp-msg" role="status">
-            No match on the map for that. Try the area name, or move the pin by hand.
+            No match on the map for that. Try the area name, or tap your building on the map.
           </p>
         ) : (
           <ul className="lp-results" aria-label="Search results">
@@ -260,7 +260,7 @@ export default function LocationPickerLeaflet({ value, onChange, idPrefix }: Eng
         ref={holder}
         className="lp-map"
         role="application"
-        aria-label="Map. Tap to place your delivery pin, or drag the pin onto your building."
+        aria-label="Map. Tap your building to mark it, or drag the marker onto your building."
       />
       <p className="lp-attrib">
         Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors · search by Nominatim

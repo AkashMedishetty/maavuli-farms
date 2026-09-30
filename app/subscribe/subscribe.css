@@ -369,6 +369,8 @@ textarea.sb-input { resize: vertical; min-height: 4.75em; }
   color: var(--red);
 }
 .sb-check-row input { flex: none; width: 22px; height: 22px; margin-top: 0.1rem; accent-color: var(--red); }
+.sb-check-note { display: block; margin-top: 0.2rem; font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-priceline { color: var(--red); }
 
 /* test-mode banner — unmistakable */
 .sb-testmode {

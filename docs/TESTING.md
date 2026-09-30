@@ -201,9 +201,9 @@ walks S9–S12 automatically against a local dev server (see its header).
 |---|---|---|
 | S1 | C1 end to end, pay with `success@razorpay` | Total ₹1,725.00 on the Pay screen before signing in; after paying, the plan shows as active in `/account` with deliveries from the chosen start date; `order_confirmed` in the outbox |
 | S2 | C2, C3, C4 the same way (one card, one UPI) | Totals exactly as in section 4; each plan active |
-| S3 | C5: drop the pin in Gachibowli | "We don’t deliver to this spot yet", with Call and Email (location attached); no door form; cannot continue |
+| S3 | C5: drop the pin in Gachibowli | "We don’t deliver to this spot yet", with Call and Email (location attached) as the only actions; no door form, no Continue button |
 | S4 | C6, pay with `failure@razorpay` | Payment fails; no plan; you can retry and pay |
-| S5 | C6 again, close the Razorpay window without paying; wait 30 minutes (and the job) | The screen says nothing was charged; the order shows as expired in Admin → Orders; no plan |
+| S5 | C6 again, close the Razorpay window without paying; wait 30 minutes (and the job) | The screen says the window closed before a payment arrived, and not to pay again if money left the account; the order shows as expired in Admin → Orders; no plan |
 | S6 | Start date: "Start on a later date", then more than 30 days ahead | Refused with the latest possible date |
 | S7 | After the 4:00 PM cut-off, open screen 2 | The first delivery shown is the day after tomorrow |
 | S8 | Double-tap Pay | Only one order is charged |

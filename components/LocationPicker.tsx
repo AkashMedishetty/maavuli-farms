@@ -40,7 +40,7 @@ export default function LocationPicker({
 
   function locateMe() {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
-      setGeo({ kind: 'error', message: 'This browser cannot share a location. Search or move the pin instead.' });
+      setGeo({ kind: 'error', message: 'This browser cannot share a location. Search for your building or tap it on the map instead.' });
       return;
     }
     setGeo({ kind: 'locating' });
@@ -56,10 +56,10 @@ export default function LocationPicker({
       (err) => {
         const message =
           err.code === err.PERMISSION_DENIED
-            ? 'Location access was declined. That is fine — search for your building or move the pin by hand.'
+            ? 'Location access was declined. That is fine — search for your building or tap it on the map.'
             : err.code === err.POSITION_UNAVAILABLE
-              ? 'Your phone could not get a location fix. Search for your building or move the pin by hand.'
-              : 'Finding your location took too long. Try again, or move the pin by hand.';
+              ? 'Your phone could not find your location. Search for your building or tap it on the map.'
+              : 'Finding your location took too long. Try again, or search for your building.';
         setGeo({ kind: 'error', message });
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
@@ -92,7 +92,7 @@ export default function LocationPicker({
             'I am at the delivery address — use my location'
           )}
         </button>
-        <p className="lp-help">Only press this while standing at the door we should deliver to.</p>
+        <p className="lp-help">Only press this at home. Not at home? Search for your building below, or tap it on the map.</p>
         {geo.kind === 'error' ? (
           <p className="lp-msg is-err" role="alert">{geo.message}</p>
         ) : null}
@@ -109,28 +109,28 @@ export default function LocationPicker({
           <>
             {inaccurate ? (
               <p className="lp-msg is-warn">
-                Your phone places you within about {value.accuracyM} m — not close enough to find
-                your door. Please drag the pin onto your building.
+                Your phone’s location is not exact enough to find your door. Please drag the marker onto your
+                building.
               </p>
             ) : value.accuracyM !== undefined ? (
-              <p className="lp-msg is-ok">Pinned to within about {value.accuracyM} m. Drag the pin if it is not on your building.</p>
+              <p className="lp-msg is-ok">Marked from your phone’s location. Drag the marker if it is not exactly on your building.</p>
             ) : (
-              <p className="lp-msg">Pin placed. Drag it if it is not exactly on your building.</p>
+              <p className="lp-msg">Marked. Drag the marker if it is not exactly on your building.</p>
             )}
             {value.label ? <p className="lp-help">Near: {value.label}</p> : null}
           </>
         ) : (
-          <p className="lp-help">No pin yet — use your location, search, or tap the map.</p>
+          <p className="lp-help">Nothing marked yet — use your location, search for your building, or tap the map.</p>
         )}
       </div>
 
       {value ? (
         <fieldset className="lp-nudge">
-          <legend>Fine-tune the pin (about 5 m per press)</legend>
-          <button type="button" className="lp-btn is-ghost" onClick={() => move(5, 0)} aria-label="Move pin north">↑</button>
-          <button type="button" className="lp-btn is-ghost" onClick={() => move(0, -5)} aria-label="Move pin west">←</button>
-          <button type="button" className="lp-btn is-ghost" onClick={() => move(0, 5)} aria-label="Move pin east">→</button>
-          <button type="button" className="lp-btn is-ghost" onClick={() => move(-5, 0)} aria-label="Move pin south">↓</button>
+          <legend>Move the marker a little (about 5 metres a press)</legend>
+          <button type="button" className="lp-btn is-ghost" onClick={() => move(5, 0)} aria-label="Move the marker north">↑</button>
+          <button type="button" className="lp-btn is-ghost" onClick={() => move(0, -5)} aria-label="Move the marker west">←</button>
+          <button type="button" className="lp-btn is-ghost" onClick={() => move(0, 5)} aria-label="Move the marker east">→</button>
+          <button type="button" className="lp-btn is-ghost" onClick={() => move(-5, 0)} aria-label="Move the marker south">↓</button>
         </fieldset>
       ) : null}
     </div>

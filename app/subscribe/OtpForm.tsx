@@ -174,7 +174,7 @@ export default function OtpForm({
           }}
         >
           <div className="sb-field">
-            <label htmlFor="sb-code">Enter the 6-digit code we sent to {formatMobile(mobile)}</label>
+            <label htmlFor="sb-code">Enter the 6-digit code we sent on WhatsApp to {formatMobile(mobile)}</label>
             <input
               id="sb-code"
               ref={codeRef}
