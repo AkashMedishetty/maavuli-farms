@@ -191,18 +191,26 @@ Mark each row pass/fail and note what you saw. "Outbox" = Admin → Messages (wi
 | P3 | Admin → Settings: change photo retention from 60 to 45 days; reload `/legal/privacy` and `/legal/shipping` | Both now say 45 days. Change it back |
 | P4 | Admin → Settings: move the cut-off; reload `/legal/refunds` | The cut-off time in the policy follows the setting |
 
-### 6.2 Sign-up and payment (the funnel: where → address → milk → quantity → term → start date → review)
+### 6.2 Sign-up and payment (three screens: where → your plan → pay)
+
+Screen 1 is the map plus the door details, screen 2 is milk, amount, length and first
+delivery, screen 3 is the receipt, then sign-in, then Pay. `node scripts/check-subscribe-ui.mjs`
+walks S9–S12 automatically against a local dev server (see its header).
 
 | ID | Do (mock data) | Expect |
 |---|---|---|
-| S1 | C1 end to end, pay with `success@razorpay` | Total ₹1,725.00 on review; after paying, the plan shows as active in `/account` with deliveries from the chosen start date; `order_confirmed` in the outbox |
+| S1 | C1 end to end, pay with `success@razorpay` | Total ₹1,725.00 on the Pay screen before signing in; after paying, the plan shows as active in `/account` with deliveries from the chosen start date; `order_confirmed` in the outbox |
 | S2 | C2, C3, C4 the same way (one card, one UPI) | Totals exactly as in section 4; each plan active |
-| S3 | C5: drop the pin in Gachibowli | Told this is not a delivery area; cannot continue to payment |
+| S3 | C5: drop the pin in Gachibowli | "We don’t deliver to this spot yet", with Call and Email (location attached); no door form; cannot continue |
 | S4 | C6, pay with `failure@razorpay` | Payment fails; no plan; you can retry and pay |
-| S5 | C6 again, close the Razorpay window without paying; wait 30 minutes (and the job) | The order shows as expired in Admin → Orders; no plan |
-| S6 | Start date: try more than 30 days ahead | Refused |
-| S7 | Start date: after the 4:00 PM cut-off, try tomorrow | Tomorrow is not offered; the first open day is the day after |
+| S5 | C6 again, close the Razorpay window without paying; wait 30 minutes (and the job) | The screen says nothing was charged; the order shows as expired in Admin → Orders; no plan |
+| S6 | Start date: "Start on a later date", then more than 30 days ahead | Refused with the latest possible date |
+| S7 | After the 4:00 PM cut-off, open screen 2 | The first delivery shown is the day after tomorrow |
 | S8 | Double-tap Pay | Only one order is charged |
+| S9 | On screen 2 with a plan chosen, pull to refresh | Same screen, same choices and price |
+| S10 | The phone's Back button on screens 2 and 3 | Goes to the previous screen (door details kept), not out of the site; Forward comes back |
+| S11 | On the Pay screen, Edit the address, then Continue | Returns straight to the Pay screen |
+| S12 | Sign in: type the mobile, then the 6-digit code | Signed in as soon as the 6th digit is in; "Send a new code" unlocks after 30 s |
 
 ### 6.3 The customer's account (sign in as C1)
 

@@ -65,7 +65,9 @@ const NO_FLASH =
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-IN">
+    // NO_FLASH may add class="loaded" before React starts, on purpose; without this,
+    // every such page load logs a hydration mismatch for the <html> element.
+    <html lang="en-IN" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH }} />
         <script dangerouslySetInnerHTML={{ __html: SW_REGISTER }} />
