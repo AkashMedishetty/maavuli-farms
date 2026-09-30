@@ -28,6 +28,7 @@ export default async function PrivacyPage() {
             'No analytics, no tracking pixels and no advertising scripts are loaded on any page.',
             'When you sign in with the code sent to your mobile, one sign-in cookie keeps you signed in. It identifies your session only, and lasts up to 30 days or until you sign out.',
             'So the site still opens on a weak connection, your browser keeps a copy of the public pages you have visited and of the product pictures. Pages with your details on them — your account and your orders — are never kept.',
+            'While you are signing up, what you have entered so far (your pin, address and plan) is kept in that browser tab, so a refresh does not lose it. It is removed once your plan is confirmed, or when you close the tab. Your pin is checked against our delivery area as you place it; your name and address are sent to us only when you tap Pay.',
             'The map you use to place your pin is provided by Google Maps, or by OpenStreetMap where Google Maps is not set up. The map provider receives the places you search for and the parts of the map you view.',
             'Paying opens Razorpay’s checkout window, which Razorpay runs under its own privacy policy.',
           ],

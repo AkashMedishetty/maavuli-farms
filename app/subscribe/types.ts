@@ -14,6 +14,13 @@ export interface RenewalDetails {
   location?: { lat: number; lng: number };
 }
 
+/** Live ops times, already formatted ("4:00 PM"), so the flow never hardcodes them. */
+export interface DayRuleLabels {
+  cutoff: string;
+  windowStart: string;
+  windowEnd: string;
+}
+
 /** What `/subscribe?renew=<id>` resolved to on the server. */
 export type RenewalProp =
   | { kind: 'none' }

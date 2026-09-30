@@ -129,3 +129,13 @@ Razorpay's KYC and invoices and is never shown on the site.
     answers privacy requests, as India's IT Rules expect. Drafted default: requests
     acknowledged within 48 hours and resolved within 30 days. **Needed before
     launch.**
+
+## H. From the sign-up redesign
+
+38. **WhatsApp for customers** — is +91 70752 02177 on WhatsApp, and may customers
+    message it? If yes, a "Message us on WhatsApp" button appears where someone is
+    outside the delivery area (today they get Call and Email only).
+39. **One line about each milk** — the milk choice shows only the price, because
+    nothing about taste, breed or fat is confirmed. Send one true sentence for buffalo
+    and one for cow (for example how it is milked, or what it is good for) and it goes
+    under each bottle.

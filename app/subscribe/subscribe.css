@@ -1,204 +1,149 @@
 /*
- * /subscribe styling.
+ * /subscribe styling — the three-screen sign-up (where → your plan → pay).
  *
- * CRITICAL CONTEXT: /subscribe renders on the WHITE page (body is white here).
- * The global .sub-* classes were authored for the OLD all-red page and paint with
- * --milk (white) ink — on this white page that is invisible. This file therefore
- * uses its OWN .sb-* namespace and paints every stroke in RED, depending on
- * nothing from the white-ink globals. Reused global classes (.cta, .eyebrow,
- * .pending) already have .invert red-ink variants on the white page, so they are
- * safe; everything bespoke lives here.
+ * /subscribe renders on the WHITE page, so every stroke here is RED ink (--red and
+ * its alphas), never the --milk ink the red panels use.
  *
- * Ink colours all derive from --red (#8c170e = rgb(140,23,14)) and its tokens.
+ * Two rules the old flow broke:
+ *  · a control's edge must be visible: inputs, cards and choices use --sb-line
+ *    (≈4.9:1 on white). --red-faint (≈1.5:1) is for decorative rules only.
+ *  · a selected choice is FILLED red with white ink, not a 7% tint and a dot.
+ *
+ * Text is ≥ 15 px and tap targets ≥ 44 px throughout (§9).
  */
 
-/* ---- shell: two columns — the flow on the left, a sticky summary on the right */
 .sb {
-  padding: clamp(6rem, 14vh, 10rem) var(--gutter) clamp(4rem, 10vh, 7rem);
-  /* wider than the --content cap other pages use: this screen is a two-column
-     working surface, and on a 32:9 monitor a 74rem cap strands it in the middle
-     with empty flanks. 96rem keeps the measure comfortable while filling more. */
+  --sb-line: var(--red-dim);
+  --sb-hair: var(--red-faint);
+  --sb-tint: color-mix(in srgb, var(--red) 5%, white);
+  --sb-on-ink: rgba(255, 255, 255, 0.88); /* secondary text on a filled choice: ≈7.5:1 */
+  --sb-ease: cubic-bezier(0.65, 0.02, 0.31, 1);
+  --sb-pad: var(--gutter);
+  padding: clamp(6rem, 14vh, 10rem) var(--sb-pad) clamp(4rem, 10vh, 7rem);
+  /* wider than the --content cap other pages use: a two-column working surface */
   max-width: calc(96rem + 2 * var(--gutter));
   margin-inline: auto;
 }
+.navpanel + .sb { padding-top: clamp(2.5rem, 7vh, 5rem); }
 
 .sb-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(21rem, 0.8fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(20rem, 0.8fr);
   gap: clamp(2rem, 5vw, 5rem);
   align-items: start;
 }
+.sb.is-finished .sb-grid { grid-template-columns: minmax(0, 1fr); max-width: 44rem; }
+.sb-flow { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 
-/* On a genuinely ultra-wide viewport, give the flow room to breathe and let the
-   summary rail grow, so the composition fills the width instead of hugging. */
 @media (min-width: 120rem) {
   .sb { max-width: 132rem; }
   .sb-grid { grid-template-columns: minmax(0, 1.5fr) minmax(28rem, 0.7fr); gap: 7rem; }
-  .sb-panel h1 { font-size: clamp(5.4rem, 5vw, 7rem); }
-  .sb-lead { max-width: 52ch; }
+  .sb-lead { max-width: 56ch; }
 }
 
-/* ---- progress ------------------------------------------------------------ */
-.sb-progress { margin-bottom: clamp(2rem, 6vh, 3.25rem); }
-.sb-steps {
+/* ---- stepper: three segments, done ones are links back ------------------- */
+.sb-stepper ol {
   list-style: none;
-  margin: 0 0 1rem;
+  margin: 0 0 clamp(0.25rem, 2vh, 1rem);
   padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
 }
-.sb-steps li {
+.sb-stepper li { border-top: 3px solid var(--sb-hair); transition: border-color 0.4s var(--sb-ease); }
+.sb-stepper li.is-current,
+.sb-stepper li.is-done { border-top-color: var(--red); }
+.sb-stepitem {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.45rem 0 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: max(15px, var(--step--1));
   letter-spacing: 0.04em;
-  color: var(--red-dim); /* upcoming steps: --red-faint was ≈1.6:1 on white */
-}
-.sb-steps li .sb-num {
-  display: grid;
-  place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 999px;
-  border: 1px solid var(--red-faint);
-  font-family: var(--sans);
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
   color: var(--red-dim);
-  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+  text-align: left;
 }
-.sb-steps li.is-current { color: var(--red); }
-.sb-steps li.is-current .sb-num { border-color: var(--red); color: var(--red); }
-.sb-steps li.is-done { color: var(--red-dim); }
-.sb-steps li.is-done .sb-num { background: var(--red); border-color: var(--red); color: var(--milk); }
+button.sb-stepitem { cursor: pointer; color: var(--red); }
+button.sb-stepitem .sb-steplabel { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.sb-stepper li.is-current .sb-stepitem { color: var(--red); }
+.sb-stepno {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--sb-line);
+  font-size: 0.9em;
+  line-height: 1;
+}
+.sb-stepper li.is-current .sb-stepno { background: var(--red); border-color: var(--red); color: var(--milk); }
+.sb-stepper li.is-done .sb-stepno { border-color: var(--red); color: var(--red); }
 
-.sb-bar { height: 3px; width: 100%; background: var(--red-faint); border-radius: 999px; overflow: hidden; }
-.sb-bar-fill { height: 100%; background: var(--red); border-radius: 999px; transition: width 0.45s cubic-bezier(0.65, 0.02, 0.31, 1); }
-
-/* ---- step panel ---------------------------------------------------------- */
+/* ---- screen panel -------------------------------------------------------- */
 .sb-panel { display: flex; flex-direction: column; gap: 1.1rem; align-items: flex-start; }
 .sb-panel h1 { font-size: var(--step-3); color: var(--red); }
 .sb-panel h2 { font-size: var(--step-2); color: var(--red); }
-.sb-lead { color: var(--red-dim); max-width: 46ch; }
-.sb-hint { color: var(--red-dim); font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ max-width: 52ch; }
+.sb-panel .sb-subhead { font-family: var(--serif); font-weight: 400; font-size: var(--step-1); color: var(--red); }
+.sb-lead { color: var(--red-dim); max-width: 50ch; }
+.sb-hint { color: var(--red-dim); font-size: max(15px, var(--step--1)); max-width: 56ch; }
+.sb .eyebrow { color: var(--red-dim); }
 
-/* pincode entry */
-.sb-pin { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
-.sb-pin input {
-  font: inherit;
-  font-size: var(--step-1);
-  letter-spacing: 0.22em;
-  padding: 0.55em 0.85em;
-  width: 9.5em;
-  background: var(--milk);
-  color: var(--red);
-  border: 1px solid var(--red-faint);
-  border-radius: 999px;
-}
-.sb-pin input::placeholder { color: var(--red-faint); letter-spacing: 0.16em; }
-.sb-pin input:hover { border-color: var(--red-dim); }
-
-/* choice cards */
-.sb-choices { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); width: 100%; }
-.sb-choices.sb-two { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
-.sb-choices.sb-terms { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
-.sb-choice {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  align-items: flex-start;
-  padding: 1.35rem 1.5rem;
-  background: var(--milk);
-  border: 1px solid var(--red-faint);
-  border-radius: 10px;
-  color: var(--red);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.3s ease, background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
-}
-.sb-choice:hover {
-  border-color: var(--red);
-  background: color-mix(in srgb, var(--red) 4%, white);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 30px -20px var(--red-dim);
-}
-.sb-choice.is-selected {
-  border-color: var(--red);
-  background: color-mix(in srgb, var(--red) 7%, white);
-}
-.sb-choice.is-selected::after {
-  content: "";
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 999px;
-  background: var(--red);
-}
-.sb-choice-name { font-family: var(--serif); font-size: var(--step-1); }
-.sb-choice-sub { font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red-dim); }
-.sb-choice-rate { font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red-dim); }
-.sb-choice-off {
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--red);
-  background: color-mix(in srgb, var(--red) 10%, white);
-  padding: 0.15em 0.6em;
-  border-radius: 999px;
-}
-
-/* back / nav row */
-.sb-nav { display: flex; gap: 1.25rem; align-items: center; margin-top: 0.5rem; flex-wrap: wrap; }
-.sb-back {
-  background: none;
-  border: 0;
-  color: var(--red-dim);
-  font: inherit;
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  padding: 0;
-  /* §9: 44 px tap target */
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-}
-.sb-back:hover { color: var(--red); }
-
-/* notices — three serviceability states + errors, all red ink */
+/* notices — serviceability states + errors, all red ink */
 .sb-notice {
   display: flex;
   gap: 0.7rem;
   align-items: flex-start;
   padding: 0.85rem 1.05rem;
-  border: 1px solid var(--red-faint);
-  border-radius: 8px;
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
-  max-width: 54ch;
+  border: 1px solid var(--sb-line);
+  border-radius: 10px;
+  font-size: max(15px, var(--step--1));
+  max-width: 58ch;
   color: var(--red);
   background: var(--milk);
 }
+.sb-notice > div { min-width: 0; }
+.sb-notice p { margin: 0.35rem 0 0; }
 .sb-notice .sb-dot { flex: none; width: 0.6rem; height: 0.6rem; border-radius: 999px; margin-top: 0.45em; background: var(--red-dim); }
 .sb-notice.is-ok { border-color: var(--red); background: color-mix(in srgb, var(--red) 6%, white); }
 .sb-notice.is-ok .sb-dot { background: var(--red); }
 .sb-notice.is-warn { border-style: dashed; }
-.sb-notice.is-err { border-color: var(--red); }
+.sb-notice.is-err { border-color: var(--red); border-width: 2px; }
 .sb-notice.is-err .sb-dot { background: var(--red); }
 .sb-notice b { font-weight: 400; font-family: var(--serif); font-size: var(--step-0); }
 .sb-notice a { color: var(--red); text-underline-offset: 3px; }
+.sb-areastate { width: 100%; min-height: 2.75rem; }
+
+/* ways to reach the farm (not in our area yet) */
+.sb-contact { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.8rem; }
+.sb-ghost {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0.5em 1.1em;
+  border: 1px solid var(--red);
+  border-radius: 999px;
+  background: var(--milk);
+  color: var(--red);
+  font-size: max(15px, var(--step--1));
+  text-decoration: none;
+  transition: background 0.3s var(--sb-ease), color 0.3s var(--sb-ease);
+}
+.sb-notice a.sb-ghost { text-decoration: none; }
+.sb-ghost:hover { background: var(--red); color: var(--milk); }
 
 /* developer 503 notice — names the missing env vars, on purpose */
 .sb-dev {
   max-width: 54ch;
   padding: 0.85rem 1.05rem;
-  border: 1px dashed color-mix(in srgb, var(--red) 34%, white);
+  border: 1px dashed var(--sb-line);
   border-radius: 8px;
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
+  font-size: max(15px, var(--step--1));
   color: var(--red-dim);
   background: color-mix(in srgb, var(--red) 3%, white);
 }
@@ -211,6 +156,219 @@
   border-radius: 4px;
 }
 .sb-dev ul { margin: 0.4rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.25rem; }
+.sb-issues { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: max(15px, 0.95rem); }
+.sb-issues code { font-size: 0.9em; }
+
+/* ---- fields -------------------------------------------------------------- */
+.sb-door {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 100%;
+  max-width: 36rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--sb-hair);
+}
+.sb-fields { display: grid; gap: 1rem; }
+.sb-row2 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); gap: 0.75rem; }
+.sb-field { display: grid; gap: 0.35rem; width: 100%; min-width: 0; }
+.sb-field label { font-size: max(15px, var(--step--1)); letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-dim); }
+.sb-field label i { font-style: normal; text-transform: none; letter-spacing: 0; }
+.sb-input {
+  font: inherit;
+  width: 100%;
+  min-height: 48px;
+  padding: 0.7em 0.9em;
+  color: var(--red);
+  background: var(--milk);
+  border: 1px solid var(--sb-line);
+  border-radius: 12px;
+}
+textarea.sb-input { resize: vertical; min-height: 4.75em; }
+.sb-input::placeholder { color: var(--red-dim); opacity: 1; }
+.sb-input:hover { border-color: var(--red); }
+.sb-input:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; border-color: var(--red); }
+.sb-input[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+.sb-more { align-self: flex-start; }
+.sb-reads b { font-weight: 400; font-family: var(--serif); color: var(--red); }
+/* A validation message, not a hint: full red and a leading "!" so it reads as an error. */
+.sb-fieldnote { font-style: normal; font-size: max(15px, var(--step--1)); color: var(--red); }
+.sb-fieldnote::before { content: '! '; font-weight: 700; }
+
+/* ---- plan: milk, amount, length ------------------------------------------ */
+.sb-group { border: 0; margin: 0; padding: 0; width: 100%; min-width: 0; }
+.sb-group legend,
+.sb-legend {
+  padding: 0;
+  margin: 0 0 0.6rem;
+  font-size: max(15px, var(--step--1));
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--red-dim);
+}
+.sb-group > .sb-hint { margin-top: 0.6rem; }
+
+.sb-milks,
+.sb-opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+
+.sb-milk,
+.sb-opt,
+.sb-term {
+  position: relative;
+  border: 1px solid var(--sb-line);
+  background: var(--milk);
+  color: var(--red);
+  cursor: pointer;
+  transition: background 0.3s var(--sb-ease), color 0.3s var(--sb-ease), border-color 0.3s var(--sb-ease);
+}
+.sb-milk:hover,
+.sb-opt:hover,
+.sb-term:hover { background: var(--sb-tint); border-color: var(--red); }
+.sb-milk.is-on,
+.sb-opt.is-on,
+.sb-term.is-on { background: var(--red); border-color: var(--red); color: var(--milk); }
+/* the radio itself is visually hidden; its card shows the keyboard focus */
+.sb-milk:has(input:focus-visible),
+.sb-opt:has(input:focus-visible),
+.sb-term:has(input:focus-visible) { outline: 2px solid var(--red); outline-offset: 3px; }
+
+.sb-milk {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.6rem 0.75rem 1rem;
+  border-radius: 14px;
+  text-align: center;
+}
+.sb-milk-img { width: 100%; max-width: 11rem; height: auto; aspect-ratio: 1; object-fit: contain; }
+.sb-milk-name { font-family: var(--serif); font-size: var(--step-1); line-height: 1.1; }
+.sb-milk-rate { font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-milk.is-on .sb-milk-rate { color: var(--sb-on-ink); }
+.sb-milk.is-on::after {
+  content: '✓';
+  position: absolute;
+  top: 0.6rem;
+  right: 0.7rem;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: var(--milk);
+  color: var(--red);
+  font-size: 0.9rem;
+}
+
+.sb-opt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 0.6rem 1rem;
+  border-radius: 12px;
+  font-family: var(--serif);
+  font-size: var(--step-1);
+}
+
+.sb-terms { display: grid; gap: 0.6rem; }
+.sb-term {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 60px;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+}
+.sb-term-main { display: grid; gap: 0.15rem; min-width: 0; }
+.sb-term-name { font-family: var(--serif); font-size: var(--step-1); line-height: 1.1; }
+.sb-term-meta { font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-term-price { flex: none; display: grid; justify-items: end; gap: 0.1rem; text-align: right; }
+.sb-term-price b { font-weight: 400; font-family: var(--serif); font-size: var(--step-1); line-height: 1.1; }
+.sb-term-price span { font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-term.is-on .sb-term-meta,
+.sb-term.is-on .sb-term-price span { color: var(--sb-on-ink); }
+
+.sb-start { width: 100%; display: grid; gap: 0.5rem; padding-top: 1rem; border-top: 1px solid var(--sb-hair); }
+.sb-start .sb-legend { margin: 0; }
+.sb-start-line { color: var(--red); max-width: 58ch; }
+.sb-start-line b { font-weight: 400; font-family: var(--serif); font-size: var(--step-1); }
+.sb-start .sb-field { max-width: 24rem; }
+.sb-start .sb-linkbtn { justify-self: start; }
+
+/* the running price + Continue, pinned to the bottom of the screen while you choose */
+.sb-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.25rem;
+  padding: 0.85rem 0 calc(0.85rem + env(safe-area-inset-bottom, 0px));
+  background: var(--milk);
+  border-top: 1px solid var(--sb-hair);
+}
+.sb-dock-sum { display: grid; gap: 0.15rem; min-width: 0; }
+.sb-dock-amt { font-weight: 400; font-family: var(--serif); font-size: var(--step-2); line-height: 1; color: var(--red); }
+.sb-dock-meta { font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-dock .sb-btn { flex: none; }
+
+/* ---- pay: receipt, sign-in, pay ------------------------------------------ */
+.sb-receipt { width: 100%; max-width: 40rem; padding: 0.3rem 1.1rem 0.9rem; border: 1px solid var(--red); border-radius: 14px; }
+.sb-receipt dl { margin: 0; }
+.sb-receipt dl > div {
+  display: grid;
+  grid-template-columns: 4.75rem minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--sb-hair);
+}
+.sb-receipt dt { font-size: max(15px, var(--step--1)); letter-spacing: 0.1em; text-transform: uppercase; color: var(--red-dim); }
+.sb-receipt dd { margin: 0; color: var(--red); overflow-wrap: anywhere; }
+.sb-receipt .sb-edit { justify-self: end; }
+.sb-receipt-total,
+.sb-receipt-line { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding-top: 0.8rem; }
+.sb-receipt-total span { font-size: max(15px, var(--step--1)); letter-spacing: 0.08em; text-transform: uppercase; color: var(--red-dim); }
+.sb-receipt-total b { font-weight: 400; font-family: var(--serif); font-size: var(--step-2); line-height: 1; color: var(--red); }
+.sb-receipt-line { color: var(--red-dim); }
+.sb-receipt-line b { font-weight: 400; font-family: var(--serif); color: var(--red); }
+
+.sb-signin { width: 100%; max-width: 30rem; display: grid; gap: 0.6rem; padding-top: 1rem; border-top: 1px solid var(--sb-hair); }
+.sb-otp-row { display: grid; gap: 0.75rem; justify-items: start; width: 100%; }
+.sb-otp-row .sb-field { max-width: 22rem; }
+.sb-tel { display: flex; align-items: stretch; width: 100%; }
+.sb-tel > span {
+  display: grid;
+  place-items: center;
+  padding: 0 0.8rem;
+  border: 1px solid var(--sb-line);
+  border-right: 0;
+  border-radius: 12px 0 0 12px;
+  background: var(--sb-tint);
+  color: var(--red);
+}
+.sb-tel .sb-input { border-radius: 0 12px 12px 0; }
+.sb-otp { letter-spacing: 0.4em; font-size: var(--step-1); text-align: center; max-width: 14rem; }
+
+.sb-pay { display: flex; flex-direction: column; gap: 0.85rem; width: 100%; max-width: 40rem; align-items: flex-start; }
+.sb-check-row {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 0.4rem 0;
+  max-width: 44rem;
+  cursor: pointer;
+  font-size: max(15px, 1rem);
+  color: var(--red);
+}
+.sb-check-row input { flex: none; width: 22px; height: 22px; margin-top: 0.1rem; accent-color: var(--red); }
 
 /* test-mode banner — unmistakable */
 .sb-testmode {
@@ -220,291 +378,156 @@
   padding: 0.4rem 0.85rem;
   border: 1px solid var(--red);
   border-radius: 999px;
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
+  font-size: max(15px, var(--step--1));
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--red);
   background: color-mix(in srgb, var(--red) 8%, white);
 }
-.sb-testmode::before { content: ""; width: 0.55rem; height: 0.55rem; border-radius: 999px; background: var(--red); }
+.sb-testmode::before { content: ''; width: 0.55rem; height: 0.55rem; border-radius: 999px; background: var(--red); }
 
-/* ---- summary rail (right column, sticky) --------------------------------- */
-.sb-rail { position: sticky; top: clamp(1.5rem, 5vh, 3rem); }
-.sb-card {
-  border: 1px solid var(--red-faint);
-  border-radius: 14px;
-  background: var(--milk);
-  padding: clamp(1.5rem, 3vw, 2.25rem);
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-.sb-card-eyebrow {
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--red-dim);
-}
-.sb-price { display: flex; flex-direction: column; gap: 0.15rem; }
-.sb-price .sb-amount { font-family: var(--serif); font-size: var(--step-3); line-height: 1; color: var(--red); }
-.sb-price .sb-amount.is-pending { font-size: var(--step-2); color: var(--red-dim); }
-.sb-price .sb-per { font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red-dim); }
-
-.sb-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
-.sb-lines li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.65rem 0;
-  border-top: 1px solid color-mix(in srgb, var(--red) 14%, white);
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
-  color: var(--red-dim);
-}
-.sb-lines li span { color: var(--red-dim); }
-.sb-lines li b { font-weight: 400; font-family: var(--serif); font-size: var(--step-0); color: var(--red); text-align: right; }
-.sb-lines li.is-empty b { font-family: var(--sans); font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red-dim); font-style: italic; }
-.sb-lines li.sb-save b { color: var(--red); }
-.sb-lines li.sb-strike b { text-decoration: line-through; color: var(--red-dim); font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ }
-
-.sb-rail-note { font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red-dim); }
-.sb-rail-note a { color: var(--red); }
-.sb-nowrap { white-space: nowrap; }
-/* The shared .pending pill paints with --milk (white) ink — it was authored for
-   the red page. Inside this white surface that is invisible (white-on-white), so
-   re-ink it red here, matching the .invert variant used on the other white pages. */
-.sb .pending {
-  border-color: color-mix(in srgb, var(--red) 30%, white);
-  color: color-mix(in srgb, var(--red) 62%, white);
-  vertical-align: baseline;
-}
-
-/* ---- pay / auth block ---------------------------------------------------- */
-.sb-pay { display: flex; flex-direction: column; gap: 0.9rem; width: 100%; }
-.sb-field { display: grid; gap: 0.35rem; width: 100%; max-width: 22rem; }
-.sb-field label { font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ letter-spacing: 0.1em; text-transform: uppercase; color: var(--red-dim); }
-.sb-input {
-  font: inherit;
-  padding: 0.7em 0.85em;
-  border: 1px solid var(--red-faint);
-  border-radius: 8px;
-  background: var(--milk);
-  color: var(--red);
-}
-.sb-input::placeholder { color: var(--red-faint); }
-.sb-input:hover { border-color: var(--red-dim); }
-.sb-otp { letter-spacing: 0.4em; font-size: var(--step-1); text-align: center; }
-
-/* the primary red button — solid, distinct from the outline .cta */
+/* ---- buttons & links ----------------------------------------------------- */
+/* the primary red button — solid; the only filled button on the site */
 .sb-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.6em;
+  min-height: 48px;
   padding: 0.95em 1.8em;
   border: 1px solid var(--red);
   border-radius: 999px;
   background: var(--red);
   color: var(--milk);
   font: inherit;
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
+  font-size: max(15px, var(--step--1));
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  text-decoration: none;
   cursor: pointer;
-  transition: background 0.3s ease, color 0.3s ease, opacity 0.3s ease;
+  transition: background 0.3s var(--sb-ease), color 0.3s var(--sb-ease), border-color 0.3s var(--sb-ease);
 }
-.sb-btn:hover { background: var(--red-deep); border-color: var(--red-deep); }
-.sb-btn:disabled { opacity: 0.4; cursor: not-allowed; background: var(--milk); color: var(--red-dim); }
-.sb-btn.is-busy { opacity: 0.7; cursor: progress; }
+.sb-btn:hover:not(:disabled) { background: var(--red-deep); border-color: var(--red-deep); }
+/* not yet available: still readable (≈4.9:1), dashed so it cannot pass for "on" */
+.sb-btn:disabled { cursor: not-allowed; background: var(--milk); color: var(--red-dim); border: 1px dashed var(--red-dim); }
+.sb-btn.is-busy,
+.sb-btn.is-busy:disabled { cursor: progress; background: var(--red); color: var(--milk); border: 1px solid var(--red); opacity: 0.8; }
+.sb-paybtn { font-size: max(16px, var(--step-0)); padding: 1em 2.4em; }
+
+.sb-secondary { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-secondary a { color: var(--red); }
+.sb-linkbtn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: var(--red);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.sb-linkbtn:disabled { color: var(--red-dim); text-decoration: none; cursor: not-allowed; }
+.sb-nav { display: flex; gap: 1.25rem; align-items: center; flex-wrap: wrap; margin-top: 0.25rem; }
 
 .sb-spinner {
-  width: 1em; height: 1em; border-radius: 999px;
-  border: 2px solid currentColor; border-right-color: transparent;
-  display: inline-block; animation: sb-spin 0.7s linear infinite;
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: sb-spin 0.7s linear infinite;
 }
 @keyframes sb-spin { to { transform: rotate(360deg); } }
+/* The global reduced-motion rule stops every animation, which leaves a frozen ring
+   that reads as broken. The words beside it ("Checking…") already say it all. */
+@media (prefers-reduced-motion: reduce) { .sb-spinner { display: none; } }
 
-.sb-secondary { display: inline-flex; gap: 0.4rem; align-items: center; font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red-dim); }
-.sb-secondary a, .sb-linkbtn { color: var(--red); }
-.sb-linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--red); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; min-height: 44px; display: inline-flex; align-items: center; vertical-align: middle; /* §9: 44 px tap target */ }
-
-.sb-foot { margin-top: clamp(2.5rem, 7vh, 4rem); font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ }
-.sb-foot a { color: var(--red-dim); text-underline-offset: 3px; }
-.sb-foot a:hover { color: var(--red); }
-
-/* success (order created / paid) */
+/* ---- success ------------------------------------------------------------- */
 .sb-success { display: flex; flex-direction: column; gap: 1.1rem; align-items: flex-start; }
 .sb-success .sb-check {
-  display: grid; place-items: center;
-  width: 3rem; height: 3rem; border-radius: 999px;
-  border: 1.5px solid var(--red); color: var(--red); font-size: 1.4rem;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  background: var(--red);
+  color: var(--milk);
+  font-size: 1.4rem;
 }
 
-/* ---- focus-visible rings, uniform and red ------------------------------- */
-.sb :is(button, a, input):focus-visible,
-.sb-choice:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 3px;
-  border-radius: 8px;
+/* ---- summary rail (desktop, sticky) -------------------------------------- */
+.sb-rail { position: sticky; top: clamp(1.5rem, 5vh, 3rem); }
+.sb-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: clamp(1.5rem, 3vw, 2.25rem);
+  border: 1px solid var(--sb-line);
+  border-radius: 14px;
+  background: var(--milk);
 }
-.sb .cta:focus-visible, .sb .sb-btn:focus-visible { outline-offset: 4px; }
+.sb-card-eyebrow { font-size: max(15px, var(--step--1)); letter-spacing: 0.22em; text-transform: uppercase; color: var(--red-dim); }
+.sb-price { display: flex; flex-direction: column; gap: 0.15rem; }
+.sb-price .sb-amount { font-family: var(--serif); font-size: var(--step-3); line-height: 1; color: var(--red); }
+.sb-price .sb-amount.is-pending { font-size: var(--step-2); color: var(--red-dim); }
+.sb-price .sb-per { font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-lines { list-style: none; margin: 0; padding: 0; display: grid; }
+.sb-lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--sb-hair);
+  font-size: max(15px, var(--step--1));
+  color: var(--red-dim);
+}
+.sb-lines li b { font-weight: 400; font-family: var(--serif); font-size: var(--step-0); color: var(--red); text-align: right; }
+.sb-lines li.is-empty b { font-family: var(--sans); font-size: max(15px, var(--step--1)); font-style: italic; color: var(--red-dim); }
+.sb-lines li.sb-strike b { text-decoration: line-through; font-size: max(15px, var(--step--1)); color: var(--red-dim); }
+.sb-rail-note { font-size: max(15px, var(--step--1)); color: var(--red-dim); }
 
-/* ---- responsive: collapse to one column, real 390px layout --------------- */
+/* ---- utilities & focus --------------------------------------------------- */
+.sb-visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* uniform red rings; the ring follows each control's own shape (no radius override) */
+.sb :is(button, a, input, textarea, select):focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
+/* Headings receive focus programmatically on a screen change; no ring for pointer users. */
+.sb h1[tabindex='-1']:focus:not(:focus-visible) { outline: none; }
+
+/* ---- phones and small tablets -------------------------------------------- */
 @media (max-width: 60rem) {
-  .sb-grid { grid-template-columns: 1fr; gap: clamp(1.75rem, 6vw, 2.75rem); }
-  /* On a phone the running price belongs near the top — but AFTER the progress,
-     not above it. Flatten the flow column so progress, the summary rail and the
-     step become siblings in the single-column grid, then order them explicitly:
-     progress → summary → step. */
-  .sb-flow { display: contents; }
-  .sb-flow-progress { order: -2; }
-  .sb-rail { position: static; order: -1; }
-  .sb-flow-step { order: 0; }
-  .sb-card { padding: 1.25rem 1.3rem; }
-  .sb-price .sb-amount { font-size: var(--step-2); }
+  .sb-grid { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
+  /* the plan screen's price bar and the pay receipt carry the price here */
+  .sb-rail { display: none; }
+  .sb-dock {
+    width: auto;
+    align-self: stretch;
+    margin-inline: calc(-1 * var(--sb-pad));
+    padding-inline: var(--sb-pad);
+    box-shadow: 0 -14px 28px -22px rgba(140, 23, 14, 0.45);
+  }
 }
 
 @media (max-width: 30rem) {
-  .sb { padding-left: 1.1rem; padding-right: 1.1rem; }
+  .sb { --sb-pad: 1.1rem; }
   .sb-panel h1 { font-size: var(--step-2); }
-  .sb-choices, .sb-choices.sb-two, .sb-choices.sb-terms { grid-template-columns: 1fr; }
-  .sb-steps { gap: 0.4rem 0.9rem; }
-  .sb-steps li .sb-label { display: none; }   /* keep the numbered dots + bar; drop labels to fit 390px */
-  .sb-pin { width: 100%; }
-  .sb-pin input { flex: 1; width: auto; min-width: 0; }
-  .sb-field { max-width: none; }
-  .sb-btn { width: 100%; }
+  .sb-panel > .sb-btn,
+  .sb-nav .sb-btn,
+  .sb-otp-row .sb-btn,
+  .sb-pay > .sb-btn { width: 100%; }
+  .sb-receipt dl > div { grid-template-columns: minmax(0, 1fr) auto; gap: 0.1rem 0.75rem; }
+  .sb-receipt dt { grid-column: 1 / -1; }
+  .sb-term { padding: 0.7rem 0.85rem; }
 }
-
-/* ---- details step: name, address, landmark, optional pin -------------------
- * All ink is red: /subscribe sits on the WHITE page, and painting in --milk here
- * is the recurring white-on-white bug this stylesheet exists to avoid.
- */
-.sb-fields { display: grid; gap: 1.1rem; margin: 1.4rem 0; max-width: 34rem; }
-
-.sb-field { display: grid; gap: 0.4rem; }
-.sb-field > span {
-  font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--red-dim);
-}
-.sb-field > span i { font-style: normal; text-transform: none; letter-spacing: 0; opacity: 0.8; }
-
-.sb-field input,
-.sb-field textarea {
-  font: inherit;
-  width: 100%;
-  padding: 0.7em 0.9em;
-  color: var(--red);
-  background: transparent;
-  border: 1px solid var(--red-faint);
-  border-radius: 12px;
-  resize: vertical;
-}
-.sb-field input::placeholder,
-.sb-field textarea::placeholder { color: rgba(140, 23, 14, 0.38); }
-.sb-field input:focus-visible,
-.sb-field textarea:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 2px;
-  border-color: var(--red);
-}
-/* A validation message, not a hint: full red and a leading "!" so it reads as an error. */
-.sb-fieldnote { font-style: normal; font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red); }
-.sb-fieldnote::before { content: '! '; font-weight: 700; }
-
-.sb-locbox {
-  margin: 1.5rem 0;
-  padding: 1.1rem 1.2rem;
-  border: 1px dashed var(--red-faint);
-  border-radius: 14px;
-  max-width: 34rem;
-}
-.sb-locrow { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
-.sb-locbox .sb-help { margin-top: 0.6rem; }
-
-.sb-actions { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-top: 1.5rem; }
-.sb-actions .cta:disabled { opacity: 0.4; cursor: not-allowed; }
-
-/* on a phone the fields and buttons go full width — a half-width text input beside
-   nothing reads as a broken layout */
-@media (max-width: 640px) {
-  .sb-fields, .sb-locbox { max-width: none; }
-  .sb-actions { flex-direction: column-reverse; align-items: stretch; }
-  .sb-actions .cta { text-align: center; justify-content: center; }
-}
-
-/* ---- the global .cta is white ink, authored for the old all-red page ------
- * /subscribe's root class is `.sb`, not `.page`, so the page-ground rules in
- * globals.css never matched it and every .cta here rendered white-on-white —
- * invisible, which is why the Continue button looked missing entirely.
- *
- * The disabled state deliberately does NOT fade to 0.4: a ghost button reads as
- * "broken", not "not yet". It stays fully opaque in a muted colour, and the step
- * says in words what is still needed.
- */
-.sb .cta {
-  border-color: var(--red);
-  color: var(--red);
-}
-.sb .cta:hover:not(:disabled) {
-  background: var(--red);
-  color: var(--milk);
-}
-.sb .cta:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 2px;
-}
-.sb .cta:disabled,
-.sb-actions .cta:disabled {
-  opacity: 1;
-  color: var(--red-dim);
-  border-color: var(--red-faint);
-  cursor: not-allowed;
-}
-.sb-hint { font-size: max(15px, var(--step--1)); /* §9: body text ≥ 15 px */ color: var(--red-dim); }
-
-/* `.sb` is not `.page`, so none of the page-ground rules in globals.css reach it.
-   Anything inherited from globals that paints in --milk has to be restated here.
-   The step eyebrow ("Step 1 of 5") was invisible for exactly this reason. */
-.sb .eyebrow { color: var(--red-dim); }
-.sb .sub-foot a { color: var(--red-dim); }
-.sb .sub-foot a:hover { color: var(--red); }
-.sb .pending { border-color: var(--red-faint); color: var(--red-dim); }
-
-/* ---- pin-first funnel (B8): review, start date, errors ----------------------
- * Same rules as above: red ink on white, >= 44 px tap targets, >= 15 px text.
- */
-.sb-visually-hidden {
-  position: absolute !important;
-  width: 1px; height: 1px;
-  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
-  white-space: nowrap;
-}
-.sb-issues { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: max(15px, 0.95rem); }
-.sb-issues code { font-size: 0.9em; }
-.sb-areastate { margin: 1rem 0 0.4rem; min-height: 2.75rem; }
-
-.sb-review { display: grid; gap: 0.6rem; margin: 1.2rem 0; max-width: 40rem; }
-.sb-review > div { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 0.6rem; align-items: baseline; }
-.sb-review dt { font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-dim); }
-.sb-review dd { margin: 0; overflow-wrap: anywhere; }
-@media (max-width: 40rem) { .sb-review > div { grid-template-columns: 1fr; gap: 0.15rem; } }
-
-.sb-final { margin: 1rem 0; max-width: 32rem; }
-.sb-lines li.sb-total b { font-size: 1.25em; }
-
-.sb-startopts { border: 0; padding: 0; margin: 1.2rem 0; display: grid; gap: 0.6rem; max-width: 34rem; }
-.sb-radio, .sb-check-row {
-  display: flex; gap: 0.7rem; align-items: flex-start;
-  min-height: 44px; padding: 0.5rem 0; cursor: pointer;
-  font-size: max(15px, 1rem); color: var(--red);
-}
-.sb-radio input, .sb-check-row input { width: 22px; height: 22px; margin-top: 0.1rem; flex: none; accent-color: var(--red); }
-.sb-check-row { max-width: 40rem; }
-
-.sb-field input[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
-.sb-notice > div { min-width: 0; }
-
-/* Step headings receive focus programmatically on step change (UI-33); no ring for pointer users. */
-.sb h1[tabindex='-1']:focus:not(:focus-visible) { outline: none; }
