@@ -41,14 +41,14 @@ variable on Vercel, redeploy** — a variable only reaches deployments made afte
 | `RAZORPAY_WEBHOOK_SECRET` | Verifies Razorpay's calls | You invent it when creating the webhook (section 3) | Required for refunds and payment backups |
 | `WHATSAPP_PROVIDER` | `log` = messages recorded, never sent. `meta` = WhatsApp Cloud API | — | `log` for mock data |
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_AUTH_TEMPLATE`, `WHATSAPP_API_BASE` (optional) | Real WhatsApp | Meta Business → WhatsApp → API setup (templates must be approved) | Only for the real-WhatsApp tests (6.10) |
-| `STORAGE_DRIVER` + `BLOB_READ_WRITE_TOKEN` | Delivery photos | Vercel → Storage → create a **private** Blob store | `vercel-blob`; without it riders cannot save photos on Vercel |
+| `STORAGE_DRIVER` + `BLOB_READ_WRITE_TOKEN` | Delivery photos | Vercel → Storage → Create → Blob, choose **Private** (cannot be changed later) → connect to this project. The app reads `BLOB_READ_WRITE_TOKEN` itself (riders' phones upload with it), so check it is in the project's variables; if only `BLOB_STORE_ID` appeared, copy the read-write token from the store's page | `vercel-blob`; without both, delivery photos cannot be saved on Vercel — a rider can then only mark a delivery with a note, and it is flagged for ops |
 | `NEXT_PUBLIC_SITE_URL` | Absolute links (photo links in WhatsApp) | — | `https://maavuli-farms.vercel.app` |
 | `GOOGLE_MAPS_SERVER_KEY` | Route optimisation (Routes API) | Google Cloud Console, billing on, restrict to Routes API | Optional: without it, routes are ordered locally |
 | `NEXT_PUBLIC_GOOGLE_MAPS_KEY` | Map + address search on sign-up | Google Cloud Console, Maps JS + Places, restricted to the site's domain | Optional: without it the free OpenStreetMap picker is used |
 | `GOOGLE_ROUTES_DAILY_CAP` / `GOOGLE_ROUTES_MONTHLY_CAP` | Cost backstop for Google calls | — | Leave unset (defaults apply) |
 | `FARM_ORIGIN_LAT` / `FARM_ORIGIN_LNG` | Where routes start | The farm's map pin | Optional; set both or neither |
 | `MAAVULI_TIME_TRAVEL` | Lets tests move the clock | — | Local/e2e only; ignored on Vercel |
-| `SMS_PROVIDER`, `SMS_API_KEY`, `SMS_SENDER_ID` | SMS fallback | — | Leave empty: SMS sending is not built |
+| `SMS_PROVIDER`, `SMS_API_KEY`, `SMS_SENDER_ID` | SMS fallback | — | Leave UNSET on Vercel: the SMS sender is not built, so with all three set, any sign-in that WhatsApp does not deliver fails — including every sign-in in demo mode |
 
 **OTP_DEMO_MODE warning.** With it on, anyone who can reach the site can sign in as ANY
 customer mobile. The `maavuli` database holds the orders imported from the old site, so
@@ -62,7 +62,8 @@ on screen even in demo mode; they are written to the server log (section 5).
 Keeps the real data untouched while you test with mock data.
 
 1. On your laptop, in the project folder (with `MONGODB_URI` in `.env.local`), create and
-   fill the test database:
+   fill the test database. **Done on 30 Sep 2026** on the cluster in `.env.local`
+   (`maavulifarms.amqgozs.mongodb.net`); re-running is safe and changes nothing:
    ```sh
    MONGODB_DB=maavuli_test pnpm db:init
    MONGODB_DB=maavuli_test pnpm db:seed-dev
@@ -78,8 +79,10 @@ Keeps the real data untouched while you test with mock data.
    `https://maavuli-farms.vercel.app/api/webhooks/razorpay`, the secret you put in
    `RAZORPAY_WEBHOOK_SECRET`, events `order.paid`, `payment.captured`, `payment.failed`,
    `refund.created`, `refund.processed`, `refund.failed`.
-4. Check the job runs: Vercel → Settings → Cron Jobs shows `/api/cron/tick`. On the Hobby
-   plan Vercel may only run crons once a day; if so, run it by hand while testing:
+4. Check the job runs: Vercel → Settings → Cron Jobs lists `/api/cron/tick` every 5
+   minutes. (Vercel refuses to deploy a cron more frequent than daily on a Hobby account,
+   so the deploys succeeding means the plan allows it.) To run it at once instead of
+   waiting for the next 5 minutes:
    ```sh
    curl -H "Authorization: Bearer $CRON_SECRET" https://maavuli-farms.vercel.app/api/cron/tick
    ```
