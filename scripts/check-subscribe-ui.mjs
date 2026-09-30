@@ -97,19 +97,21 @@ console.log('\nphone (Pixel 7), in the delivery area');
   await hydrated(page);
   check('screen 1 is the map', true);
   check('stepper shows three steps', (await page.locator('.sb-stepper li').count()) === 3);
-  check('continue is disabled before a pin', await page.getByRole('button', { name: 'Continue to your plan' }).isDisabled());
+  check('continue is disabled before a pin', await page.getByRole('button', { name: 'Next: choose your milk' }).isDisabled());
+  check('prices are shown before anything is asked', /₹95 a litre.*₹115 a litre.*no auto-renewal/.test((await page.locator('.sb-priceline').textContent()) ?? ''));
 
   await page.getByRole('button', { name: /use my location/i }).click();
-  await waitOrExplain(page, page.getByText('We deliver here', { exact: true }), errors, 'the zone check (in the area)');
+  await waitOrExplain(page, page.locator('.sb-areastate').getByText('We deliver here', { exact: true }), errors, 'the zone check (in the area)');
   const zoneText = ((await page.locator('.sb-areastate').textContent()) ?? '').replace(/\s+/g, ' ').trim();
   check('zone check says yes, with the delivery window', /Milk arrives between .+ and .+ each morning/.test(zoneText), zoneText);
+  check('no internal zone name is shown', !/DEV |TEST ZONE|·/.test(zoneText), zoneText);
 
   await page.getByLabel(/Name for the delivery/).fill('Anitha Rao');
   await page.getByLabel(/Flat \/ house/).fill('203');
   await page.getByLabel(/Floor/).fill('2');
   await page.getByLabel(/Society, building or street/).fill('Sai Residency, Balram Nagar');
-  check('the rider preview reads the address', await page.getByText('The rider will read:').isVisible());
-  await page.getByRole('button', { name: 'Continue to your plan' }).click();
+  check('the address preview reads it back', await page.getByText('The delivery person will read:').isVisible());
+  await page.getByRole('button', { name: 'Next: choose your milk' }).click();
 
   await h1(page, 'Your milk').waitFor();
   check('screen 2 is the plan', true);
@@ -121,8 +123,8 @@ console.log('\nphone (Pixel 7), in the delivery area');
   await page.locator('label.sb-term', { hasText: '3 Months' }).click();
   const amt = (await page.locator('.sb-dock-amt').textContent())?.trim();
   check('price bar shows the quote', amt === '₹8,122.50', amt);
-  check('term rows show pause days and per-litre', await page.locator('label.sb-term', { hasText: '20 pause days' }).locator('text=₹90.25 a litre').isVisible());
-  await page.getByText(/That is the earliest we can start/).waitFor();
+  check('term rows show pause days and per-litre', await page.locator('label.sb-term', { hasText: 'pause up to 20 mornings' }).locator('text=₹90.25 a litre').isVisible());
+  await page.getByText(/Orders close at .+ the day before, so this is the earliest we can start/).waitFor();
   check('first delivery date comes from the server', true);
   check('selected milk is filled (is-on)', (await page.locator('label.sb-milk.is-on').count()) === 1);
 
@@ -130,7 +132,7 @@ console.log('\nphone (Pixel 7), in the delivery area');
   await page.goBack({ waitUntil: 'domcontentloaded' });
   await waitOrExplain(page, h1(page, 'Where should we deliver?'), errors, 'screen 1 after Back', 20_000);
   check('Back returns to screen 1', true);
-  await waitOrExplain(page, page.getByText('We deliver here', { exact: true }), errors, 'the zone check after Back');
+  await waitOrExplain(page, page.locator('.sb-areastate').getByText('We deliver here', { exact: true }), errors, 'the zone check after Back');
   check('door details survive Back', (await page.getByLabel(/Name for the delivery/).inputValue()) === 'Anitha Rao');
   await page.goForward({ waitUntil: 'domcontentloaded' });
   await waitOrExplain(page, h1(page, 'Your milk'), errors, 'screen 2 after Forward', 20_000);
@@ -162,7 +164,7 @@ console.log('\nphone (Pixel 7), in the delivery area');
   await page.locator('.sb-receipt').getByText('→').waitFor();
   check('receipt shows the server dates', true);
   check('no map coordinates on the receipt', !(await page.locator('.sb-receipt').textContent()).match(/\d{2}\.\d{4,}/));
-  await page.getByRole('heading', { name: 'Sign in to pay' }).waitFor();
+  await page.getByRole('heading', { name: 'Confirm your mobile number' }).waitFor();
   check('sign-in comes last', true);
 
   await page.getByLabel('Your mobile number').fill('9800000101');
@@ -204,7 +206,7 @@ console.log('\nphone, outside every delivery zone');
   check('offers a call', await page.getByRole('link', { name: /^Call / }).isVisible());
   check('offers an email with the location', (await page.getByRole('link', { name: 'Email us your location' }).getAttribute('href'))?.includes('google.com%2Fmaps') === true);
   check('no door form outside the area', (await page.getByLabel(/Name for the delivery/).count()) === 0);
-  check('continue stays disabled', await page.getByRole('button', { name: 'Continue to your plan' }).isDisabled());
+  check('no dead Continue button outside the area', (await page.getByRole('button', { name: 'Next: choose your milk' }).count()) === 0);
   check('no page or console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }

@@ -136,7 +136,7 @@ export default function LocationPickerGoogle({ value, onChange, idPrefix, apiKey
               const place = pred.toPlace();
               await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location', 'viewport'] });
               if (!place.location) {
-                setSearchMsg('That place has no exact point. Move the pin by hand.');
+                setSearchMsg('That place has no exact point. Tap your building on the map.');
                 return;
               }
               setSearchMsg(null);
@@ -147,7 +147,7 @@ export default function LocationPickerGoogle({ value, onChange, idPrefix, apiKey
                 ...(label ? { label } : {}),
               });
             } catch {
-              setSearchMsg('The place search is not answering right now. You can still move the pin by hand.');
+              setSearchMsg('The place search is not answering right now. You can still tap your building on the map.');
             }
           })();
         });
@@ -218,7 +218,7 @@ export default function LocationPickerGoogle({ value, onChange, idPrefix, apiKey
         ref={holder}
         className="lp-map"
         role="application"
-        aria-label="Map. Tap to place your delivery pin, or drag the pin onto your building."
+        aria-label="Map. Tap your building to mark it, or drag the marker onto your building."
       />
     </div>
   );

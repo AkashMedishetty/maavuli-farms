@@ -56,7 +56,9 @@ import type { ApiFail, DayRuleLabels, PreviewJSON, RenewalProp } from './types';
  */
 
 type Step = FlowStep;
-const STEP_LABELS: Record<Step, string> = { where: 'Where', plan: 'Your plan', pay: 'Pay' };
+const STEP_LABELS: Record<Step, string> = { where: 'Address', plan: 'Your milk', pay: 'Pay' };
+/** The button under an error on the Pay screen says where it will take you. */
+const FIX_LABEL: Record<Step, string> = { where: 'Change the address', plan: 'Change the plan or date', pay: 'Try again' };
 
 type Area =
   | { kind: 'idle' }
@@ -380,7 +382,7 @@ export default function SubscribeFlow({ renewal, rules }: { renewal: RenewalProp
               error={errors.where}
               rules={rules}
               onRecheck={recheck}
-              nextLabel={backToPay ? 'Continue to pay' : 'Continue to your plan'}
+              nextLabel={backToPay ? 'Continue to pay' : 'Next: choose your milk'}
               onNext={() => go(backToPay ? 'pay' : 'plan')}
             />
           )}
@@ -436,7 +438,7 @@ export default function SubscribeFlow({ renewal, rules }: { renewal: RenewalProp
               }}
             />
           ) : step === 'pay' ? (
-            <MissingPrior label={!pin ? 'your delivery pin' : 'your plan'} onFix={() => go(!pin ? 'where' : 'plan')} />
+            <MissingPrior label={!pin ? 'your delivery address' : 'your plan'} onFix={() => go(!pin ? 'where' : 'plan')} />
           ) : null}
         </div>
 
@@ -565,6 +567,8 @@ function DevMissing({ title, missing }: { title: string; missing: string[] }) {
 
 const PHONE = CONTACT.phones[0] ?? '';
 const PHONE_HREF = `tel:${PHONE.replace(/\s/g, '')}`;
+/** Shown before anything is asked: each milk's standard rate, straight from the price list. */
+const PRICE_LINE = `${PRODUCTS.map((p) => `${p.label} ${formatINR(p.baseRatePaise)} a litre`).join(', ')}, less on longer plans. One payment for the whole plan, no auto-renewal.`;
 /** The farm's WhatsApp number, once confirmed (docs/CLIENT-QUESTIONS.md). */
 const WHATSAPP = CONTACT.whatsapp;
 
@@ -638,23 +642,25 @@ function WhereStep({
   if (!pin || inaccurate || (area.kind !== 'yes' && area.kind !== 'checking')) confirmedOnce.current = false;
   else if (area.kind === 'yes') confirmedOnce.current = true;
   const showDoor = pinOk || (!!pin && !inaccurate && area.kind === 'checking' && confirmedOnce.current);
+  // Outside the area (or orders not open online / sign-up paused) the contact buttons
+  // are the next step: a greyed-out Continue beside them only invites useless taps.
+  const deadEnd = !!pin && !inaccurate && (area.kind === 'no' || area.kind === 'unknown' || area.kind === 'unconfigured');
   const hint = !pin
-    ? 'Place a pin on your building to continue.'
+    ? 'Mark your building on the map to continue.'
     : inaccurate
-      ? 'Drag the pin (or use the arrows) onto your building to continue.'
+      ? 'Drag the marker (or use the arrows) onto your building to continue.'
       : area.kind === 'down'
         ? 'Check again to continue.'
-        : area.kind === 'no' || area.kind === 'unknown'
-          ? 'We can continue once the pin is somewhere we deliver.'
-          : '';
+        : '';
 
   return (
     <section className="sb-panel" aria-labelledby="sb-where-h">
       <h1 id="sb-where-h">Where should we deliver?</h1>
       <p className="sb-lead">
-        Put the pin on your building. The rider comes to this exact spot every morning, so we check it against our
-        delivery area before anything else.
+        Mark your building on the map. Our delivery person comes to this exact spot every morning, so we first check
+        that we deliver there.
       </p>
+      <p className="sb-hint sb-priceline">{PRICE_LINE}</p>
       <StepError fail={error} />
 
       <LocationPicker value={pin} onChange={setPin} />
@@ -667,10 +673,9 @@ function WhereStep({
         ) : area.kind === 'yes' ? (
           <div className="sb-notice is-ok">
             <span className="sb-dot" aria-hidden="true" />
+            {/* zone names are internal (the live one reads "TEST ZONE - not a confirmed service area"): never shown */}
             <span>
-              <b>We deliver here</b>
-              {area.zone ? ` · ${area.zone}` : ''}. Milk arrives between {rules.windowStart} and {rules.windowEnd} each
-              morning.
+              <b>We deliver here</b>. Milk arrives between {rules.windowStart} and {rules.windowEnd} each morning.
             </span>
           </div>
         ) : area.kind === 'no' ? (
@@ -679,8 +684,8 @@ function WhereStep({
             <div>
               <b>We don’t deliver to this spot yet.</b>
               <p>
-                If the pin is in the wrong place, move it onto your building. If it is right, tell us: we are adding
-                areas, and nothing is charged.
+                If the marker is in the wrong place, drag it onto your building. If it is right, tell us: we are adding
+                areas. Nothing is charged.
               </p>
               <ContactActions pin={pin} subject="Delivery area request — Maavuli" />
             </div>
@@ -689,8 +694,8 @@ function WhereStep({
           <div className="sb-notice is-warn">
             <span className="sb-dot" aria-hidden="true" />
             <div>
-              <b>Our delivery area is not published yet,</b> so we cannot take payments online. Tell us where you are
-              and we will set up your delivery.
+              <b>We are not taking orders online just yet.</b> Tell us where you are and we will help you set up
+              delivery. Nothing is charged.
               <ContactActions pin={pin} subject="Subscription interest — Maavuli" />
             </div>
           </div>
@@ -711,7 +716,7 @@ function WhereStep({
 
       {showDoor ? (
         <DoorForm addr={addr} setAddr={setAddr} nextLabel={nextLabel} canSubmit={pinOk} onNext={onNext} />
-      ) : (
+      ) : deadEnd ? null : (
         <>
           <div className="sb-nav">
             <button type="button" className="sb-btn" disabled>
@@ -719,6 +724,9 @@ function WhereStep({
             </button>
           </div>
           {hint ? <p className="sb-hint">{hint}</p> : null}
+          <p className="sb-hint">
+            Finding the map hard? Call <a href={PHONE_HREF}>{PHONE}</a> and we will set up your delivery.
+          </p>
         </>
       )}
     </section>
@@ -800,9 +808,9 @@ function DoorForm({
       <h2 id="sb-door-h" className="sb-subhead">
         Your door
       </h2>
-      <p className="sb-hint">The pin gets the rider to your building. These get the milk to your door.</p>
+      <p className="sb-hint">The map gets us to your building. These get the milk to your door.</p>
       <div className="sb-fields">
-        {field('name', 'Name for the delivery', { required: true, auto: 'name', max: 100, placeholder: 'Who should the rider ask for?' })}
+        {field('name', 'Name for the delivery', { required: true, auto: 'name', max: 100, placeholder: 'Who should we ask for at the door?' })}
         <div className="sb-row2">
           {field('house', 'Flat / house', { required: true, max: 100, placeholder: 'e.g. 304' })}
           {field('floor', 'Floor', { max: 40, placeholder: 'e.g. 3' })}
@@ -821,7 +829,7 @@ function DoorForm({
             {field('landmark', 'Landmark', { max: 300, placeholder: 'Opposite the water tank, blue gate…' })}
             <div className="sb-field">
               <label htmlFor="sb-addr-instructions">
-                Note for the rider <i>(optional)</i>
+                Note for the delivery person <i>(optional)</i>
               </label>
               <textarea
                 id="sb-addr-instructions"
@@ -836,28 +844,28 @@ function DoorForm({
           </>
         ) : (
           <button type="button" className="sb-linkbtn sb-more" onClick={() => setMore(true)}>
-            + Add a landmark, tower, pincode or a note for the rider
+            + Add a landmark, tower, pincode or a note for the delivery person
           </button>
         )}
       </div>
 
       {line ? (
         <p className="sb-hint sb-reads">
-          The rider will read: <b>{line}</b>
+          The delivery person will read: <b>{line}</b>
         </p>
       ) : null}
       {show('address') ? <p className="sb-fieldnote">{show('address')}</p> : null}
+      {touched && !valid ? (
+        <p className="sb-fieldnote" role="alert">
+          Please check the fields marked with “!” above.
+        </p>
+      ) : null}
 
       <div className="sb-nav">
         <button type="submit" className="sb-btn" disabled={!canSubmit}>
           {nextLabel}
         </button>
       </div>
-      {touched && !valid ? (
-        <p className="sb-hint" role="alert">
-          Please fix the highlighted fields.
-        </p>
-      ) : null}
     </form>
   );
 }
@@ -978,7 +986,7 @@ function PlanStep({
             const on = term === t.id;
             const tq = milk && qty ? quote(milk, qty, t.id) : null;
             const perLitre = milk ? quote(milk, 'one', t.id).perLitrePaise : null;
-            const meta = [`${t.days} days`, `${pauseDaysFor(t.days)} pause days`, t.discountPct > 0 ? `save ${t.discountPct}%` : null]
+            const meta = [`${t.days} days`, `pause up to ${pauseDaysFor(t.days)} mornings`, t.discountPct > 0 ? `save ${t.discountPct}%` : null]
               .filter(Boolean)
               .join(' · ');
             return (
@@ -998,7 +1006,10 @@ function PlanStep({
             );
           })}
         </div>
-        <p className="sb-hint">Paid once for the whole plan. No auto-renewal. A paused morning is added to the end.</p>
+        <p className="sb-hint">
+          Paid once for the whole plan. No auto-renewal. Going away? Pause a morning by {rules.cutoff} the day before,
+          and it is added to the end of your plan, so you never lose a day you paid for.
+        </p>
       </fieldset>
 
       {q ? (
@@ -1026,8 +1037,8 @@ function PlanStep({
           ) : start.mode === 'earliest' ? (
             <>
               <p className="sb-start-line">
-                <b>{dateLabel(known.firstOpenDate, true)}</b>, between {rules.windowStart} and {rules.windowEnd}. That is
-                the earliest we can start.
+                <b>{dateLabel(known.firstOpenDate, true)}</b>, between {rules.windowStart} and {rules.windowEnd}. Orders
+                close at {rules.cutoff} the day before, so this is the earliest we can start.
                 {error?.code === 'date_locked' ? ' The date you picked closed while you were choosing.' : ''}
               </p>
               <button type="button" className="sb-linkbtn" onClick={() => setStart({ mode: 'later', date: known.firstOpenDate })}>
@@ -1263,7 +1274,7 @@ function PayStep({
   };
 
   if (pay.kind === 'active') return <Success {...pay} rules={rules} />;
-  if (pay.kind === 'received') return <PaymentReceived message={pay.message} />;
+  if (pay.kind === 'received') return <PaymentReceived />;
 
   const total = known ? known.amountPaise : q.finalPaise;
   const saving = known ? known.savingPaise : q.savingPaise;
@@ -1287,7 +1298,7 @@ function PayStep({
           <div>
             <dt>For</dt>
             <dd>
-              {termName(plan.tenureId)} ({q.days} days) · {pauseDaysFor(q.days)} pause days
+              {termName(plan.tenureId)} ({q.days} days) · pause up to {pauseDaysFor(q.days)} mornings
             </dd>
             <dd className="sb-edit" />
           </div>
@@ -1337,6 +1348,9 @@ function PayStep({
           </>
         ) : null}
       </div>
+      <p className="sb-hint">
+        One payment for the whole plan. No auto-renewal. You can pause a morning until {rules.cutoff} the day before.
+      </p>
 
       {pv.kind === 'error' ? (
         <>
@@ -1349,7 +1363,7 @@ function PayStep({
               else retryPreview();
             }}
           >
-            {stepForFail(pv.fail) === 'pay' ? 'Try again' : 'Fix this'}
+            {FIX_LABEL[stepForFail(pv.fail)]}
           </button>
         </>
       ) : null}
@@ -1362,7 +1376,7 @@ function PayStep({
         <div className="sb-notice is-err" role="alert">
           <span className="sb-dot" aria-hidden="true" />
           <span>
-            We cannot confirm delivery to your pin.{' '}
+            We cannot confirm delivery to the spot you marked.{' '}
             <button type="button" className="sb-linkbtn" onClick={() => onEdit('where')}>
               Go back to the map
             </button>
@@ -1388,9 +1402,9 @@ function PayStep({
         </>
       ) : auth.kind === 'out' ? (
         <div className="sb-signin">
-          <h2 className="sb-subhead">Sign in to pay</h2>
+          <h2 className="sb-subhead">Confirm your mobile number</h2>
           <OtpForm
-            intro="We send a 6-digit code to your mobile on WhatsApp. There is no password."
+            intro={`We send a 6-digit code to your mobile on WhatsApp. There is no password. No WhatsApp? Call ${PHONE}.`}
             onSignedIn={(mobile) => {
               setAuth({ kind: 'in', mobile });
               void callApi<MeResponse>('/api/auth/me').then((r) => {
@@ -1441,8 +1455,11 @@ function PayStep({
               }}
             />
             <span>
-              Send me updates on WhatsApp — order confirmation, the day before the first delivery, and if a delivery
-              is missed or a refund is made. No marketing. You can turn this off any time in your account.
+              Send me delivery updates on WhatsApp. No marketing.
+              <small className="sb-check-note">
+                Order confirmation, the day before the first delivery, and if a delivery is missed or a refund is made.
+                You can turn this off any time in your account.
+              </small>
             </span>
           </label>
 
@@ -1457,7 +1474,10 @@ function PayStep({
                 onDismiss={() =>
                   setPay((p) =>
                     p.kind === 'ready'
-                      ? { ...p, note: `The payment window was closed, so nothing was charged. Tap Pay ${formatINR(p.order.amountPaise)} to try again.` }
+                      ? {
+                          ...p,
+                          note: `The payment window closed before we received a payment. If money has left your account, do not pay again: your plan will appear in My Deliveries within a few minutes, or call ${PHONE}. Otherwise, tap Pay ${formatINR(p.order.amountPaise)} to try again.`,
+                        }
                       : p,
                   )
                 }
@@ -1499,10 +1519,6 @@ function PayStep({
           ) : null}
         </div>
       )}
-
-      <p className="sb-hint">
-        One payment for the whole plan. No auto-renewal. You can pause a morning until {rules.cutoff} the day before.
-      </p>
     </section>
   );
 }
@@ -1535,7 +1551,10 @@ function Success({
             {rules.windowEnd}.{endDate ? <> The plan runs to <b>{dateLabel(endDate, true)}</b>.</> : null}
           </p>
         ) : null}
-        <p className="sb-lead">Pause a morning or see your schedule in My Deliveries.</p>
+        <p className="sb-lead">
+          If you turned on WhatsApp updates, we will message you the day before your first milk. Pause a morning or see
+          your schedule in My Deliveries.
+        </p>
         <Link className="sb-btn" href="/account">
           Go to my deliveries
         </Link>
@@ -1544,7 +1563,7 @@ function Success({
   );
 }
 
-function PaymentReceived({ message }: { message: string | null }) {
+function PaymentReceived() {
   const ref = useRef<HTMLHeadingElement>(null);
   useEffect(() => ref.current?.focus({ preventScroll: true }), []);
   return (
@@ -1557,10 +1576,9 @@ function PaymentReceived({ message }: { message: string | null }) {
           Payment received.
         </h1>
         <p className="sb-lead">
-          We could not confirm it with the payment gateway from this page just now{message ? ` (${message})` : ''}.
-          Please <b>do not pay again</b> — the gateway tells us directly, and your plan appears in{' '}
-          <Link href="/account">My Deliveries</Link> once it does, usually within a few minutes. If it has not appeared
-          in an hour, call <a href={PHONE_HREF}>{PHONE}</a>.
+          Your payment went through. We are still confirming it, so your plan may take a few minutes to appear in{' '}
+          <Link href="/account">My Deliveries</Link>. Please <b>do not pay again</b>. If it has not appeared within an
+          hour, call <a href={PHONE_HREF}>{PHONE}</a>.
         </p>
         <Link className="sb-btn" href="/account">
           Go to my deliveries
@@ -1633,9 +1651,7 @@ function SummaryCard({
 }) {
   const areaLine =
     area.kind === 'yes'
-      ? area.zone
-        ? `We deliver · ${area.zone}`
-        : 'We deliver here'
+      ? 'We deliver here'
       : area.kind === 'no'
         ? 'Not in our area yet'
         : area.kind === 'unknown'
@@ -1683,7 +1699,7 @@ function SummaryCard({
         </li>
         <li className={term ? undefined : 'is-empty'}>
           <span>For</span>
-          <b>{term ? `${termName(term)} · ${pauseDaysFor(q?.days ?? TENURES.find((t) => t.id === term)?.days ?? 30)} pause days` : 'not chosen'}</b>
+          <b>{term ? `${termName(term)} · pause up to ${pauseDaysFor(q?.days ?? TENURES.find((t) => t.id === term)?.days ?? 30)} mornings` : 'not chosen'}</b>
         </li>
         {q && q.savingPaise > 0 ? (
           <>
