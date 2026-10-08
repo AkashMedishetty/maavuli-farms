@@ -6,6 +6,7 @@ import { LoadError, pageCtx } from '@/components/admin/ops/server';
 import { LoadStats, RunCards, UnassignedWarning } from '@/components/admin/ops/ManifestView';
 import { LockNowButton, PrintButton } from '@/components/admin/ops/Actions';
 import { dateTimeLabel, litres, milkLabel, statusLabel, ymdLabel } from '@/components/admin/ops/format';
+import { BalanceNote } from '@/components/admin/ops/BalanceNote';
 
 export const dynamic = 'force-dynamic';
 
@@ -192,7 +193,10 @@ export default async function AdminDayPlanPage({ searchParams }: { searchParams:
                   <tbody>
                     {perRider.map(run => (
                       <tr key={runKey(run)}>
-                        <th scope="row">{run.riderName}</th>
+                        <th scope="row">
+                          {run.riderName}
+                          <BalanceNote run={run} />
+                        </th>
                         <td className="num">{litres(run.load.cowLitres)}</td>
                         <td className="num">{litres(run.load.buffaloLitres)}</td>
                         <td className="num">{run.load.stops}</td>

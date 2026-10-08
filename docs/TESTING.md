@@ -134,6 +134,21 @@ On a database without the seed, add them yourself: Admin → Staff, and Admin �
 | DEV Malkajgiri | 17.4508, 78.5358 |
 | DEV Neredmet | 17.4870, 78.5320 |
 
+### City-wide load data (`db:seed-load`) — for testing at scale
+
+12 riders, 12 zones tiling Hyderabad with no overlaps (one rider each), and 91 customers /
+100 plans across ~55 localities, created through the real checkout and payment code. It
+locks today so riders see stops at once. Every mock customer has WhatsApp OFF (the numbers
+are made up). Riders: 9800001001 (Ravi Kumar, Kukatpally) … 9800001012 (Sai Teja, Kompally) —
+see Admin → Riders & zones. Customers: 9800002001 … 9800002091.
+
+```sh
+SEED_ALLOW_DB=maavuli pnpm db:seed-load            # load (idempotent the same day)
+SEED_ALLOW_DB=maavuli pnpm db:seed-load --reset    # remove all of it, re-enable older zones
+```
+
+It refuses any database whose name is not test-like unless `SEED_ALLOW_DB` names it.
+
 ### Customers
 
 Prices: buffalo ₹95 and cow ₹115 per litre per day; 3 months −5%, 6 months −10%, 1 year −15%.
@@ -265,6 +280,8 @@ this section. The e2e suite covers the same-day path automatically.
 | D10 | Messages | Open the outbox | Every message from the tests, with its status |
 | D11 | Staff | Add, then remove, a support member | The removed number loses `/admin` on the next click |
 | D12 | Settings | Change cut-off, delivery window, unpaid-order expiry, photo retention | Saved; invalid values (e.g. photo retention 400) refused with a reason |
+| D13 | Riders & zones | Set a rider's capacity (Set capacity → max stops) below their usual stops; lock tomorrow (or wait for the 4 PM job) | Tomorrow: that rider's run is within capacity, the nearest neighbour shows "borrowed N", the rider shows "handed N"; zones unchanged |
+| D14 | Tomorrow | Give every rider in an area a tight capacity | The overloaded rider shows "over capacity — no rider nearby had room" (handoffs never go further than 5 km) |
 
 ### 6.6 Staff permissions
 

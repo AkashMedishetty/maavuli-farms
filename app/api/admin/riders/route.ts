@@ -14,7 +14,7 @@ import { normalizePoint } from '@/lib/geo';
  *
  * GET    list every rider — staff: owner, ops, support
  * POST   create  { name, phone?, lat?, lng?, note? } — owner, ops
- * PATCH  { id, active? | name? | phone? ('' clears) | lat?,lng? | note? } — owner, ops
+ * PATCH  { id, active? | name? | phone? ('' clears) | lat?,lng? | note? | maxStops? | maxLitres? ('' clears) } — owner, ops
  * DELETE ?id=… — owner, ops. Refused while the rider holds a live run; their zones
  *        become unassigned.
  *
@@ -31,8 +31,23 @@ function riderJson(r: Rider) {
     phone: r.phone ?? null,
     active: r.active,
     startLocation: r.startLocation ?? null,
+    capacity: r.capacity ?? null,
     note: r.note ?? null,
   };
+}
+
+/**
+ * A capacity limit from the request: undefined = leave as is, null/'' = clear (no
+ * limit), a number = set. Stops are whole doors; litres may be halves.
+ */
+function readLimit(v: unknown, label: string, max: number, whole: boolean): number | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  const n = typeof v === 'string' ? Number(v) : v;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0 || n > max || (whole && !Number.isInteger(n))) {
+    throw new ValidationError(`${label} must be ${whole ? 'a whole number' : 'a number'} between 1 and ${max}, or empty for no limit.`);
+  }
+  return n;
 }
 
 function isDuplicateKey(err: unknown): boolean {
@@ -60,6 +75,8 @@ interface Body {
   lng?: unknown;
   note?: unknown;
   active?: unknown;
+  maxStops?: unknown;
+  maxLitres?: unknown;
 }
 
 function readName(v: unknown): string | undefined {
@@ -155,6 +172,13 @@ export async function PATCH(req: Request) {
       if (body.note.trim() === '') unset.note = '';
       else set.note = body.note.trim().slice(0, 300);
     }
+    // capacity — used by the daily lock's load balancing (lib/balance)
+    const maxStops = readLimit(body.maxStops, 'Max stops', 200, true);
+    if (maxStops === null) unset['capacity.maxStops'] = '';
+    else if (maxStops !== undefined) set['capacity.maxStops'] = maxStops;
+    const maxLitres = readLimit(body.maxLitres, 'Max litres', 500, false);
+    if (maxLitres === null) unset['capacity.maxLitres'] = '';
+    else if (maxLitres !== undefined) set['capacity.maxLitres'] = maxLitres;
 
     const db = await getDb();
     const update: Record<string, unknown> = { $set: set };

@@ -23,6 +23,23 @@
 
 .rider-app * { box-sizing: border-box; }
 
+/* The marketing site's globals (app/globals.css) style bare elements: serif
+   headings with tight leading, paragraphs capped at a reading measure, a white
+   body. They are right for the website and wrong for a dark work tool, so they are
+   reset here. Rider class names are r-prefixed for the same reason — a bare `.sub`
+   once picked up the sign-up page's full-screen `.sub` rule and pushed the mobile
+   field below the fold, under the sticky header, where it could not be tapped. */
+.rider-app h1,
+.rider-app h2,
+.rider-app h3 {
+  font-family: inherit;
+  letter-spacing: normal;
+  line-height: 1.25;
+}
+.rider-app p { max-width: none; }
+.rider-app a { color: var(--accent); }
+body:has(> .rider-app) { background: #0f1720; }
+
 .rider-main {
   max-width: 640px;
   margin: 0 auto;
@@ -37,7 +54,7 @@
   padding: 16px 0 10px;
 }
 .rider-head h1 { margin: 0; font-size: 1.3rem; font-weight: 650; }
-.rider-head .sub { color: var(--muted); font-size: .9rem; margin: 2px 0 0; }
+.rsub { color: var(--muted); font-size: .9rem; margin: 2px 0 0; }
 
 /* Telugu labels flagged pending native review */
 .te { font-size: .82em; color: var(--muted); display: block; }

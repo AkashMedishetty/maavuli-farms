@@ -438,6 +438,8 @@ export interface Delivery {
   lockedAt?: Date;
   /** who runs it today (null = unassigned bucket; ops must assign) */
   riderId?: ObjectId | null;
+  /** set when load balancing moved this door to another rider for the day: the original rider (null = it was unassigned) */
+  rebalancedFrom?: ObjectId | null;
   runId?: ObjectId;
   /** 1-based position in the run */
   seq?: number;
@@ -550,6 +552,12 @@ export interface Rider {
   active: boolean;
   /** where this rider's run starts; falls back to the farm origin when absent */
   startLocation?: { lat: number; lng: number };
+  /**
+   * How much this rider can take in a day. Unset = no limit. When set, the daily
+   * lock hands the overflow to the nearest rider with room (lib/balance), for that
+   * day only — territory and standing routes are unchanged.
+   */
+  capacity?: { maxStops?: number; maxLitres?: number };
   note?: string;
   lang?: Lang;
   createdAt: Date;
@@ -589,6 +597,8 @@ export interface DayLock {
   stops: number;
   cowLitres: number;
   buffaloLitres: number;
+  /** load balancing at lock: doors moved between riders, and riders still over capacity */
+  rebalanced?: { moved: number; overCapacity: number; stillUnassigned: number };
   /** set when the day closes (unmarked deliveries → unconfirmed, runs closed) */
   closedAt?: Date;
   unconfirmedAtClose?: number;
@@ -645,6 +655,8 @@ export interface RiderRun {
   load: { cowLitres: number; buffaloLitres: number; stops: number };
   routeSource: 'google' | 'local' | 'none';
   totalM?: number;
+  /** load balancing for this day: doors borrowed from / handed to other riders */
+  rebalance?: { movedIn: number; movedOut: number; overCapacity: boolean };
   startedAt?: Date;
   completedAt?: Date;
   closedAt?: Date;

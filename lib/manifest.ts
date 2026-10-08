@@ -32,7 +32,8 @@ import type { OpCtx } from './clock';
 import { recordEvent } from './events';
 import { dayRulesOf, getOpsSettings } from './settings';
 import { addDaysYMD, closeInstant, hmLabel, isPastCutoff, istInstant, istYMD, lockInstant } from './cutoff';
-import { orderStopsForRider, type StopInput } from './route-plan';
+import { farmOrigin, orderStopsForRider, type StopInput } from './route-plan';
+import { planBalance, type BalanceRider, type BalanceStop } from './balance';
 import { markNotDelivered } from './outcomes';
 import { enqueueMessage } from './notify';
 import { assertTransition, DELIVERY_TRANSITIONS, RUN_TRANSITIONS } from './transitions';
@@ -190,6 +191,95 @@ async function orderForRider(
   };
 }
 
+/* ----------------------------------------------------------- balancing ---- */
+
+type RiderGroup = { riderId: ObjectId | null; rows: PlannedRow[]; stops: Map<string, StopSnapshot> };
+
+interface BalanceApplied {
+  /** stopKey → the rider it was taken from (null = it was unassigned) */
+  movedFrom: Map<string, ObjectId | null>;
+  movedIn: Map<string, number>;
+  movedOut: Map<string, number>;
+  overCapacity: Set<string>;
+  stillUnassigned: number;
+  moved: number;
+}
+
+/**
+ * Hand unassigned doors and over-capacity riders' overflow to the nearest rider
+ * with room (lib/balance), mutating `byRider` in place before anything is written.
+ * Only the rows being locked now can move; load already frozen in an earlier lock
+ * of the same day counts toward capacity but stays where it is.
+ */
+async function balanceGroups(db: Db, date: string, byRider: Map<string, RiderGroup>): Promise<BalanceApplied> {
+  const applied: BalanceApplied = {
+    movedFrom: new Map(), movedIn: new Map(), movedOut: new Map(), overCapacity: new Set(), stillUnassigned: 0, moved: 0,
+  };
+  const riders = await col.riders(db).find({ active: true }).toArray();
+  const anyCapacity = riders.some(r => r.capacity?.maxStops !== undefined || r.capacity?.maxLitres !== undefined);
+  const unassigned = byRider.get(riderKey(null));
+  if (!anyCapacity && !(unassigned && unassigned.rows.length > 0)) return applied; // nothing to balance
+
+  const runs = await col.riderRuns(db).find({ date }).toArray();
+  const fixed = new Map(runs.map(r => [riderKey(r.riderId), r.load]));
+  const farm = farmOrigin();
+
+  const candidates = new Map<string, BalanceRider>();
+  const idOf = new Map<string, ObjectId | null>([[riderKey(null), null]]);
+  for (const r of riders) {
+    const key = riderKey(r._id);
+    idOf.set(key, r._id!);
+    const f = fixed.get(key);
+    candidates.set(key, {
+      key,
+      riderId: key,
+      active: true,
+      ...(r.capacity?.maxStops !== undefined ? { maxStops: r.capacity.maxStops } : {}),
+      ...(r.capacity?.maxLitres !== undefined ? { maxLitres: r.capacity.maxLitres } : {}),
+      ...((r.startLocation ?? farm) ? { anchor: (r.startLocation ?? farm)! } : {}),
+      ...(f ? { fixedStops: f.stops, fixedLitres: f.cowLitres + f.buffaloLitres } : {}),
+    });
+  }
+  candidates.set(riderKey(null), { key: riderKey(null), riderId: null, active: false });
+
+  const groups = new Map<string, BalanceStop[]>();
+  for (const [key, g] of byRider) {
+    const litres = new Map<string, number>();
+    for (const p of g.rows) litres.set(p.stopKey, (litres.get(p.stopKey) ?? 0) + p.row.litres);
+    groups.set(
+      key,
+      [...g.stops].map(([stopKey, snap]) => ({
+        stopKey,
+        litres: litres.get(stopKey) ?? 0,
+        ...(snap.location ? { location: snap.location } : {}),
+      })),
+    );
+  }
+
+  const plan = planBalance(groups, candidates);
+  for (const m of plan.moves) {
+    const from = byRider.get(m.from)!;
+    let to = byRider.get(m.to);
+    if (!to) {
+      to = { riderId: idOf.get(m.to) ?? null, rows: [], stops: new Map() };
+      byRider.set(m.to, to);
+    }
+    const snap = from.stops.get(m.stopKey)!;
+    from.stops.delete(m.stopKey);
+    to.stops.set(m.stopKey, snap);
+    const moving = from.rows.filter(p => p.stopKey === m.stopKey);
+    from.rows = from.rows.filter(p => p.stopKey !== m.stopKey);
+    to.rows.push(...moving);
+    if (!applied.movedFrom.has(m.stopKey)) applied.movedFrom.set(m.stopKey, from.riderId);
+    applied.movedOut.set(m.from, (applied.movedOut.get(m.from) ?? 0) + 1);
+    applied.movedIn.set(m.to, (applied.movedIn.get(m.to) ?? 0) + 1);
+  }
+  applied.moved = plan.moves.length;
+  applied.overCapacity = new Set(plan.overCapacity);
+  applied.stillUnassigned = plan.stillUnassigned.length;
+  return applied;
+}
+
 /* ---------------------------------------------------------------- lock ---- */
 
 /**
@@ -214,8 +304,13 @@ export async function lockDay(date: string, ctx: OpCtx): Promise<DayLock> {
     if (!g.stops.has(p.stopKey)) g.stops.set(p.stopKey, p.snapshot);
   }
 
+  // Load balancing: unassigned doors and over-capacity riders' overflow go to the
+  // nearest rider with room, for this day only (lib/balance).
+  const balance = await balanceGroups(db, date, byRider);
+
   let lockedRows = 0;
-  for (const g of byRider.values()) {
+  for (const [gKey, g] of byRider) {
+    if (g.rows.length === 0) continue; // e.g. the unassigned bucket after balancing
     const existing = await col.riderRuns(db).findOne({ riderId: g.riderId, date });
     let runId: ObjectId;
     let stopOrder: string[];
@@ -272,6 +367,7 @@ export async function lockDay(date: string, ctx: OpCtx): Promise<DayLock> {
             seq: seqOf.get(p.stopKey) ?? stopOrder.length + 1,
             stopKey: p.stopKey,
             snapshot: p.snapshot,
+            ...(balance.movedFrom.has(p.stopKey) ? { rebalancedFrom: balance.movedFrom.get(p.stopKey) ?? null } : {}),
             updatedAt: ctx.now,
           },
         },
@@ -285,6 +381,13 @@ export async function lockDay(date: string, ctx: OpCtx): Promise<DayLock> {
     // keep every row's seq consistent with the (possibly re-sequenced) stop order
     await resequence(db, runId, stopOrder);
     await refreshRunTotals(db, runId, ctx);
+
+    const movedIn = balance.movedIn.get(gKey) ?? 0;
+    const movedOut = balance.movedOut.get(gKey) ?? 0;
+    const over = balance.overCapacity.has(gKey);
+    if (movedIn || movedOut || over) {
+      await col.riderRuns(db).updateOne({ _id: runId }, { $set: { rebalance: { movedIn, movedOut, overCapacity: over } } });
+    }
   }
 
   // The day's lock document (counts refreshed on every re-lock).
@@ -298,7 +401,14 @@ export async function lockDay(date: string, ctx: OpCtx): Promise<DayLock> {
     { _id: date },
     {
       $setOnInsert: { lockedAt: ctx.now, lockedBy: ctx.actor },
-      $set: { stops: totals.stops, cowLitres: totals.cowLitres, buffaloLitres: totals.buffaloLitres },
+      $set: {
+        stops: totals.stops,
+        cowLitres: totals.cowLitres,
+        buffaloLitres: totals.buffaloLitres,
+        ...(balance.moved || balance.overCapacity.size || balance.stillUnassigned
+          ? { rebalanced: { moved: balance.moved, overCapacity: balance.overCapacity.size, stillUnassigned: balance.stillUnassigned } }
+          : {}),
+      },
     },
     { upsert: true, returnDocument: 'after', includeResultMetadata: true },
   );
@@ -313,6 +423,25 @@ export async function lockDay(date: string, ctx: OpCtx): Promise<DayLock> {
         entityId: date,
         type: createdNow ? 'day.locked' : 'day.relocked',
         data: { deliveries: lockedRows, stops: totals.stops, cowLitres: totals.cowLitres, buffaloLitres: totals.buffaloLitres, runs: byRider.size },
+      },
+      db,
+    );
+  }
+
+  if (balance.moved || balance.overCapacity.size) {
+    await recordEvent(
+      ctx,
+      {
+        entity: 'day',
+        entityId: date,
+        type: 'day.rebalanced',
+        data: {
+          moved: balance.moved,
+          overCapacity: [...balance.overCapacity],
+          stillUnassigned: balance.stillUnassigned,
+          movedIn: Object.fromEntries(balance.movedIn),
+          movedOut: Object.fromEntries(balance.movedOut),
+        },
       },
       db,
     );
@@ -687,6 +816,10 @@ export interface ManifestRun {
   riderName: string;
   status: string;
   load: { cowLitres: number; buffaloLitres: number; stops: number };
+  /** the rider's daily capacity, when one is set */
+  capacity?: { maxStops?: number; maxLitres?: number };
+  /** load balancing at lock: doors borrowed / handed off, and whether still over capacity */
+  rebalance?: { movedIn: number; movedOut: number; overCapacity: boolean };
   stops: ManifestStop[];
 }
 
@@ -742,8 +875,13 @@ export async function getManifest(date: string, ctx: OpCtx): Promise<Manifest> {
   if (isPastCutoff(date, ctx.now, rules)) await ensureLocked(date, ctx);
 
   const lock = await col.dayLocks(db).findOne({ _id: date });
-  const riders = await col.riders(db).find({}).project<{ _id: ObjectId; name: string }>({ name: 1 }).toArray();
+  const riders = await col
+    .riders(db)
+    .find({})
+    .project<{ _id: ObjectId; name: string; capacity?: { maxStops?: number; maxLitres?: number } }>({ name: 1, capacity: 1 })
+    .toArray();
   const riderName = new Map(riders.map(r => [r._id.toHexString(), r.name]));
+  const capacityOf = new Map(riders.filter(r => r.capacity).map(r => [r._id.toHexString(), r.capacity!]));
   const nameOf = (id: ObjectId | null | undefined) => (id ? (riderName.get(id.toHexString()) ?? 'Unknown rider') : 'Unassigned');
 
   const runs: ManifestRun[] = [];
@@ -760,6 +898,8 @@ export async function getManifest(date: string, ctx: OpCtx): Promise<Manifest> {
         riderName: nameOf(run.riderId),
         status: run.status,
         load: run.load,
+        ...(run.riderId && capacityOf.has(run.riderId.toHexString()) ? { capacity: capacityOf.get(run.riderId.toHexString())! } : {}),
+        ...(run.rebalance ? { rebalance: run.rebalance } : {}),
         stops: toManifestStops(
           rows.map(r => ({
             stopKey: r.stopKey ?? `${r.mobile}@pin:${r.pincode}`,

@@ -17,7 +17,16 @@ interface Rider {
   phone: string | null;
   active: boolean;
   startLocation: { lat: number; lng: number } | null;
+  /** daily capacity for load balancing; null = no limit */
+  capacity: { maxStops?: number; maxLitres?: number } | null;
   note: string | null;
+}
+
+function capacityLabel(c: Rider['capacity']): string {
+  const parts: string[] = [];
+  if (c?.maxStops !== undefined) parts.push(`${c.maxStops} stops`);
+  if (c?.maxLitres !== undefined) parts.push(`${c.maxLitres} L`);
+  return parts.length ? `up to ${parts.join(' · ')} a day` : 'no limit';
 }
 
 interface Zone {
@@ -134,6 +143,21 @@ export default function RidersPanel({ canEdit = false, refreshKey = 0 }: { canEd
     }
   };
 
+  // Inline "Set capacity" editor. Empty = no limit. Over capacity, the daily lock
+  // hands the overflow to the nearest rider with room (for that day only).
+  const [capEdit, setCapEdit] = useState<{ id: string; stops: string; litres: string } | null>(null);
+  const saveCapacity = async (rider: Rider) => {
+    if (!capEdit || capEdit.id !== rider.id || busy) return;
+    const okd = await mutate(
+      `cap-${rider.id}`,
+      '/api/admin/riders',
+      json('PATCH', { id: rider.id, maxStops: capEdit.stops.trim(), maxLitres: capEdit.litres.trim() }),
+      'Could not update the capacity',
+      `${rider.name}'s capacity saved. It applies from the next day locked.`,
+    );
+    if (okd) setCapEdit(null);
+  };
+
   const deleteRider = async (rider: Rider) => {
     if (!window.confirm(`Remove rider "${rider.name}"? Their zones become unassigned. Turning them off keeps history instead.`)) return;
     await mutate(`del-${rider.id}`, `/api/admin/riders?id=${encodeURIComponent(rider.id)}`, { method: 'DELETE' }, 'Could not remove the rider', `Removed ${rider.name}.`);
@@ -232,6 +256,8 @@ export default function RidersPanel({ canEdit = false, refreshKey = 0 }: { canEd
                       </dd>
                       <dt>Zones</dt>
                       <dd>{owned.length ? owned.map(z => z.name).join(', ') : '—'}</dd>
+                      <dt>Daily capacity</dt>
+                      <dd>{capacityLabel(rider.capacity)}</dd>
                     </dl>
                     {canEdit && (
                       <div className="ops-actions">
@@ -262,10 +288,70 @@ export default function RidersPanel({ canEdit = false, refreshKey = 0 }: { canEd
                         >
                           {phoneEdit?.id === rider.id ? 'Cancel' : 'Change phone'}
                         </button>
+                        <button
+                          type="button"
+                          className="ops-btn ops-btn-small"
+                          disabled={busy !== null}
+                          aria-expanded={capEdit?.id === rider.id}
+                          onClick={() =>
+                            setCapEdit(c =>
+                              c?.id === rider.id
+                                ? null
+                                : {
+                                    id: rider.id,
+                                    stops: rider.capacity?.maxStops !== undefined ? String(rider.capacity.maxStops) : '',
+                                    litres: rider.capacity?.maxLitres !== undefined ? String(rider.capacity.maxLitres) : '',
+                                  },
+                            )
+                          }
+                        >
+                          {capEdit?.id === rider.id ? 'Cancel' : 'Set capacity'}
+                        </button>
                         <button type="button" className="ops-btn ops-btn-small ops-btn-danger" disabled={busy !== null} onClick={() => void deleteRider(rider)}>
                           {busy === `del-${rider.id}` ? 'Removing…' : 'Remove'}
                         </button>
                       </div>
+                    )}
+                    {canEdit && capEdit?.id === rider.id && (
+                      <form
+                        className="ops-actions"
+                        onSubmit={e => {
+                          e.preventDefault();
+                          void saveCapacity(rider);
+                        }}
+                      >
+                        <label>
+                          Max stops a day{' '}
+                          <input
+                            type="number"
+                            min={1}
+                            max={200}
+                            step={1}
+                            inputMode="numeric"
+                            placeholder="no limit"
+                            value={capEdit.stops}
+                            onChange={e => setCapEdit({ ...capEdit, stops: e.target.value })}
+                            style={{ width: '6rem' }}
+                          />
+                        </label>
+                        <label>
+                          Max litres a day{' '}
+                          <input
+                            type="number"
+                            min={0.5}
+                            max={500}
+                            step={0.5}
+                            inputMode="decimal"
+                            placeholder="no limit"
+                            value={capEdit.litres}
+                            onChange={e => setCapEdit({ ...capEdit, litres: e.target.value })}
+                            style={{ width: '6rem' }}
+                          />
+                        </label>
+                        <button type="submit" className="ops-btn ops-btn-small" disabled={busy !== null}>
+                          {busy === `cap-${rider.id}` ? 'Saving…' : 'Save'}
+                        </button>
+                      </form>
                     )}
                     {canEdit && phoneEdit?.id === rider.id && (
                       <form

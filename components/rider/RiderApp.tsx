@@ -299,7 +299,7 @@ export default function RiderApp({ riderName }: { riderName: string | null }) {
     <main className="rider-main">
       <header className="rider-head">
         <h1>Today’s round</h1>
-        <p className="sub">
+        <p className="rsub">
           {riderName ? `${riderName} · ` : ''}
           {today ? `${formatRoundDate(today.date)} · window ${today.window.start}–${today.window.end}` : '—'}
         </p>

@@ -125,7 +125,7 @@ export default async function RiderPage({ searchParams }: { searchParams: Search
     <main className="rider-main">
       <header className="rider-head">
         <h1>Delivery partner sign-in</h1>
-        <p className="sub">A one-time code goes to your mobile — no password.</p>
+        <p className="rsub">A one-time code goes to your mobile — no password.</p>
       </header>
 
       {dbDown ? (
@@ -178,14 +178,14 @@ export default async function RiderPage({ searchParams }: { searchParams: Search
                 />
               </label>
               {devCode ? (
-                <p className="sub" style={{ color: '#f59e0b' }}>
+                <p className="rsub" style={{ color: '#f59e0b' }}>
                   Development mode — your code is <strong>{devCode}</strong>.
                 </p>
               ) : null}
               <SubmitButton className="rbtn primary" pendingLabel="Checking…">
                 Verify &amp; sign in
               </SubmitButton>
-              <p className="sub" style={{ marginTop: 12 }}>
+              <p className="rsub" style={{ marginTop: 12 }}>
                 <Link href="/rider">Use a different number</Link>
               </p>
             </form>

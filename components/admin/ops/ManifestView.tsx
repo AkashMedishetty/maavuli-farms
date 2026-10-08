@@ -6,6 +6,7 @@
 import type { Manifest, ManifestRun } from '@/lib/manifest';
 import AssignRider, { type RiderOption } from './AssignRider';
 import { DONE_ITEM_STATUSES, litres, statusLabel } from './format';
+import { BalanceNote } from './BalanceNote';
 
 export interface ItemCounts {
   total: number;
@@ -129,6 +130,7 @@ export function RunCards({
             <p className="ops-muted" style={{ margin: '0.2rem 0' }}>
               {run.load.stops} stops · {litres(run.load.cowLitres)} cow · {litres(run.load.buffaloLitres)} buffalo
             </p>
+            <BalanceNote run={run} />
             {showProgress && (
               <>
                 <div
