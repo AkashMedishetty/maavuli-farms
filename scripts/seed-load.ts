@@ -327,6 +327,11 @@ const plan = () => ({
 
 let made = 0, reused = 0, second = 0, startTomorrow = 0;
 let n = 0;
+
+// 1. Generate every customer IN ORDER, so the deterministic random stream (and so
+//    each person, door and plan) is identical however the checkouts are scheduled.
+interface Job { mobile: string; details: Parameters<typeof createCheckoutOrder>[0]['details']; plans: ReturnType<typeof plan>[]; at: Date[]; newToday: boolean }
+const jobs: Job[] = [];
 for (const a of AREAS) {
   const count = BASE_PER_AREA + (EXTRA[a.zone] ?? 0);
   for (let k = 0; k < count; k++) {
@@ -347,33 +352,45 @@ for (const a of AREAS) {
     if (rand() < 0.08) {
       plans.push({ ...plan(), kind: plans[0]!.kind === 'cow' ? 'buffalo' : 'cow' }); // both milks, same door
     }
-
-    for (let p = 0; p < plans.length; p++) {
-      const at = istInstant(buyDay, `${String(9 + Math.floor(rand() * 4)).padStart(2, '0')}:${String(Math.floor(rand() * 60)).padStart(2, '0')}`);
-      const ctx: OpCtx = { now: at, actor: customerActor(mobile) };
-      const existing = await col.orders(db).countDocuments({ mobile, idempotencyKey: `seed-load-${mobile}-${p}` } as never);
-      const r = await createCheckoutOrder(
-        {
-          mobile,
-          purpose: 'new',
-          ...plans[p]!,
-          details,
-          useCredit: false,
-          whatsappOptIn: false, // made-up numbers: never message them
-          idempotencyKey: `seed-load-${mobile}-${p}`,
-        },
-        ctx,
-      );
-      if (r.order.status !== 'paid') {
-        await markOrderPaid(r.order._id, { razorpayPaymentId: `pay_seed_${r.order._id.toHexString()}`, source: 'verify' }, ctx);
-      }
-      if (existing) reused++;
-      else made++;
-      if (p === 1) second++;
-      if (p === 0 && newToday) startTomorrow++;
-    }
+    const at = plans.map(() =>
+      istInstant(buyDay, `${String(9 + Math.floor(rand() * 4)).padStart(2, '0')}:${String(Math.floor(rand() * 60)).padStart(2, '0')}`),
+    );
+    jobs.push({ mobile, details, plans, at, newToday });
   }
 }
+
+// 2. Check out + pay, several customers at a time (one customer's plans stay in
+//    order). Every step is idempotent, so a re-run after an interruption resumes.
+async function runJob(j: Job): Promise<void> {
+  for (let p = 0; p < j.plans.length; p++) {
+    const ctx: OpCtx = { now: j.at[p]!, actor: customerActor(j.mobile) };
+    const key = `seed-load-${j.mobile}-${p}`;
+    const existing = await col.orders(db).countDocuments({ mobile: j.mobile, idempotencyKey: key });
+    const r = await createCheckoutOrder(
+      { mobile: j.mobile, purpose: 'new', ...j.plans[p]!, details: j.details, useCredit: false, whatsappOptIn: false, idempotencyKey: key },
+      ctx,
+    );
+    if (r.order.status !== 'paid') {
+      await markOrderPaid(r.order._id, { razorpayPaymentId: `pay_seed_${r.order._id.toHexString()}`, source: 'verify' }, ctx);
+    }
+    if (existing) reused++;
+    else made++;
+    if (p === 1) second++;
+    if (p === 0 && j.newToday) startTomorrow++;
+  }
+}
+const CONCURRENCY = 8;
+let next = 0;
+let done = 0;
+await Promise.all(
+  Array.from({ length: CONCURRENCY }, async () => {
+    while (next < jobs.length) {
+      const j = jobs[next++]!;
+      await runJob(j);
+      if (++done % 10 === 0) console.log(`  … ${done}/${jobs.length} customers`);
+    }
+  }),
+);
 __setRazorpayCreateOrderForTests(undefined);
 log.push(`customers: ${n} (${made} plan(s) created, ${reused} already there; ${second} with both milks; ${startTomorrow} start tomorrow)`);
 
