@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { notFound } from 'next/navigation';
 
 /**
  * The hero layout editor is a design tool (it only copies a LAYOUT object to the
@@ -8,5 +9,7 @@ import type { ReactNode } from 'react';
 export const metadata = { title: 'Hero lab', robots: { index: false, follow: false } };
 
 export default function HeroLabLayout({ children }: { children: ReactNode }) {
+  // A design tool for the laptop (`pnpm dev`) — not a page customers should reach.
+  if (process.env.NODE_ENV === 'production') notFound();
   return children;
 }

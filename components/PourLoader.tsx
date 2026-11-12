@@ -74,19 +74,13 @@ export default function PourLoader() {
     };
 
     /*
-     * The loader now plays on EVERY load, not once per session.
-     *
-     * It used to write sessionStorage['mv-loaded'] and skip on every subsequent
-     * navigation, which made the pour effectively invisible — you saw it once and
-     * never again, so it read as broken.
-     *
-     * The one remaining skip is `mv-skip-loader`, which ONLY the capture and test
-     * scripts set. It is deliberately a different key from the old one: nothing in
-     * the app writes it, so a real visitor can never end up in the skipped state by
-     * accident, which is exactly how the old key silenced the animation.
-     *
-     * Reduced motion still skips, because a full-screen pour is precisely the kind
-     * of motion that setting exists to suppress.
+     * The intro plays ONCE per visit, on the first load of the home page. The root
+     * layout's pre-paint script decides that (it marks every other load `loaded`
+     * before first paint, see app/layout.tsx); this effect only has to record that
+     * the intro has now been seen, and respect the same switches:
+     *  · `mv-skip-loader` — set only by the capture and test scripts;
+     *  · reduced motion — a full-screen pour is exactly what that setting suppresses;
+     *  · `?loader` — forces a replay, so the animation can be re-watched on demand.
      */
     let skip = false;
     try { skip = sessionStorage.getItem('mv-skip-loader') === '1'; } catch { /* private mode */ }
@@ -98,6 +92,7 @@ export default function PourLoader() {
     // /admin and /rider work tools, or the skip key), so the overlay is hidden:
     // do not run a ~3.5 s animation nobody can see on a rider's low-end phone.
     if (document.documentElement.classList.contains('loaded')) { done(); return; }
+    try { sessionStorage.setItem('mv-intro-seen', '1'); } catch { /* private mode: plays again next load */ }
 
     document.documentElement.classList.add('loading');
 

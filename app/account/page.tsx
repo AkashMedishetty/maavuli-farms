@@ -506,7 +506,7 @@ function DeliveryLine({ d }: { d: DeliveryView }) {
 function TodayCard({ view, cutoff }: { view: AccountView; cutoff: string }) {
   return (
     <section className="acct-card acct-today" aria-labelledby="today-h">
-      <h2 id="today-h">Today, {dl(view.today)}</h2>
+      <h2 id="today-h">Today and tomorrow</h2>
       <Guard s={view.plans}>
         {(plans) => {
           const live = plans.filter((p) => p.live || p.today.rows.length > 0 || p.tomorrow.rows.length > 0);
@@ -638,9 +638,37 @@ function PlanCard({ plan: p, view, mobile, cutoff }: { plan: PlanView; view: Acc
   );
 }
 
+/** How many recent deliveries are listed before the rest folds under "Show older". */
+const HISTORY_SHOWN = 7;
+
 function HistorySection({ view }: { view: AccountView }) {
   const openTicketFor = new Set(
     view.tickets.ok ? view.tickets.data.filter((t) => t.status === 'open' && t.deliveryId).map((t) => t.deliveryId) : [],
+  );
+  const row = (d: DeliveryView) => (
+    <li key={d.id} className={`acct-s-${d.state}`}>
+      <div className="acct-hist-row">
+        <strong>{dl(d.date)}</strong>
+        <span>
+          {litres(d.litres)} {d.kind} — {d.label}
+        </span>
+      </div>
+      {d.resolutionLabel ? <p className="acct-muted">{d.resolutionLabel}</p> : null}
+      <div className="acct-row">
+        {d.photoUrl ? (
+          <a href={d.photoUrl} target="_blank" rel="noopener noreferrer" className="acct-link">
+            Doorstep photo
+          </a>
+        ) : null}
+        {d.reportable && d.id && !openTicketFor.has(d.id) ? (
+          <details className="acct-details acct-details-inline">
+            <summary>Report a problem</summary>
+            <ReportProblem deliveryId={d.id} date={d.date} />
+          </details>
+        ) : null}
+        {d.id && openTicketFor.has(d.id) ? <span className="acct-muted">Reported — we are on it</span> : null}
+      </div>
+    </li>
   );
   return (
     <section className="acct-card" aria-labelledby="hist-h">
@@ -650,33 +678,17 @@ function HistorySection({ view }: { view: AccountView }) {
           rows.length === 0 ? (
             <p className="acct-muted">No deliveries yet.</p>
           ) : (
-            <ul className="acct-history">
-              {rows.map((d) => (
-                <li key={d.id} className={`acct-s-${d.state}`}>
-                  <div className="acct-hist-row">
-                    <strong>{dl(d.date)}</strong>
-                    <span>
-                      {litres(d.litres)} {d.kind} — {d.label}
-                    </span>
-                  </div>
-                  {d.resolutionLabel ? <p className="acct-muted">{d.resolutionLabel}</p> : null}
-                  <div className="acct-row">
-                    {d.photoUrl ? (
-                      <a href={d.photoUrl} target="_blank" rel="noopener noreferrer" className="acct-link">
-                        Doorstep photo
-                      </a>
-                    ) : null}
-                    {d.reportable && d.id && !openTicketFor.has(d.id) ? (
-                      <details className="acct-details acct-details-inline">
-                        <summary>Report a problem</summary>
-                        <ReportProblem deliveryId={d.id} date={d.date} />
-                      </details>
-                    ) : null}
-                    {d.id && openTicketFor.has(d.id) ? <span className="acct-muted">Reported — we are on it</span> : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <>
+              {/* The last week is what a customer checks; anything older folds away
+                  so the page is not one long list of every morning of the plan. */}
+              <ul className="acct-history">{rows.slice(0, HISTORY_SHOWN).map(row)}</ul>
+              {rows.length > HISTORY_SHOWN ? (
+                <details className="acct-details">
+                  <summary>Show {rows.length - HISTORY_SHOWN} older deliveries</summary>
+                  <ul className="acct-history">{rows.slice(HISTORY_SHOWN).map(row)}</ul>
+                </details>
+              ) : null}
+            </>
           )
         }
       </Guard>

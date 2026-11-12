@@ -1404,7 +1404,7 @@ function PayStep({
         <div className="sb-signin">
           <h2 className="sb-subhead">Confirm your mobile number</h2>
           <OtpForm
-            intro={`We send a 6-digit code to your mobile on WhatsApp. There is no password. No WhatsApp? Call ${PHONE}.`}
+            intro={`We send a 6-digit code to your mobile. There is no password. Code not arriving? Call ${PHONE}.`}
             onSignedIn={(mobile) => {
               setAuth({ kind: 'in', mobile });
               void callApi<MeResponse>('/api/auth/me').then((r) => {

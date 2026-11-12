@@ -3,8 +3,9 @@ import StoryPath from '@/components/concept-a/StoryPath';
 import { BRAND, CONTACT, PENDING, SERVICEABLE_PINCODES } from '@/lib/content';
 import { PRODUCTS, quote, formatINR } from '@/lib/pricing';
 import NavPanel from '@/components/NavPanel';
+import { notFound } from 'next/navigation';
 
-/** A design-exploration route: reachable, but kept out of search results. */
+/** A design-exploration route: laptop only (`pnpm dev`), never on a deployed site. */
 export const metadata = { robots: { index: false, follow: false } };
 
 /**
@@ -17,6 +18,8 @@ export const metadata = { robots: { index: false, follow: false } };
  * derived, never typed.
  */
 export default function Page() {
+  // An early concept that still lists placeholder content — not for customers.
+  if (process.env.NODE_ENV === 'production') notFound();
   return (
     <>
     <NavPanel />

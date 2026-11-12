@@ -57,11 +57,19 @@ const SW_REGISTER =
   `if('serviceWorker' in navigator){addEventListener('load',function(){` +
   `navigator.serviceWorker.register('/sw.js').catch(function(){})})}`;
 
-// Staff and delivery-partner screens are work tools used many times a morning: the
-// brand loader is skipped there so a reload is instant.
+/*
+ * The intro animation plays ONCE: on the first load of the home page in a visit.
+ * Every other load is marked `loaded` here, before first paint, so the overlay
+ * never shows — a reload, any other page (sign-up, account, policies, the rider and
+ * admin tools), or coming back to the home page later in the same visit. It played
+ * on every load before, which made each page feel three seconds slower.
+ * `mv-intro-seen` is written by PourLoader when the intro starts; `?loader` forces
+ * a replay; `mv-skip-loader` is the capture/test scripts' own switch.
+ */
 const NO_FLASH =
-  `try{if(sessionStorage.getItem('mv-skip-loader')||/^\\/(rider|admin)(\\/|$)/.test(location.pathname))` +
-  `document.documentElement.classList.add('loaded')}catch(e){}`;
+  `(function(){var f=/[?&]loader(=|&|$)/.test(location.search),k=false;` +
+  `try{k=!!(sessionStorage.getItem('mv-skip-loader')||sessionStorage.getItem('mv-intro-seen'))}catch(e){}` +
+  `if(!f&&(k||location.pathname!=='/'))document.documentElement.classList.add('loaded')})()`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

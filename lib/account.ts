@@ -365,7 +365,8 @@ export function deliveryView(d: Delivery, closedByTime = false): DeliveryView {
       label = d.deliveredAt ? `Delivered at ${timeFmt.format(d.deliveredAt)}` : 'Delivered';
       break;
     case 'not_delivered':
-      label = reasonLabel ? `Not delivered — ${reasonLabel}` : 'Not delivered';
+      // 'other' carries no information for the customer ("another reason"), so it reads as plain "Not delivered"
+      label = reasonLabel && d.reason !== 'other' ? `Not delivered — ${reasonLabel}` : 'Not delivered';
       break;
     case 'unconfirmed':
       label = 'Awaiting confirmation from our delivery partner';
