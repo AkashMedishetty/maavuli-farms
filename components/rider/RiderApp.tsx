@@ -429,13 +429,22 @@ function StopCard({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const missed = stop.items.some(i => i.status === 'not_delivered');
+  // "Delivered" only when the rider actually marked every item delivered. A stop is
+  // also `done` once the day closes with nothing marked (status 'unconfirmed'), and
+  // that must not read as delivered — it is waiting for ops to resolve.
+  const delivered = stop.items.length > 0 && stop.items.every(i => i.status === 'delivered');
+  const pill = missed
+    ? { cls: 'missed', label: 'Missed' }
+    : delivered
+      ? { cls: 'delivered', label: 'Delivered' }
+      : { cls: 'unmarked', label: 'Not marked' };
   return (
     <article className={`rcard${stop.done ? ' done' : ''}`}>
       <h3>
         <span className="seq">{stop.seq}</span>
         {stop.name}
         {stop.done ? (
-          <span className={`pill ${missed ? 'missed' : 'delivered'}`}>{missed ? 'Missed' : 'Delivered'}</span>
+          <span className={`pill ${pill.cls}`}>{pill.label}</span>
         ) : null}
       </h3>
       <p className="addr">{stop.address}</p>
