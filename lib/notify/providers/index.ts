@@ -3,7 +3,8 @@
  *
  * WHATSAPP_PROVIDER decides which provider drainOutbox / sendAuthCode use:
  *   'log'   → the log driver (records, sends nothing) — refused in production
- *   'meta'  → the WhatsApp Cloud API
+ *   'meta'    → the WhatsApp Cloud API, direct
+ *   'aisensy' → WhatsApp through AiSensy's Campaign API (lib/notify/providers/aisensy)
  *   unset   → 'log' OUTSIDE production; in production this is a configuration gap:
  *             resolveProvider throws ServiceNotConfiguredError and the message stays
  *             queued (never silently dropped, never silently sent).
@@ -12,11 +13,13 @@
 import { ServiceNotConfiguredError } from '../../errors';
 import { logProvider } from './log';
 import { metaProvider } from './meta';
+import { aisensyProvider } from './aisensy';
 import type { NotifyProvider } from './types';
 
 export type { NotifyProvider, SendRequest, SendResult } from './types';
 export { logProvider } from './log';
 export { metaProvider } from './meta';
+export { aisensyProvider } from './aisensy';
 
 function isProd(): boolean {
   return process.env.NODE_ENV === 'production';
@@ -29,12 +32,13 @@ function isProd(): boolean {
 export function resolveProvider(): NotifyProvider {
   const raw = (process.env.WHATSAPP_PROVIDER ?? '').trim().toLowerCase();
   if (raw === 'meta') return metaProvider;
+  if (raw === 'aisensy') return aisensyProvider;
   if (raw === 'log') {
     // The log driver sends nothing: in production every customer message would be
     // silently swallowed (and was printed to the server log). Fail closed, like an
     // unset provider, so messages stay queued until a real channel is configured.
     if (isProd()) {
-      throw new ServiceNotConfiguredError('WhatsApp', ['WHATSAPP_PROVIDER (the "log" driver is not allowed in production; use meta)']);
+      throw new ServiceNotConfiguredError('WhatsApp', ['WHATSAPP_PROVIDER (the "log" driver is not allowed in production; use aisensy or meta)']);
     }
     return logProvider;
   }
@@ -45,5 +49,5 @@ export function resolveProvider(): NotifyProvider {
     return logProvider;
   }
   // an unknown value is a misconfiguration; fail loud rather than sending
-  throw new ServiceNotConfiguredError('WhatsApp', [`WHATSAPP_PROVIDER (got "${raw}", expected log|meta)`]);
+  throw new ServiceNotConfiguredError('WhatsApp', [`WHATSAPP_PROVIDER (got "${raw}", expected log|meta|aisensy)`]);
 }

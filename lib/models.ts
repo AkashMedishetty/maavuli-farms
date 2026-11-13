@@ -809,6 +809,8 @@ export interface OutboundMessage {
   status: MessageStatus;
   provider?: string;
   providerMessageId?: string;
+  /** provider-side name it was sent as (AiSensy campaign name) — receipt matching fallback */
+  providerRef?: string;
   attempts: number;
   nextAttemptAt?: Date;
   error?: string;
@@ -962,6 +964,7 @@ export const INDEXES = [
   { col: COL.outbox, spec: { dedupeKey: 1 }, options: { unique: true } },
   { col: COL.outbox, spec: { status: 1, nextAttemptAt: 1 }, options: {} },
   { col: COL.outbox, spec: { providerMessageId: 1 }, options: { sparse: true } },
+  { col: COL.outbox, spec: { mobile: 1, providerRef: 1, createdAt: -1 }, options: {} },
   { col: COL.inbound, spec: { providerMessageId: 1 }, options: { unique: true } },
   { col: COL.disruptions, spec: { date: 1 }, options: {} },
 ] as const;

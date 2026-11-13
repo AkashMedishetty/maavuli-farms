@@ -39,7 +39,10 @@ variable on Vercel, redeploy** — a variable only reaches deployments made afte
 | `OTP_DEMO_MODE` | `1` shows customers' sign-in codes on screen | — | Test databases ONLY (see warning below) |
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Payments | Razorpay Dashboard → switch to **Test mode** → Account & Settings → API keys | Test-mode keys (`rzp_test_…`) |
 | `RAZORPAY_WEBHOOK_SECRET` | Verifies Razorpay's calls | You invent it when creating the webhook (section 3) | Required for refunds and payment backups |
-| `WHATSAPP_PROVIDER` | `log` = messages recorded, never sent. `meta` = WhatsApp Cloud API | — | `log` for mock data |
+| `WHATSAPP_PROVIDER` | `log` = messages recorded, never sent. `aisensy` = WhatsApp through AiSensy (launch). `meta` = Cloud API direct | — | `log` for mock data |
+| `AISENSY_API_KEY` | Sends every WhatsApp message, including sign-in codes | AiSensy → Manage → API Key | Only with `WHATSAPP_PROVIDER=aisensy`. Campaigns to create: `pnpm aisensy:campaigns` (docs/AISENSY-CAMPAIGNS.md) |
+| `AISENSY_WEBHOOK_SECRET` (+ optional `AISENSY_PROJECT_ID`) | Delivery receipts and customer replies (STOP, Report a problem) | AiSensy → Webhooks: URL `https://…/api/webhooks/aisensy`, topics `message.status.updated` and `message.sender.user`, and this secret | Optional for sending; needed for receipts and STOP |
+| `AISENSY_LANGUAGES`, `AISENSY_CAMPAIGNS`, `AISENSY_CAMPAIGN_PREFIX` | Which campaign each message uses | — | Leave unset: English campaigns named `<template>_en` |
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_AUTH_TEMPLATE`, `WHATSAPP_API_BASE` (optional) | Real WhatsApp | Meta Business → WhatsApp → API setup (templates must be approved) | Only for the real-WhatsApp tests (6.10) |
 | `STORAGE_DRIVER` + `BLOB_READ_WRITE_TOKEN` | Delivery photos | Vercel → Storage → Create → Blob, choose **Private** (cannot be changed later) → connect to this project. The app reads `BLOB_READ_WRITE_TOKEN` itself (riders' phones upload with it), so check it is in the project's variables; if only `BLOB_STORE_ID` appeared, copy the read-write token from the store's page | `vercel-blob`; without both, delivery photos cannot be saved on Vercel — a rider can then only mark a delivery with a note, and it is flagged for ops |
 | `NEXT_PUBLIC_SITE_URL` | Absolute links (photo links in WhatsApp) | — | `https://maavuli-farms.vercel.app` |
@@ -348,9 +351,9 @@ MONGODB_DB=maavuli_e2e pnpm run e2e
 ## 8. After testing — before real customers
 
 1. Vercel: set `MONGODB_DB=maavuli` again, delete `OTP_DEMO_MODE`, redeploy.
-2. WhatsApp: `WHATSAPP_PROVIDER=meta` with approved templates (sign-in needs the
-   authentication template), and the webhook `https://…/api/webhooks/whatsapp` with
-   `WHATSAPP_VERIFY_TOKEN`.
+2. WhatsApp: `WHATSAPP_PROVIDER=aisensy` with `AISENSY_API_KEY`, every campaign from
+   `pnpm aisensy:campaigns` approved and Live (sign-in needs `auth_code_en`), and the
+   webhook `https://…/api/webhooks/aisensy` with `AISENSY_WEBHOOK_SECRET`.
 3. Real zones and riders in the real database (Admin → Riders & zones).
 4. Razorpay live keys only after the policies are final (docs/CLIENT-QUESTIONS.md).
 5. `NEXT_PUBLIC_SITE_URL` = the real domain once it points here.

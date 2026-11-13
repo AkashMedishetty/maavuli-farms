@@ -63,11 +63,12 @@ export function clientIpFrom(h: Pick<Headers, 'get'>): string | undefined {
 
 /**
  * True when the WhatsApp auth channel is configured well enough to deliver a code:
- * provider is 'meta' AND the token + phone number id are present. Detected without
+ * provider is 'aisensy' with an API key, or 'meta' with the token + phone number id. Detected without
  * sending, so issueOtp can gate delivery on it before minting a code.
  */
 function whatsappAuthConfigured(): boolean {
   const provider = (process.env.WHATSAPP_PROVIDER ?? '').trim().toLowerCase();
+  if (provider === 'aisensy') return (process.env.AISENSY_API_KEY ?? '').trim() !== '';
   if (provider !== 'meta') return false;
   const token = (process.env.WHATSAPP_TOKEN ?? '').trim();
   const phoneId = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? '').trim();

@@ -83,7 +83,9 @@ const STATUS_RANK: Record<MessageStatus, number> = {
   sent: 2,
   delivered: 3,
   read: 4,
-  failed: 2, // a failure ranks like 'sent' — a later delivered/read may still supersede it
+  // A failure outranks 'sent' (an accepted message that then failed must show as
+  // failed) but not delivered/read, and a late 'sent' receipt cannot undo it.
+  failed: 2.5,
 };
 
 export function outranks(next: MessageStatus, current: MessageStatus): boolean {
@@ -153,6 +155,18 @@ function isDuplicateKey(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: number }).code === 11000;
 }
 
+/**
+ * A `link` param is stored as a site path ('/account'); a WhatsApp message needs the
+ * full address. Made absolute at SEND time, so rows queued before NEXT_PUBLIC_SITE_URL
+ * was set are fixed too. Without a site URL (local development) it is left as is.
+ */
+export function absoluteLinks(params: Record<string, string>, site = process.env.NEXT_PUBLIC_SITE_URL): Record<string, string> {
+  const base = (site ?? '').trim().replace(/\/+$/, '');
+  const link = params.link;
+  if (!base || typeof link !== 'string' || !link.startsWith('/')) return params;
+  return { ...params, link: `${base}${link}` };
+}
+
 /** Tick step: send queued messages with retry/backoff. */
 export async function drainOutbox(ctx: OpCtx): Promise<{ sent: number; failed: number; logged: number }> {
   const db = await getDb();
@@ -176,6 +190,17 @@ export async function drainOutbox(ctx: OpCtx): Promise<{ sent: number; failed: n
   let failed = 0;
   let logged = 0;
 
+  // AiSensy files each recipient as a contact under a name, so look the batch's
+  // names up in one query rather than one per message.
+  const mobiles = [...new Set(due.map(m => m.mobile))];
+  const names = new Map(
+    mobiles.length
+      ? (await col.users(db).find({ mobile: { $in: mobiles } }).project<{ mobile: string; name?: string }>({ mobile: 1, name: 1 }).toArray())
+          .filter(u => u.name)
+          .map(u => [u.mobile, u.name as string])
+      : [],
+  );
+
   for (const msg of due) {
     if (!msg._id) continue;
 
@@ -188,12 +213,14 @@ export async function drainOutbox(ctx: OpCtx): Promise<{ sent: number; failed: n
     if (claim.matchedCount === 0) continue; // another tick took it
 
     const attempts = msg.attempts + 1;
+    const userName = names.get(msg.mobile);
     const result = await provider.send({
       mobile: msg.mobile,
       template: msg.template as NewMessage['template'],
       lang: msg.lang,
-      params: msg.params,
+      params: absoluteLinks(msg.params),
       ...(msg.mediaUrl ? { mediaUrl: msg.mediaUrl } : {}),
+      ...(userName ? { userName } : {}),
     });
 
     if (result.ok) {
@@ -205,6 +232,7 @@ export async function drainOutbox(ctx: OpCtx): Promise<{ sent: number; failed: n
             status,
             provider: provider.name,
             providerMessageId: result.providerMessageId,
+            ...(result.providerRef ? { providerRef: result.providerRef } : {}),
             updatedAt: now,
           },
           $unset: { nextAttemptAt: '', error: '' },
@@ -292,7 +320,7 @@ export async function enqueueRenewalReminders(ctx: OpCtx): Promise<{ queued: num
  * Send a sign-in code over WhatsApp (authentication template) synchronously.
  * 'not_configured' → lib/auth falls back to its dev/demo behaviour.
  *
- * Only the 'meta' provider actually delivers a code. The log provider (and an
+ * Only a real provider ('meta' or 'aisensy') delivers a code. The log provider (and an
  * unconfigured provider) return 'not_configured', which keeps the auth flow honest:
  * a code that was only console-logged is not a delivered code.
  */
@@ -306,7 +334,7 @@ export async function sendAuthCode(mobile: string, code: string): Promise<'sent'
   } catch {
     return 'not_configured';
   }
-  if (provider.name !== 'meta') return 'not_configured';
+  if (provider.name !== 'meta' && provider.name !== 'aisensy') return 'not_configured';
 
   const db = await getDb();
   const user = await col.users(db).findOne({ mobile: normalized });
@@ -315,13 +343,26 @@ export async function sendAuthCode(mobile: string, code: string): Promise<'sent'
   // Render is validated here too so a param bug is caught before the wire call.
   render('auth_code', lang, { code });
 
-  const result = await provider.send({
-    mobile: normalized,
-    template: 'auth_code',
-    lang,
-    params: { code },
-  });
-  return result.ok ? 'sent' : 'not_configured';
+  // A provider error (bad config, a malformed override) must not turn sign-in into a
+  // 500: report 'not_configured' and let lib/auth refuse cleanly.
+  try {
+    const result = await provider.send({
+      mobile: normalized,
+      template: 'auth_code',
+      lang,
+      params: { code },
+      ...(user?.name ? { userName: user.name } : {}),
+    });
+    if (!result.ok) {
+      // eslint-disable-next-line no-console
+      console.error(`[notify] sign-in code not delivered via ${provider.name}: ${result.error}`);
+    }
+    return result.ok ? 'sent' : 'not_configured';
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[notify] sign-in code send threw via ${provider.name}: ${err instanceof Error ? err.message : err}`);
+    return 'not_configured';
+  }
 }
 
 /**
@@ -344,6 +385,54 @@ export async function applyStatusReceipt(
   await outbox.updateOne(
     { _id: row._id },
     { $set: { status, updatedAt: at, ...(error ? { error } : {}) } },
+  );
+  return true;
+}
+
+/** How far back a receipt matched by mobile + campaign may reach. */
+const REF_MATCH_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Apply a receipt from a provider that may not echo our message id (AiSensy's
+ * Campaign API documents no id in its send response). Tries each candidate id
+ * first; only when NO outbox row carries any of them does it fall back to the most
+ * recent row sent to this mobile under this provider-side name (the campaign),
+ * created no later than the receipt and within REF_MATCH_WINDOW_MS. Never moves a
+ * message backwards. Returns true when a row was advanced.
+ */
+export async function applyReceiptWithFallback(
+  r: {
+    ids: string[];
+    mobile: string;
+    providerRef?: string;
+    status: 'sent' | 'delivered' | 'read' | 'failed';
+    at: Date;
+    error?: string;
+  },
+  db?: Db,
+): Promise<boolean> {
+  const d = db ?? (await getDb());
+  const outbox = col.outbox(d);
+  for (const id of r.ids.filter(Boolean)) {
+    if (await outbox.findOne({ providerMessageId: id }, { projection: { _id: 1 } })) {
+      return applyStatusReceipt(id, r.status, r.at, d, r.error);
+    }
+  }
+  const mobile = normalizeMobile(r.mobile);
+  if (!mobile || !r.providerRef) return false;
+  const row = await outbox.findOne(
+    {
+      mobile,
+      providerRef: r.providerRef,
+      status: { $in: ['sent', 'delivered', 'read', 'failed'] },
+      createdAt: { $lte: r.at, $gte: new Date(r.at.getTime() - REF_MATCH_WINDOW_MS) },
+    },
+    { sort: { createdAt: -1 } },
+  );
+  if (!row?._id || !outranks(r.status, row.status)) return false;
+  await outbox.updateOne(
+    { _id: row._id },
+    { $set: { status: r.status, updatedAt: r.at, ...(r.error ? { error: r.error } : {}) } },
   );
   return true;
 }

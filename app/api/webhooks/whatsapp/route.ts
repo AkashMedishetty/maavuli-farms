@@ -11,13 +11,10 @@
  * Two kinds of payload matter:
  *   · statuses[]  — delivery receipts (sent/delivered/read/failed) keyed by our
  *                   providerMessageId. Applied without moving a message backwards.
- *   · messages[]  — inbound customer messages, recorded idempotently on
- *                   providerMessageId, then routed:
- *                     STOP / unsubscribe        → opt out
- *                     REPORT_ISSUE              → open a ticket (channel whatsapp)
- *                     TALK                      → flag for a human
- *                     PAUSE_TOMORROW            → reply-with-link only (no mutation)
- *                     a location message        → a ticket noting the coordinates
+ *   · messages[]  — inbound customer messages, normalised and handed to
+ *                   lib/notify/inbound (recorded once, then STOP → opt out,
+ *                   REPORT_ISSUE → ticket, TALK → human, PAUSE_TOMORROW → link only,
+ *                   a location → ticket). The AiSensy webhook routes the same way.
  *
  * We always answer 200 to a signature-valid POST (even for content we ignore) so
  * Meta does not retry a batch we have already durably recorded.
@@ -26,12 +23,9 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { col, normalizeMobile, type InboundMessage } from '@/lib/models';
+import type { InboundMessage } from '@/lib/models';
 import { applyStatusReceipt } from '@/lib/notify';
-import { setWhatsappOptIn } from '@/lib/notify/optin';
-import { createTicket } from '@/lib/tickets';
-import { systemCtx } from '@/lib/clock';
-import { recordEvent } from '@/lib/events';
+import { recordInbound } from '@/lib/notify/inbound';
 
 export const dynamic = 'force-dynamic';
 
@@ -166,98 +160,23 @@ async function handleStatus(s: WaStatus): Promise<void> {
   await applyStatusReceipt(s.id, mapped, tsToDate(s.timestamp), db, error);
 }
 
-/** The button/text intents we understand. Case-insensitive match on payload or body. */
-function intentOf(m: WaMessage): string | null {
-  const raw =
-    m.button?.payload ??
-    m.interactive?.button_reply?.id ??
-    m.interactive?.list_reply?.id ??
-    m.text?.body ??
-    '';
-  const t = raw.trim().toUpperCase();
-  if (!t) return null;
-  if (t === 'STOP' || t === 'UNSUBSCRIBE') return 'STOP';
-  if (t === 'REPORT_ISSUE' || t === 'REPORT ISSUE') return 'REPORT_ISSUE';
-  if (t === 'TALK') return 'TALK';
-  if (t === 'PAUSE_TOMORROW' || t === 'PAUSE TOMORROW') return 'PAUSE_TOMORROW';
-  return null;
-}
-
 async function handleInbound(m: WaMessage): Promise<void> {
   if (!m.id || !m.from) return;
-  const mobile = normalizeMobile(m.from) ?? m.from.replace(/\D/g, '');
-  const receivedAt = tsToDate(m.timestamp);
-  const db = await getDb();
-
-  const type = mapType(m.type);
-  const intent = intentOf(m);
-
-  const doc: InboundMessage = {
+  await recordInbound({
     providerMessageId: m.id,
-    from: mobile,
-    type,
+    from: m.from,
+    type: mapType(m.type),
     ...(m.text?.body ? { text: m.text.body } : {}),
-    ...(intent ? { payload: intent } : {}),
+    ...(() => {
+      const payload = m.button?.payload ?? m.interactive?.button_reply?.id ?? m.interactive?.list_reply?.id;
+      return payload ? { payload } : {};
+    })(),
     ...(m.location && typeof m.location.latitude === 'number' && typeof m.location.longitude === 'number'
       ? { location: { lat: m.location.latitude, lng: m.location.longitude } }
       : {}),
-    receivedAt,
-    handled: false,
-  };
-
-  // Idempotent on providerMessageId — Meta re-delivers. A duplicate is a no-op.
-  try {
-    await col.inbound(db).insertOne(doc);
-  } catch (err) {
-    if ((err as { code?: number }).code === 11000) return; // already processed
-    throw err;
-  }
-
-  const ctx = systemCtx(receivedAt, 'whatsapp_webhook');
-  let handledAs: string | undefined;
-
-  if (intent === 'STOP') {
-    await setWhatsappOptIn(mobile, false, 'whatsapp_stop', ctx);
-    handledAs = 'opt_out';
-  } else if (intent === 'REPORT_ISSUE') {
-    await createTicket(
-      { mobile, kind: 'other', channel: 'whatsapp', note: 'Customer reported an issue via WhatsApp.' },
-      ctx,
-    );
-    handledAs = 'ticket';
-  } else if (intent === 'TALK') {
-    handledAs = 'human';
-  } else if (intent === 'PAUSE_TOMORROW') {
-    // No mutation from the webhook — pausing has cutoff/allowance rules the customer
-    // must see. We only note that a link should be sent back to /account.
-    handledAs = 'reply_link:/account';
-  } else if (doc.location) {
-    await createTicket(
-      {
-        mobile,
-        kind: 'other',
-        channel: 'whatsapp',
-        note: `Location shared via WhatsApp for ops: ${doc.location.lat},${doc.location.lng}`,
-      },
-      ctx,
-    );
-    handledAs = 'location_ticket';
-  }
-
-  if (handledAs) {
-    await col.inbound(db).updateOne({ providerMessageId: m.id }, { $set: { handled: true, handledAs } });
-    await recordEvent(
-      ctx,
-      {
-        entity: 'message',
-        entityId: m.id,
-        type: 'message.inbound',
-        mobile,
-        data: { handledAs, intent: intent ?? null },
-      },
-      db,
-    );
-  }
+    receivedAt: tsToDate(m.timestamp),
+    source: 'whatsapp_webhook',
+  });
 }
 
 function mapType(t: string | undefined): InboundMessage['type'] {
